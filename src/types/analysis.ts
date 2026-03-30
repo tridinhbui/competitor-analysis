@@ -1,3 +1,22 @@
+/** A notable footnote extracted from the filing text */
+export interface FootnoteItem {
+  id: string;
+  title: string;
+  summary: string;
+  significance: "high" | "medium" | "low";
+  type: "debt" | "contingency" | "segment" | "accounting-policy" | "tax" | "revenue" | "other";
+}
+
+/** A non-GAAP adjusted metric with reconciliation */
+export interface AdjustedMetric {
+  name: string;
+  gaapValue: number | null;
+  adjustments: Array<{ label: string; value: number }>;
+  adjustedValue: number | null;
+  unit: "million" | "per-share";
+  period: string;
+}
+
 /** A single balance-sheet / cash-flow line with provenance. */
 export interface BSItem {
   tag: string;
@@ -112,6 +131,10 @@ export interface FullAnalysis {
   segments?: import("./segments").SegmentData[];
   /** Methodology variants for companies that changed allocation methods */
   methodologyVariants?: import("./segments").MethodologyVariant[];
+  /** Notable footnotes extracted from the filing text */
+  footnotes?: FootnoteItem[];
+  /** Non-GAAP adjusted metrics with reconciliation */
+  adjustedMetrics?: AdjustedMetric[];
 }
 
 /** The step definitions for the agent workflow UI. */
@@ -126,5 +149,6 @@ export const PIPELINE_STEPS = [
   { id: "compute_ratios", label: "Calculate financial ratios" },
   { id: "dividend_assessment", label: "Assess dividend sustainability" },
   { id: "validate", label: "Validation checks" },
+  { id: "extract_footnotes", label: "Extract footnotes & adjusted metrics" },
   { id: "complete", label: "Complete" },
 ] as const;

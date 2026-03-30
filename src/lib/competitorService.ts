@@ -62,6 +62,28 @@ export function deriveQuarter(periodEnd: string): Quarter {
   };
 }
 
+export function quarterPeriodEnd(
+  fiscalYear: number,
+  fiscalQuarter: number
+): string {
+  if (fiscalQuarter === 1) return `${fiscalYear}-03-31`;
+  if (fiscalQuarter === 2) return `${fiscalYear}-06-30`;
+  if (fiscalQuarter === 3) return `${fiscalYear}-09-30`;
+  return `${fiscalYear}-12-31`;
+}
+
+export function explicitQuarter(
+  fiscalYear: number,
+  fiscalQuarter: number
+): Quarter {
+  return {
+    fiscalYear,
+    fiscalQuarter,
+    periodEnd: quarterPeriodEnd(fiscalYear, fiscalQuarter),
+    label: `Q${fiscalQuarter} ${fiscalYear}`,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Module eligibility
 // ---------------------------------------------------------------------------

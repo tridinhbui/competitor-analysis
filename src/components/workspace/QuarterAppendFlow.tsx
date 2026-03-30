@@ -1,20 +1,13 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, type DragEvent } from "react";
 import type { FullAnalysis, StepEvent } from "@/types/analysis";
 import type { AppendReview, TimelineSlot } from "@/types/competitor";
 import { QuarterReviewPanel } from "./QuarterReviewPanel";
 import { AgentWorkflow } from "@/components/filings/AgentWorkflow";
 import { analyzePdf } from "@/lib/pdfAnalysis";
 import {
-  parseSseBlock,
-  isFullAnalysisPayload,
-  isStepEventPayload,
-} from "@/lib/sseClient";
-import {
   FileUp,
-  Search,
-  ArrowRight,
   CheckCircle2,
   X,
 } from "lucide-react";
@@ -28,8 +21,10 @@ type Phase =
   | "error";
 
 interface Props {
-  /** Pre-fill ticker when opening from workspace sidebar */
-  prefilledTicker?: string;
+  /** Ticker for the company being appended */
+  prefilledTicker: string;
+  /** The explicit quarter slot the upload belongs to */
+  slot: TimelineSlot;
   /** Called after successful append with updated timeline */
   onAppended?: (timeline: TimelineSlot[], quarterCount: number) => void;
   /** Called to close the flow */
@@ -38,11 +33,11 @@ interface Props {
 
 export function QuarterAppendFlow({
   prefilledTicker,
+  slot,
   onAppended,
   onClose,
 }: Props) {
   const [phase, setPhase] = useState<Phase>("input");
-  const [ticker, setTicker] = useState(prefilledTicker ?? "");
   const [events, setEvents] = useState<StepEvent[]>([]);
   const [analysis, setAnalysis] = useState<FullAnalysis | null>(null);
   const [review, setReview] = useState<AppendReview | null>(null);
@@ -52,75 +47,45 @@ export function QuarterAppendFlow({
     quarterCount: number;
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [dragActive, setDragActive] = useState(false);
 
-  // ------ Analyze via SEC ------
-  const analyzeViaSec = useCallback(async (t: string) => {
-    const clean = t.trim().toUpperCase();
-    if (!clean) return;
-    setPhase("analyzing");
-    setEvents([]);
-    setError("");
-    setAnalysis(null);
-    setReview(null);
+  const applyPeriodOverride = useCallback(
+    (base: FullAnalysis): FullAnalysis => ({
+      ...base,
+      meta: {
+        ...base.meta,
+        ticker: prefilledTicker,
+        periodEnd: slot.periodEnd,
+      },
+    }),
+    [prefilledTicker, slot.periodEnd]
+  );
 
-    let result: FullAnalysis | null = null;
-
-    const processBlock = (rawBlock: string) => {
-      const block = rawBlock.trim();
-      if (!block) return;
-      const { event, data } = parseSseBlock(block);
-      if (!data) return;
-      let parsed: unknown;
+  const runReview = useCallback(
+    async (t: string, baseAnalysis: FullAnalysis) => {
+      setReview(null);
+      setError("");
       try {
-        parsed = JSON.parse(data);
-      } catch {
-        return;
-      }
-      if (
-        (event === "result" || isFullAnalysisPayload(parsed)) &&
-        isFullAnalysisPayload(parsed)
-      ) {
-        result = parsed;
-        return;
-      }
-      if (isStepEventPayload(parsed)) {
-        setEvents((prev) => [...prev, parsed]);
-        if (parsed.status === "error" && parsed.message) setError(parsed.message);
-      }
-    };
-
-    try {
-      const resp = await fetch(
-        `/api/analyze?ticker=${encodeURIComponent(clean)}`
-      );
-      if (!resp.ok || !resp.body)
-        throw new Error(`Server returned ${resp.status}`);
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split("\n\n");
-        buffer = parts.pop() ?? "";
-        for (const part of parts) processBlock(part);
-      }
-      if (buffer.trim()) processBlock(buffer);
-
-      if (!result) {
+        const resp = await fetch("/api/filings/append", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ticker: t,
+            analysis: applyPeriodOverride(baseAnalysis),
+            action: "review",
+          }),
+        });
+        if (!resp.ok) throw new Error(`Review failed: ${resp.status}`);
+        const reviewData: AppendReview = await resp.json();
+        setReview(reviewData);
+        setPhase("reviewing");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
         setPhase("error");
-        setError("Analysis stream ended without a result.");
-        return;
       }
-
-      setAnalysis(result);
-      await requestReview(clean, result);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setPhase("error");
-    }
-  }, []);
+    },
+    [applyPeriodOverride]
+  );
 
   // ------ Analyze PDF ------
   const analyzePdfFile = useCallback(async (file: File) => {
@@ -135,32 +100,43 @@ export function QuarterAppendFlow({
         setEvents((prev) => [...prev, evt])
       );
       setAnalysis(result);
-      const t = result.meta.ticker?.toUpperCase() || ticker.toUpperCase() || "UNKNOWN";
-      setTicker(t);
-      await requestReview(t, result);
+      await runReview(prefilledTicker, result);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setPhase("error");
     }
-  }, [ticker]);
+  }, [prefilledTicker, runReview]);
 
-  // ------ Request review from server ------
-  const requestReview = async (t: string, a: FullAnalysis) => {
-    try {
-      const resp = await fetch("/api/filings/append", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticker: t, analysis: a, action: "review" }),
-      });
-      if (!resp.ok) throw new Error(`Review failed: ${resp.status}`);
-      const reviewData: AppendReview = await resp.json();
-      setReview(reviewData);
-      setPhase("reviewing");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setPhase("error");
-    }
-  };
+  const handleDropFile = useCallback(
+    (file: File | undefined) => {
+      if (!file || file.type !== "application/pdf") return;
+      analyzePdfFile(file);
+    },
+    [analyzePdfFile]
+  );
+
+  const handleDragEnter = useCallback((event: DragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    setDragActive(true);
+  }, []);
+
+  const handleDragLeave = useCallback((event: DragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    setDragActive(false);
+  }, []);
+
+  const handleDragOver = useCallback((event: DragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+  }, []);
+
+  const handleDrop = useCallback(
+    (event: DragEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      setDragActive(false);
+      handleDropFile(event.dataTransfer.files[0]);
+    },
+    [handleDropFile]
+  );
 
   // ------ Confirm append ------
   const confirmAppend = useCallback(async () => {
@@ -173,7 +149,7 @@ export function QuarterAppendFlow({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ticker: review.ticker,
-          analysis,
+          analysis: applyPeriodOverride(analysis),
           action: "confirm",
         }),
       });
@@ -189,7 +165,7 @@ export function QuarterAppendFlow({
       setError(err instanceof Error ? err.message : String(err));
       setPhase("error");
     }
-  }, [analysis, review, onAppended]);
+  }, [analysis, review, onAppended, applyPeriodOverride]);
 
   // ------ Reset ------
   const resetFlow = () => {
@@ -199,7 +175,7 @@ export function QuarterAppendFlow({
     setReview(null);
     setError("");
     setAppendResult(null);
-    setTicker(prefilledTicker ?? "");
+    setDragActive(false);
   };
 
   // ------ Render ------
@@ -266,7 +242,7 @@ export function QuarterAppendFlow({
       <div className="space-y-4">
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-subtle">
           <p className="mb-2 text-sm font-semibold text-slate-700">
-            Analyzing {ticker || "uploaded file"}…
+            Analyzing {prefilledTicker} for {slot.label}…
           </p>
           <AgentWorkflow events={events} isRunning={true} />
         </div>
@@ -297,7 +273,7 @@ export function QuarterAppendFlow({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-bold text-slate-900">
-          Append New Quarter
+          Upload {slot.label}
         </h3>
         {onClose && (
           <button
@@ -308,46 +284,22 @@ export function QuarterAppendFlow({
           </button>
         )}
       </div>
-
-      {/* Ticker input */}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          analyzeViaSec(ticker);
-        }}
-        className="flex items-center gap-2"
-      >
-        <div className="relative flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            value={ticker}
-            onChange={(e) => setTicker(e.target.value.toUpperCase())}
-            placeholder="Ticker (e.g. AAPL)"
-            className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-900 outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={!ticker.trim()}
-          className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-4 text-xs font-semibold text-white shadow-subtle transition hover:opacity-90 disabled:opacity-40"
-        >
-          Fetch <ArrowRight className="h-3.5 w-3.5" />
-        </button>
-      </form>
-
-      {/* Divider */}
-      <div className="flex items-center gap-3 text-[10px] font-semibold uppercase tracking-widest text-slate-300">
-        <div className="h-px flex-1 bg-slate-100" />
-        or upload
-        <div className="h-px flex-1 bg-slate-100" />
+      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+        <p className="font-semibold text-slate-900">{prefilledTicker}</p>
+        <p className="mt-1 text-xs text-slate-500">
+          This upload will be saved directly to {slot.label} with period end {slot.periodEnd}.
+        </p>
       </div>
 
       {/* PDF upload */}
       <button
         type="button"
         onClick={() => fileInputRef.current?.click()}
-        className="flex w-full items-center gap-3 rounded-lg border-2 border-dashed border-slate-200 bg-white p-4 text-left transition hover:border-primary/30 hover:bg-primary/5"
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+        className={`flex w-full items-center gap-3 rounded-lg border-2 border-dashed p-4 text-left transition ${dragActive ? "border-primary bg-primary/10" : "border-slate-200 bg-white hover:border-primary/30 hover:bg-primary/5"}`}
       >
         <FileUp className="h-5 w-5 text-slate-400" />
         <div>
@@ -355,7 +307,7 @@ export function QuarterAppendFlow({
             Upload 10-Q PDF
           </p>
           <p className="text-[10px] text-slate-400">
-            Drag or click to select
+            Drag & drop or click to select
           </p>
         </div>
       </button>

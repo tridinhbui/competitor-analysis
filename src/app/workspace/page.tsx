@@ -8,39 +8,87 @@ import { SlideBlocksPanel } from "@/components/workspace/SlideBlocksPanel";
 import { PeerModulePanel } from "@/components/workspace/PeerModulePanel";
 import { AdjustmentPanel } from "@/components/workspace/AdjustmentPanel";
 import { ManualDataPanel } from "@/components/workspace/ManualDataPanel";
-import type { CompanyRegistry } from "@/types/competitor";
+import type { CompanyRegistry, PeerType } from "@/types/competitor";
 import {
   Boxes,
   ArrowLeft,
   Loader2,
   Building2,
+  Plus,
 } from "lucide-react";
+
+const PEER_OPTIONS: { value: PeerType; label: string }[] = [
+  { value: "subject", label: "Subject Company" },
+  { value: "packaged-meats", label: "Packaged Meats" },
+  { value: "pork-fresh", label: "Pork / Fresh" },
+  { value: "diversified-protein", label: "Diversified Protein" },
+  { value: "methodology-change", label: "Methodology Change" },
+  { value: "spinoff-structural", label: "Spin-off / Structural" },
+];
 
 export default function WorkspacePage() {
   const [registry, setRegistry] = useState<CompanyRegistry | null>(null);
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [newTicker, setNewTicker] = useState("");
+  const [newName, setNewName] = useState("");
+  const [newPeerType, setNewPeerType] = useState<PeerType>("subject");
+  const [addingCompany, setAddingCompany] = useState(false);
+  const [companyError, setCompanyError] = useState("");
+
+  const loadRegistry = async (nextSelectedTicker?: string) => {
+    try {
+      const resp = await fetch("/api/filings");
+      if (resp.ok) {
+        const data: CompanyRegistry = await resp.json();
+        setRegistry(data);
+        if (nextSelectedTicker) {
+          setSelectedTicker(nextSelectedTicker);
+        } else if (data.companies.length > 0 && !selectedTicker) {
+          setSelectedTicker(data.companies[0].ticker);
+        }
+      }
+    } catch {
+      // Ignore
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        const resp = await fetch("/api/filings");
-        if (resp.ok) {
-          const data: CompanyRegistry = await resp.json();
-          setRegistry(data);
-          // Auto-select first company if available
-          if (data.companies.length > 0 && !selectedTicker) {
-            setSelectedTicker(data.companies[0].ticker);
-          }
-        }
-      } catch {
-        // Ignore
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
+    loadRegistry();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const createCompany = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const ticker = newTicker.trim().toUpperCase();
+    const name = newName.trim();
+    if (!ticker || !name) return;
+
+    setAddingCompany(true);
+    setCompanyError("");
+    try {
+      const resp = await fetch("/api/filings/peer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker, name, peerType: newPeerType }),
+      });
+
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+        throw new Error(data.error || `HTTP ${resp.status}`);
+      }
+
+      setNewTicker("");
+      setNewName("");
+      setNewPeerType("subject");
+      await loadRegistry(ticker);
+    } catch (error) {
+      setCompanyError(error instanceof Error ? error.message : "Failed to add company");
+    } finally {
+      setAddingCompany(false);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
@@ -81,6 +129,56 @@ export default function WorkspacePage() {
         <div className="grid gap-6 lg:grid-cols-[240px_1fr]">
           {/* Company sidebar */}
           <div className="space-y-1">
+            <form
+              onSubmit={createCompany}
+              className="mb-4 rounded-xl border border-slate-200 bg-white p-3 shadow-subtle"
+            >
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-slate-400">
+                Add Company
+              </p>
+              <div className="space-y-2">
+                <input
+                  type="text"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  placeholder="Company name"
+                  className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
+                />
+                <input
+                  type="text"
+                  value={newTicker}
+                  onChange={(e) => setNewTicker(e.target.value.toUpperCase())}
+                  placeholder="Ticker"
+                  className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
+                />
+                <select
+                  value={newPeerType}
+                  onChange={(e) => setNewPeerType(e.target.value as PeerType)}
+                  className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
+                >
+                  {PEER_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="submit"
+                  disabled={addingCompany || !newTicker.trim() || !newName.trim()}
+                  className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-3 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50"
+                >
+                  {addingCompany ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Plus className="h-3.5 w-3.5" />
+                  )}
+                  Add to workspace
+                </button>
+                {companyError ? (
+                  <p className="text-[11px] text-red-600">{companyError}</p>
+                ) : null}
+              </div>
+            </form>
             <p className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-widest text-slate-400">
               Companies
             </p>

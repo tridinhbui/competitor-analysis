@@ -6,9 +6,38 @@
  */
 
 import PptxGenJS from "pptxgenjs";
-import type { SlideBlock } from "@/types/slideBlocks";
+import type { SlideBlock, ChartSeries } from "@/types/slideBlocks";
 import type { DeckSection } from "@/types/deckSection";
 import { COLORS, FONTS, LAYOUT, TABLE_STYLE } from "./pptxTemplates";
+
+// ---------------------------------------------------------------------------
+// Chart color palettes
+// ---------------------------------------------------------------------------
+
+const CHART_COLORS = ["3B82F6", "F97316", "10B981", "8B5CF6", "EF4444", "06B6D4"];
+const LINE_CHART_COLORS = ["1E40AF", "C2410C", "047857", "6D28D9"];
+
+// Block types that should render as LINE charts
+const LINE_BLOCK_TYPES = new Set(["margin-gap-trend", "sga-trend"]);
+
+// Block types that use BAR with possible LINE overlay
+const BAR_WITH_LINE_BLOCK_TYPES = new Set([
+  "quarterly-trend",
+  "segment-margin-comparison",
+  "segment-revenue-composition",
+  "per-unit-comparison",
+]);
+
+// Block types that use grouped BAR charts
+const GROUPED_BAR_BLOCK_TYPES = new Set([
+  "sequential-comparison",
+  "yoy-comparison",
+  "ttm-comparison",
+  "benchmark-table",
+  "methodology-comparison",
+  "market-data-volume",
+  "market-data-channel",
+]);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -102,6 +131,225 @@ function addFooter(slide: PptxSlide, text: string) {
 }
 
 // ---------------------------------------------------------------------------
+// Chart rendering
+// ---------------------------------------------------------------------------
+
+function addChartToSlide(
+  pres: PptxGenJS,
+  slide: PptxSlide,
+  block: SlideBlock,
+  startY: number,
+  availableH: number
+) {
+  const chartH = Math.min(2.5, Math.max(1.8, availableH));
+  const chartY = startY;
+
+  // --- Waterfall (bridge) charts ---
+  if (block.bridgeComponents && block.bridgeComponents.length > 0) {
+    addWaterfallChart(pres, slide, block, chartY, chartH);
+    return;
+  }
+
+  // --- Standard chart series ---
+  if (block.chartSeries.length === 0) return;
+
+  const blockType = block.blockType;
+
+  if (LINE_BLOCK_TYPES.has(blockType)) {
+    addLineChart(pres, slide, block, chartY, chartH);
+  } else if (BAR_WITH_LINE_BLOCK_TYPES.has(blockType)) {
+    addBarWithOptionalLineChart(pres, slide, block, chartY, chartH);
+  } else if (GROUPED_BAR_BLOCK_TYPES.has(blockType)) {
+    addGroupedBarChart(pres, slide, block, chartY, chartH);
+  } else {
+    // Default: grouped bar
+    addGroupedBarChart(pres, slide, block, chartY, chartH);
+  }
+}
+
+function toChartData(series: ChartSeries[]) {
+  return series.map((s) => ({
+    name: s.name,
+    labels: s.data.map((d) => d.label),
+    values: s.data.map((d) => d.value ?? 0),
+  }));
+}
+
+function pickColors(series: ChartSeries[], palette: string[]): string[] {
+  return series.map((s, i) =>
+    s.color && s.color !== "line" ? s.color.replace("#", "") : palette[i % palette.length]
+  );
+}
+
+function addLineChart(
+  pres: PptxGenJS,
+  slide: PptxSlide,
+  block: SlideBlock,
+  chartY: number,
+  chartH: number
+) {
+  const chartData = toChartData(block.chartSeries);
+  const colors = pickColors(block.chartSeries, LINE_CHART_COLORS);
+
+  slide.addChart(pres.ChartType.line, chartData, {
+    x: LAYOUT.marginX,
+    y: chartY,
+    w: LAYOUT.contentW,
+    h: chartH,
+    showTitle: false,
+    catAxisLabelFontSize: 7,
+    valAxisLabelFontSize: 7,
+    showLegend: true,
+    legendFontSize: 7,
+    legendPos: "b",
+    chartColors: colors,
+    lineDataSymbolSize: 6,
+    lineSmooth: false,
+  });
+}
+
+function addGroupedBarChart(
+  pres: PptxGenJS,
+  slide: PptxSlide,
+  block: SlideBlock,
+  chartY: number,
+  chartH: number
+) {
+  const chartData = toChartData(block.chartSeries);
+  const colors = pickColors(block.chartSeries, CHART_COLORS);
+
+  slide.addChart(pres.ChartType.bar, chartData, {
+    x: LAYOUT.marginX,
+    y: chartY,
+    w: LAYOUT.contentW,
+    h: chartH,
+    showTitle: false,
+    barGrouping: "clustered",
+    catAxisLabelFontSize: 7,
+    valAxisLabelFontSize: 7,
+    showLegend: true,
+    legendFontSize: 7,
+    legendPos: "b",
+    chartColors: colors,
+    valGridLine: { color: COLORS.slate300, size: 0.5 },
+  });
+}
+
+function addBarWithOptionalLineChart(
+  pres: PptxGenJS,
+  slide: PptxSlide,
+  block: SlideBlock,
+  chartY: number,
+  chartH: number
+) {
+  // Split series into bar and line groups
+  const barSeries = block.chartSeries.filter((s) => s.color !== "line");
+  const lineSeries = block.chartSeries.filter((s) => s.color === "line");
+
+  if (lineSeries.length === 0) {
+    // No line overlay — plain bar chart
+    addGroupedBarChart(pres, slide, block, chartY, chartH);
+    return;
+  }
+
+  // Combo chart: BAR + LINE
+  const barColors = pickColors(barSeries, CHART_COLORS);
+  const lineColors = pickColors(lineSeries, LINE_CHART_COLORS);
+
+  const comboType: PptxGenJS.IChartMulti[] = [
+    {
+      type: pres.ChartType.bar,
+      data: toChartData(barSeries),
+      options: {
+        chartColors: barColors,
+        barGrouping: "clustered",
+      } as PptxGenJS.IChartOpts,
+    },
+    {
+      type: pres.ChartType.line,
+      data: toChartData(lineSeries),
+      options: {
+        chartColors: lineColors,
+        lineDataSymbolSize: 6,
+        lineSmooth: false,
+        secondaryValAxis: lineSeries.length > 0,
+        secondaryCatAxis: false,
+      } as PptxGenJS.IChartOpts,
+    },
+  ];
+
+  slide.addChart(comboType, [], {
+    x: LAYOUT.marginX,
+    y: chartY,
+    w: LAYOUT.contentW,
+    h: chartH,
+    showTitle: false,
+    catAxisLabelFontSize: 7,
+    valAxisLabelFontSize: 7,
+    showLegend: true,
+    legendFontSize: 7,
+    legendPos: "b",
+    valGridLine: { color: COLORS.slate300, size: 0.5 },
+  });
+}
+
+function addWaterfallChart(
+  pres: PptxGenJS,
+  slide: PptxSlide,
+  block: SlideBlock,
+  chartY: number,
+  chartH: number
+) {
+  const components = block.bridgeComponents!;
+
+  // Build stacked bar data simulating a waterfall:
+  // "Base" series (transparent) + "Delta" series (colored)
+  const labels: string[] = [];
+  const baseValues: number[] = [];
+  const deltaValues: number[] = [];
+  const deltaColors: string[] = [];
+
+  for (const comp of components) {
+    labels.push(comp.label);
+
+    if (comp.type === "start" || comp.type === "end") {
+      // Full bar from zero
+      baseValues.push(0);
+      deltaValues.push(comp.value);
+      deltaColors.push(comp.type === "start" ? COLORS.primary : COLORS.navy);
+    } else {
+      // Delta: base is the lower of runningTotal and runningTotal - value
+      const base = comp.value >= 0 ? comp.runningTotal - comp.value : comp.runningTotal;
+      baseValues.push(Math.max(0, base));
+      deltaValues.push(Math.abs(comp.value));
+      deltaColors.push(comp.value >= 0 ? COLORS.emerald : COLORS.red);
+    }
+  }
+
+  // Stacked bar chart: transparent "Base" series + colored "Delta" series
+  // pptxgenjs doesn't support per-point colors in a single series,
+  // so we use a single delta color (primary blue) for simplicity.
+  const chartData = [
+    { name: "Base", labels, values: baseValues },
+    { name: "Change", labels, values: deltaValues },
+  ];
+
+  slide.addChart(pres.ChartType.bar, chartData, {
+    x: LAYOUT.marginX,
+    y: chartY,
+    w: LAYOUT.contentW,
+    h: chartH,
+    showTitle: false,
+    barGrouping: "stacked",
+    chartColors: [COLORS.transparent, COLORS.primary],
+    catAxisLabelFontSize: 7,
+    valAxisLabelFontSize: 7,
+    showLegend: false,
+    valGridLine: { color: COLORS.slate300, size: 0.5 },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Block → Slide rendering
 // ---------------------------------------------------------------------------
 
@@ -186,7 +434,13 @@ function renderBlockSlide(pres: PptxGenJS, block: SlideBlock) {
     return;
   }
 
+  // Determine whether this block has chart data
+  const hasChart = block.chartSeries.length > 0 || (block.bridgeComponents && block.bridgeComponents.length > 0);
+  const chartH = hasChart ? 2.2 : 0;
+  const chartGap = hasChart ? 0.15 : 0;
+
   // Table
+  let tableEndY = contentStartY;
   if (block.table.rows.length > 0) {
     const tableRows: PptxGenJS.TableRow[] = [];
 
@@ -255,9 +509,10 @@ function renderBlockSlide(pres: PptxGenJS, block: SlideBlock) {
       tableRows.push(rowCells);
     });
 
-    // Calculate available height
-    const availH = LAYOUT.slideH - contentStartY - 0.6;
-    const rowH = Math.min(0.28, availH / tableRows.length);
+    // Calculate available height — reduce for chart if present
+    const totalAvailH = LAYOUT.slideH - contentStartY - 0.6;
+    const tableAvailH = hasChart ? totalAvailH - chartH - chartGap : totalAvailH;
+    const rowH = Math.min(0.28, tableAvailH / tableRows.length);
 
     slide.addTable(tableRows, {
       x: LAYOUT.marginX,
@@ -267,6 +522,23 @@ function renderBlockSlide(pres: PptxGenJS, block: SlideBlock) {
       border: { type: "solid", color: TABLE_STYLE.borderColor, pt: TABLE_STYLE.borderWidth },
       autoPage: false,
     });
+
+    tableEndY = contentStartY + rowH * tableRows.length + chartGap;
+  }
+
+  // Chart rendering
+  if (hasChart) {
+    const chartStartY = block.table.rows.length > 0
+      ? tableEndY
+      : contentStartY;
+    const chartAvailH = LAYOUT.slideH - chartStartY - 0.6;
+    const effectiveChartH = block.table.rows.length > 0
+      ? Math.min(chartH, chartAvailH)
+      : Math.min(3.0, chartAvailH);
+
+    if (effectiveChartH > 1.0) {
+      addChartToSlide(pres, slide, block, chartStartY, effectiveChartH);
+    }
   }
 
   // Footnotes

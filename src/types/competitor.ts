@@ -325,6 +325,10 @@ export interface AppendReview {
 export interface TimelineSlot {
   /** e.g. "Q1 2023" */
   label: string;
+  /** Calendar year of the slot */
+  fiscalYear: number;
+  /** Calendar quarter of the slot */
+  fiscalQuarter: number;
   /** Period-end date if on file, else approximate expected date */
   periodEnd: string;
   /** Whether this quarter has a filing on file */
@@ -332,4 +336,3 @@ export interface TimelineSlot {
   /** The source if present */
   source?: "sec" | "pdf";
 }
-

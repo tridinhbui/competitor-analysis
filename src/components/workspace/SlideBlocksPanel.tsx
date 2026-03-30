@@ -217,6 +217,11 @@ const BLOCK_TYPE_LABELS: Record<string, string> = {
   "market-data-volume": "Market Vol",
   "market-data-channel": "Mkt Channel",
   "competitive-overlap": "Overlap",
+  "peer-qoq-comparison": "Peer QoQ",
+  "peer-yoy-comparison": "Peer YoY",
+  "peer-ttm-comparison": "Peer TTM",
+  "unit-economics-trend": "$/Unit Trend",
+  "margin-gap-per-unit": "$/Unit Gap",
 };
 
 function SlideBlockCard({
@@ -307,6 +312,8 @@ function SlideBlockCard({
               chart = <MarginGapChart series={block.chartSeries} />;
             } else if (bt === "sga-trend") {
               chart = <MultiLineTrend series={block.chartSeries} yAxisFormat="percent" />;
+            } else if (bt === "unit-economics-trend" || bt === "margin-gap-per-unit") {
+              chart = <MultiLineTrend series={block.chartSeries} yAxisFormat="per-unit" />;
             } else if (bt === "segment-revenue-composition") {
               chart = <DualAxisChart series={block.chartSeries} stackBars />;
             } else if (bt === "segment-margin-comparison" || bt === "per-unit-comparison") {
@@ -321,6 +328,10 @@ function SlideBlockCard({
               chart = <GroupedBarChart series={block.chartSeries} showChangeLabels valueFormat="percent" />;
             } else if (bt === "market-data-volume" || bt === "market-data-channel") {
               chart = <GroupedBarChart series={block.chartSeries} valueFormat="percent" />;
+            } else if (bt === "peer-qoq-comparison" || bt === "peer-yoy-comparison") {
+              chart = <GroupedBarChart series={block.chartSeries} showChangeLabels valueFormat="currency" />;
+            } else if (bt === "peer-ttm-comparison") {
+              chart = <GroupedBarChart series={block.chartSeries} showChangeLabels valueFormat="currency" />;
             }
 
             return chart ? (

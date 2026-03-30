@@ -94,6 +94,79 @@ function ModuleRow({ m }: { m: ModuleReadiness }) {
   );
 }
 
+function ComparisonSetup({
+  company,
+  peerCoverage,
+}: {
+  company: WorkspaceReadiness["company"];
+  peerCoverage: WorkspaceReadiness["peerCoverage"];
+}) {
+  const subject = company.peerType === "subject"
+    ? company
+    : peerCoverage.find((peer) => peer.peerType === "subject");
+
+  const comparables = peerCoverage.filter((peer) => peer.ticker !== company.ticker);
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-subtle">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Comparison Setup
+          </h4>
+          <p className="mt-1 text-[11px] text-slate-400">
+            The selected company runs analysis against the subject company and the peer group already in the workspace.
+          </p>
+        </div>
+        <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600">
+          {comparables.length + 1} companies linked
+        </span>
+      </div>
+
+      <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,220px)_1fr]">
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+            Subject company
+          </p>
+          <p className="mt-2 text-sm font-bold text-slate-900">
+            {subject?.name ?? "No subject selected"}
+          </p>
+          <p className="text-[11px] text-slate-500">
+            {subject?.ticker ?? "Set one company to Subject Company"}
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-slate-200 bg-white px-3 py-3">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+              Peer universe
+            </p>
+            <p className="text-[10px] text-slate-400">
+              Modules consume quarter history across this set
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary">
+              {company.ticker} active
+            </span>
+            {comparables.map((peer) => (
+              <span
+                key={peer.ticker}
+                className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700"
+              >
+                {peer.ticker} · {peer.quarterCount}Q
+              </span>
+            ))}
+          </div>
+          <p className="mt-3 text-[11px] text-slate-500">
+            To make companies interact, keep one company as `Subject Company`, assign the rest as peer types, then upload matching quarters across them. The comparison modules and peer modules use that shared quarter history.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main workspace panel
 // ---------------------------------------------------------------------------
@@ -108,7 +181,7 @@ export function WorkspacePanel({ ticker }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [peerUpdating, setPeerUpdating] = useState(false);
-  const [showAppendFlow, setShowAppendFlow] = useState(false);
+  const [activeSlot, setActiveSlot] = useState<TimelineSlot | null>(null);
 
   const fetchReadiness = useCallback(async (t: string) => {
     setLoading(true);
@@ -205,11 +278,14 @@ export function WorkspacePanel({ ticker }: Props) {
           </div>
           <div className="flex items-center gap-1.5">
             <button
-              onClick={() => setShowAppendFlow(!showAppendFlow)}
+              onClick={() => {
+                const firstMissing = readiness.timeline?.find((slot) => !slot.present) ?? readiness.timeline?.[0] ?? null;
+                setActiveSlot(firstMissing);
+              }}
               className="inline-flex items-center gap-1 rounded-md bg-primary px-2.5 py-1.5 text-[11px] font-semibold text-white shadow-subtle transition hover:opacity-90"
             >
               <Plus className="h-3.5 w-3.5" />
-              Add Quarter
+              Upload Quarter
             </button>
             <button
               onClick={() => fetchReadiness(company.ticker)}
@@ -268,24 +344,32 @@ export function WorkspacePanel({ ticker }: Props) {
         </select>
       </div>
 
+      <ComparisonSetup company={company} peerCoverage={peerCoverage} />
+
       {/* Append flow */}
-      {showAppendFlow && (
+      {activeSlot && (
         <div className="rounded-xl border border-primary/20 bg-primary/[0.02] p-4">
           <QuarterAppendFlow
+            key={`${company.ticker}-${activeSlot.label}`}
             prefilledTicker={company.ticker}
-            onAppended={(timeline, count) => {
-              setShowAppendFlow(false);
+            slot={activeSlot}
+            onAppended={() => {
+              setActiveSlot(null);
               // Refresh workspace readiness
               if (ticker) fetchReadiness(ticker);
             }}
-            onClose={() => setShowAppendFlow(false)}
+            onClose={() => setActiveSlot(null)}
           />
         </div>
       )}
 
       {/* Quarter coverage timeline */}
       {readiness.timeline && readiness.timeline.length > 0 && (
-        <QuarterTimeline slots={readiness.timeline} />
+        <QuarterTimeline
+          slots={readiness.timeline}
+          onSelectSlot={setActiveSlot}
+          activeSlotLabel={activeSlot?.label ?? null}
+        />
       )}
 
       {/* Quarter history (period-end dates) */}

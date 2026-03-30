@@ -13,6 +13,10 @@ import {
   type CompanyFacts,
 } from "@/lib/secEdgar";
 import { saveFiling } from "@/lib/filingStorage";
+import {
+  fetchLatestFilingText,
+  extractFootnotesAndAdjusted,
+} from "@/lib/filingTextExtractor";
 import type { StepEvent, FullAnalysis } from "@/types/analysis";
 import { PIPELINE_STEPS } from "@/types/analysis";
 
@@ -259,6 +263,67 @@ export async function GET(request: Request) {
             message: s.msg(),
             durationMs: 120,
             detail: s.detailFn(),
+          });
+        }
+
+        // Extract footnotes + adjusted metrics from the actual filing document (non-blocking)
+        const apiKey = process.env.OPENAI_API_KEY?.trim();
+        if (apiKey) {
+          send({
+            step: "extract_footnotes",
+            label: labelFor("extract_footnotes"),
+            status: "running",
+            message: "Fetching filing document for footnotes & adjusted metrics…",
+          });
+          const tFn = Date.now();
+          try {
+            const filingDoc = await fetchLatestFilingText(cik);
+            if (filingDoc) {
+              const model = process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini";
+              const { footnotes, adjustedMetrics } = await extractFootnotesAndAdjusted(
+                filingDoc.text,
+                apiKey,
+                model
+              );
+              result.footnotes = footnotes;
+              result.adjustedMetrics = adjustedMetrics;
+              send({
+                step: "extract_footnotes",
+                label: labelFor("extract_footnotes"),
+                status: "done",
+                message: `Extracted ${footnotes.length} footnotes, ${adjustedMetrics.length} adjusted metrics`,
+                durationMs: Date.now() - tFn,
+                detail: {
+                  footnotes: footnotes.length,
+                  adjustedMetrics: adjustedMetrics.length,
+                  form: filingDoc.form,
+                  reportDate: filingDoc.reportDate,
+                },
+              });
+            } else {
+              send({
+                step: "extract_footnotes",
+                label: labelFor("extract_footnotes"),
+                status: "skipped",
+                message: "Filing document not available",
+                durationMs: Date.now() - tFn,
+              });
+            }
+          } catch {
+            send({
+              step: "extract_footnotes",
+              label: labelFor("extract_footnotes"),
+              status: "skipped",
+              message: "Could not extract footnotes (non-critical)",
+              durationMs: Date.now() - tFn,
+            });
+          }
+        } else {
+          send({
+            step: "extract_footnotes",
+            label: labelFor("extract_footnotes"),
+            status: "skipped",
+            message: "OPENAI_API_KEY not set — skipping footnote extraction",
           });
         }
 

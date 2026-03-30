@@ -43,6 +43,11 @@ const BLOCK_LABELS: Record<SlideBlockType, string> = {
   "market-data-volume": "Market Data — Volume",
   "market-data-channel": "Market Data — Channel",
   "competitive-overlap": "Competitive Overlap",
+  "peer-qoq-comparison": "Peer QoQ Comparison",
+  "peer-yoy-comparison": "Peer YoY Comparison",
+  "peer-ttm-comparison": "Peer TTM Comparison",
+  "unit-economics-trend": "Unit Economics Trend",
+  "margin-gap-per-unit": "Margin Gap Per Unit",
 };
 
 // ---------------------------------------------------------------------------

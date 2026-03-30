@@ -420,6 +420,8 @@ export function buildCoverageTimeline(
     const filing = filingMap.get(key);
     return {
       label: e.label,
+      fiscalYear: e.year,
+      fiscalQuarter: e.quarter,
       periodEnd: filing?.periodEnd ?? e.approxPeriodEnd,
       present: !!filing,
       source: filing?.source,

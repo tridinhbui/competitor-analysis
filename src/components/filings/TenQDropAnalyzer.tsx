@@ -48,11 +48,29 @@ export function TenQDropAnalyzer() {
           source: "pdf",
           analysis: result,
         }),
-      }).catch(() => {
-        // Silent fail — filing persistence is non-blocking
-      });
+      }).catch(() => {});
     }
-  }, [phase, result]);
+    // Save to analysis history
+    const companyName = result.meta.companyName ?? result.meta.ticker ?? "Unknown";
+    const quarter = result.meta.periodEnd ? result.meta.periodEnd.slice(0, 7) : "";
+    const title = result.meta.source === "pdf"
+      ? `PDF Analysis — ${companyName} ${quarter}`
+      : `${companyName} ${quarter} Analysis`;
+    fetch("/api/history", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ticker: result.meta.ticker ?? null,
+        companyName,
+        source: result.meta.source ?? "sec",
+        periodEnd: result.meta.periodEnd ?? null,
+        quarterLabel: quarter,
+        title,
+        analysis: result,
+        events,
+      }),
+    }).catch(() => {});
+  }, [phase, result, events]);
 
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();

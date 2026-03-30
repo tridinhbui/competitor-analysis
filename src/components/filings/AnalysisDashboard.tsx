@@ -39,12 +39,17 @@ const tooltipStyle = {
 
 /* ──────────────────── Tabs ──────────────────── */
 
-type TabId = "overview" | "capital" | "cashflow" | "ratios" | "data";
+type TabId = "overview" | "capital" | "cashflow" | "ratios" | "data" | "segments" | "op-analysis" | "da" | "sga" | "notes";
 
 const TABS: { id: TabId; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: "overview", label: "Overview", icon: ShieldCheck },
   { id: "capital", label: "Capital", icon: DollarSign },
   { id: "cashflow", label: "Cash Flow", icon: BarChart3 },
+  { id: "segments", label: "Segments", icon: BarChart3 },
+  { id: "op-analysis", label: "OP/EBIT", icon: TrendingUp },
+  { id: "da", label: "D&A", icon: Activity },
+  { id: "sga", label: "SG&A", icon: DollarSign },
+  { id: "notes", label: "Notes & Adj.", icon: FileCheck },
   { id: "ratios", label: "Ratios", icon: Gauge },
   { id: "data", label: "Data", icon: Activity },
 ];
@@ -503,6 +508,408 @@ export function AnalysisDashboard({ result, onExport }: Props) {
             </div>
           </div>
         )}
+
+        {/* ─── SEGMENTS ─── */}
+        {activeTab === "segments" && (
+          <div className="space-y-4">
+            {(!result.segments || result.segments.length === 0) ? (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-400">
+                No segment data available for this filing.
+              </div>
+            ) : (
+              <>
+                {/* Segment revenue breakdown */}
+                <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-subtle">
+                  <h4 className="mb-3 text-xs font-bold uppercase tracking-wide text-slate-500">Segment Revenue Breakdown</h4>
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <div className="h-52">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={(result.segments ?? []).filter(s => (s.revenue ?? 0) > 0).map(s => ({ name: s.segmentName, value: s.revenue! }))}
+                            cx="50%" cy="50%" innerRadius={40} outerRadius={70} dataKey="value"
+                            label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
+                          >
+                            {(result.segments ?? []).filter(s => (s.revenue ?? 0) > 0).map((_, i) => (
+                              <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                            ))}
+                          </Pie>
+                          <Tooltip formatter={(v) => `$${Number(v).toLocaleString()}M`} contentStyle={tooltipStyle} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <table className="w-full text-xs self-start">
+                      <thead><tr className="border-b-2 border-slate-200">
+                        <th className="px-2 py-1.5 text-left text-slate-500 font-semibold">Segment</th>
+                        <th className="px-2 py-1.5 text-right text-slate-500 font-semibold">Revenue</th>
+                        <th className="px-2 py-1.5 text-right text-slate-500 font-semibold">OP Income</th>
+                        <th className="px-2 py-1.5 text-right text-slate-500 font-semibold">OP Margin</th>
+                      </tr></thead>
+                      <tbody>
+                        {(result.segments ?? []).map((seg, i) => (
+                          <tr key={i} className="border-b border-slate-50">
+                            <td className="px-2 py-1.5 font-medium text-slate-700">{seg.segmentName}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums">{seg.revenue != null ? `$${seg.revenue.toLocaleString()}M` : "—"}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums">{seg.operatingIncome != null ? `$${seg.operatingIncome.toLocaleString()}M` : "—"}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums">{seg.operatingMargin != null ? `${seg.operatingMargin.toFixed(1)}%` : "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                {/* Segment detail cards */}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {(result.segments ?? []).map((seg, i) => (
+                    <div key={i} className="rounded-xl border border-slate-100 bg-white p-4 shadow-subtle">
+                      <h5 className="mb-2 text-sm font-bold text-slate-900">{seg.segmentName}</h5>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div><span className="text-slate-400">Revenue:</span> <span className="font-semibold tabular-nums">{seg.revenue != null ? `$${seg.revenue.toLocaleString()}M` : "—"}</span></div>
+                        <div><span className="text-slate-400">COGS:</span> <span className="font-semibold tabular-nums">{seg.costOfRevenue != null ? `$${seg.costOfRevenue.toLocaleString()}M` : "—"}</span></div>
+                        <div><span className="text-slate-400">Gross Profit:</span> <span className="font-semibold tabular-nums">{seg.grossProfit != null ? `$${seg.grossProfit.toLocaleString()}M` : "—"}</span></div>
+                        <div><span className="text-slate-400">SG&A:</span> <span className="font-semibold tabular-nums">{seg.sgaExpense != null ? `$${seg.sgaExpense.toLocaleString()}M` : "—"}</span></div>
+                        <div><span className="text-slate-400">OP Income:</span> <span className="font-semibold tabular-nums">{seg.operatingIncome != null ? `$${seg.operatingIncome.toLocaleString()}M` : "—"}</span></div>
+                        <div><span className="text-slate-400">OP Margin:</span> <span className={cn("font-semibold tabular-nums", (seg.operatingMargin ?? 0) > 0 ? "text-emerald-600" : "text-red-500")}>{seg.operatingMargin != null ? `${seg.operatingMargin.toFixed(1)}%` : "—"}</span></div>
+                        <div><span className="text-slate-400">CapEx:</span> <span className="font-semibold tabular-nums">{seg.capitalExpenditures != null ? `$${seg.capitalExpenditures.toLocaleString()}M` : "—"}</span></div>
+                        <div><span className="text-slate-400">D&A:</span> <span className="font-semibold tabular-nums">{seg.depreciation != null ? `$${seg.depreciation.toLocaleString()}M` : "—"}</span></div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ─── OP / EBIT ─── */}
+        {activeTab === "op-analysis" && (() => {
+          const revenue = cfItems.find(i => ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"].includes(i.tag))?.value ?? null;
+          const cogs = cfItems.find(i => ["CostOfGoodsAndServicesSold", "CostOfRevenue", "CostOfGoodsSold"].includes(i.tag))?.value ?? null;
+          const gp = cfItems.find(i => i.tag === "GrossProfit")?.value ?? (revenue != null && cogs != null ? revenue - cogs : null);
+          const sga = cfItems.find(i => i.tag === "SellingGeneralAndAdministrativeExpense")?.value ?? null;
+          const op = cfItems.find(i => i.tag === "OperatingIncomeLoss")?.value ?? null;
+          const interest = cfItems.find(i => ["InterestExpense", "InterestExpenseNet"].includes(i.tag))?.value ?? null;
+          const ebit = op;
+          const dep = cfItems.find(i => ["DepreciationDepletionAndAmortization", "DepreciationAndAmortization", "Depreciation"].includes(i.tag))?.value ?? null;
+          const ebitda = ebit != null && dep != null ? ebit + Math.abs(dep) : null;
+          const pctOf = (v: number | null) => v != null && revenue ? `${((v / revenue) * 100).toFixed(1)}%` : "—";
+          const fmtV = (v: number | null) => v != null ? `$${v.toLocaleString()}M` : "—";
+
+          const bridgeItems = [
+            { label: "Revenue", value: revenue, color: "bg-blue-500" },
+            { label: "COGS", value: cogs ? -Math.abs(cogs) : null, color: "bg-red-400" },
+            { label: "Gross Profit", value: gp, color: "bg-emerald-500" },
+            { label: "SG&A", value: sga ? -Math.abs(sga) : null, color: "bg-amber-400" },
+            { label: "Operating Income", value: op, color: "bg-primary" },
+          ];
+
+          return (
+            <div className="space-y-4">
+              {/* Headlines */}
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-100">
+                  <p className="text-[10px] font-semibold uppercase text-slate-400">Operating Income</p>
+                  <p className="text-lg font-bold tabular-nums text-slate-900">{fmtV(op)}</p>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-100">
+                  <p className="text-[10px] font-semibold uppercase text-slate-400">OP Margin</p>
+                  <p className="text-lg font-bold tabular-nums text-slate-900">{pctOf(op)}</p>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-100">
+                  <p className="text-[10px] font-semibold uppercase text-slate-400">EBIT</p>
+                  <p className="text-lg font-bold tabular-nums text-slate-900">{fmtV(ebit)}</p>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-100">
+                  <p className="text-[10px] font-semibold uppercase text-slate-400">EBITDA</p>
+                  <p className="text-lg font-bold tabular-nums text-slate-900">{fmtV(ebitda)}</p>
+                </div>
+              </div>
+
+              {/* OP Bridge (visual) */}
+              <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-subtle">
+                <h4 className="mb-3 text-xs font-bold uppercase tracking-wide text-slate-500">Operating Profit Bridge</h4>
+                <div className="space-y-2">
+                  {bridgeItems.map((item) => {
+                    const maxVal = Math.max(...bridgeItems.filter(b => b.value != null).map(b => Math.abs(b.value!)));
+                    const pct = item.value != null && maxVal > 0 ? (Math.abs(item.value) / maxVal) * 100 : 0;
+                    return (
+                      <div key={item.label} className="flex items-center gap-3">
+                        <span className="w-28 text-xs font-medium text-slate-600">{item.label}</span>
+                        <div className="flex-1 h-5 rounded-full bg-slate-100">
+                          <div className={`h-5 rounded-full ${item.color} transition-all`} style={{ width: `${pct}%` }} />
+                        </div>
+                        <span className={`w-24 text-right text-xs font-semibold tabular-nums ${(item.value ?? 0) < 0 ? "text-red-500" : "text-slate-700"}`}>
+                          {fmtV(item.value)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Key Drivers */}
+              <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-subtle">
+                <h4 className="mb-3 text-xs font-bold uppercase tracking-wide text-slate-500">Key Drivers</h4>
+                <table className="w-full text-xs">
+                  <thead><tr className="border-b-2 border-slate-200">
+                    <th className="px-2 py-1.5 text-left text-slate-500 font-semibold">Item</th>
+                    <th className="px-2 py-1.5 text-right text-slate-500 font-semibold">Value ($M)</th>
+                    <th className="px-2 py-1.5 text-right text-slate-500 font-semibold">% of Revenue</th>
+                  </tr></thead>
+                  <tbody>
+                    {[
+                      { label: "Revenue", val: revenue },
+                      { label: "Cost of Revenue", val: cogs },
+                      { label: "Gross Profit", val: gp },
+                      { label: "SG&A Expense", val: sga },
+                      { label: "Operating Income", val: op },
+                      { label: "Interest Expense", val: interest },
+                      { label: "EBIT", val: ebit },
+                      { label: "EBITDA", val: ebitda },
+                    ].map((r, i) => (
+                      <tr key={i} className={cn("border-b border-slate-50", r.label === "Gross Profit" || r.label === "Operating Income" || r.label === "EBIT" ? "font-semibold bg-slate-50/50" : "")}>
+                        <td className="px-2 py-1.5 text-slate-700">{r.label}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums">{fmtV(r.val)}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{pctOf(r.val)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ─── D&A ─── */}
+        {activeTab === "da" && (() => {
+          const depTags = ["DepreciationDepletionAndAmortization", "DepreciationAndAmortization", "Depreciation", "AmortizationOfIntangibleAssets", "DepreciationNonproduction"];
+          const daItems = cfItems.filter(i => depTags.some(t => i.tag.includes(t) || i.tag.includes("Depreciation") || i.tag.includes("Amortization")));
+          const mainDep = cfItems.find(i => ["DepreciationDepletionAndAmortization", "DepreciationAndAmortization", "Depreciation"].includes(i.tag));
+          const revenue = cfItems.find(i => ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"].includes(i.tag))?.value ?? null;
+          const capex = cf.capitalExpenditures;
+          const depVal = mainDep?.value ?? null;
+          const daPctRev = depVal != null && revenue ? ((Math.abs(depVal) / revenue) * 100).toFixed(1) + "%" : "—";
+          const daPctCapex = depVal != null && capex ? ((Math.abs(depVal) / Math.abs(capex)) * 100).toFixed(0) + "%" : "—";
+
+          return (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-100">
+                  <p className="text-[10px] font-semibold uppercase text-slate-400">Total D&A</p>
+                  <p className="text-lg font-bold tabular-nums text-slate-900">{depVal != null ? `$${Math.abs(depVal).toLocaleString()}M` : "—"}</p>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-100">
+                  <p className="text-[10px] font-semibold uppercase text-slate-400">D&A / Revenue</p>
+                  <p className="text-lg font-bold tabular-nums text-slate-900">{daPctRev}</p>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-100">
+                  <p className="text-[10px] font-semibold uppercase text-slate-400">D&A / CapEx</p>
+                  <p className="text-lg font-bold tabular-nums text-slate-900">{daPctCapex}</p>
+                </div>
+              </div>
+
+              {daItems.length > 0 ? (
+                <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-subtle">
+                  <h4 className="mb-3 text-xs font-bold uppercase tracking-wide text-slate-500">D&A Line Items</h4>
+                  <table className="w-full text-xs">
+                    <thead><tr className="border-b-2 border-slate-200">
+                      <th className="px-2 py-1.5 text-left text-slate-500 font-semibold">Tag</th>
+                      <th className="px-2 py-1.5 text-left text-slate-500 font-semibold">Label</th>
+                      <th className="px-2 py-1.5 text-right text-slate-500 font-semibold">Value ($M)</th>
+                    </tr></thead>
+                    <tbody>
+                      {daItems.map((item, i) => (
+                        <tr key={i} className="border-b border-slate-50">
+                          <td className="px-2 py-1.5 font-mono text-[10px] text-slate-400 truncate max-w-[200px]">{item.tag}</td>
+                          <td className="px-2 py-1.5 text-slate-700">{item.label}</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums font-semibold">${Math.abs(item.value).toLocaleString()}M</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-400">
+                  No depreciation/amortization line items found in this filing.
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* ─── SG&A ─── */}
+        {activeTab === "sga" && (() => {
+          const sgaTags = ["SellingGeneralAndAdministrativeExpense", "SellingAndMarketingExpense", "GeneralAndAdministrativeExpense", "AdvertisingExpense", "ResearchAndDevelopmentExpense"];
+          const sgaItems = cfItems.filter(i => sgaTags.some(t => i.tag.includes(t) || i.tag.includes("Selling") || i.tag.includes("Marketing") || i.tag.includes("GeneralAndAdministrative") || i.tag.includes("Advertising")));
+          const mainSga = cfItems.find(i => i.tag === "SellingGeneralAndAdministrativeExpense");
+          const revenue = cfItems.find(i => ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"].includes(i.tag))?.value ?? null;
+          const sgaVal = mainSga?.value ?? null;
+          const sgaPctRev = sgaVal != null && revenue ? ((Math.abs(sgaVal) / revenue) * 100).toFixed(1) + "%" : "—";
+
+          return (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-100">
+                  <p className="text-[10px] font-semibold uppercase text-slate-400">Total SG&A</p>
+                  <p className="text-lg font-bold tabular-nums text-slate-900">{sgaVal != null ? `$${Math.abs(sgaVal).toLocaleString()}M` : "—"}</p>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-100">
+                  <p className="text-[10px] font-semibold uppercase text-slate-400">SG&A / Revenue</p>
+                  <p className="text-lg font-bold tabular-nums text-slate-900">{sgaPctRev}</p>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-100">
+                  <p className="text-[10px] font-semibold uppercase text-slate-400">Revenue</p>
+                  <p className="text-lg font-bold tabular-nums text-slate-900">{revenue != null ? `$${revenue.toLocaleString()}M` : "—"}</p>
+                </div>
+              </div>
+
+              {sgaItems.length > 0 ? (
+                <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-subtle">
+                  <h4 className="mb-3 text-xs font-bold uppercase tracking-wide text-slate-500">SG&A Components</h4>
+                  <table className="w-full text-xs">
+                    <thead><tr className="border-b-2 border-slate-200">
+                      <th className="px-2 py-1.5 text-left text-slate-500 font-semibold">Tag</th>
+                      <th className="px-2 py-1.5 text-left text-slate-500 font-semibold">Label</th>
+                      <th className="px-2 py-1.5 text-right text-slate-500 font-semibold">Value ($M)</th>
+                      <th className="px-2 py-1.5 text-right text-slate-500 font-semibold">% Revenue</th>
+                    </tr></thead>
+                    <tbody>
+                      {sgaItems.map((item, i) => (
+                        <tr key={i} className="border-b border-slate-50">
+                          <td className="px-2 py-1.5 font-mono text-[10px] text-slate-400 truncate max-w-[200px]">{item.tag}</td>
+                          <td className="px-2 py-1.5 text-slate-700">{item.label}</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums font-semibold">${Math.abs(item.value).toLocaleString()}M</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{revenue ? ((Math.abs(item.value) / revenue) * 100).toFixed(1) + "%" : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-400">
+                  No SG&A line items found in this filing.
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* ─── NOTES & ADJUSTED METRICS ─── */}
+        {activeTab === "notes" && (() => {
+          const footnotes = result.footnotes ?? [];
+          const adjustedMetrics = result.adjustedMetrics ?? [];
+          const sigColor = (s: string) =>
+            s === "high" ? "bg-red-100 text-red-700" :
+            s === "medium" ? "bg-amber-100 text-amber-700" :
+            "bg-slate-100 text-slate-500";
+          const typeColor = (t: string) =>
+            t === "debt" ? "bg-blue-50 text-blue-700 ring-blue-100" :
+            t === "contingency" ? "bg-red-50 text-red-700 ring-red-100" :
+            t === "segment" ? "bg-purple-50 text-purple-700 ring-purple-100" :
+            t === "tax" ? "bg-amber-50 text-amber-700 ring-amber-100" :
+            t === "revenue" ? "bg-emerald-50 text-emerald-700 ring-emerald-100" :
+            "bg-slate-50 text-slate-600 ring-slate-100";
+          return (
+            <div className="space-y-6">
+              {/* Footnotes */}
+              <div>
+                <h3 className="mb-3 text-sm font-bold text-slate-800">
+                  Notable Footnotes
+                  {footnotes.length > 0 && (
+                    <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">{footnotes.length}</span>
+                  )}
+                </h3>
+                {footnotes.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-400">
+                    Footnote extraction requires OPENAI_API_KEY and runs after XBRL analysis.
+                    Run a new SEC ticker analysis to populate this section.
+                  </div>
+                ) : (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {footnotes.map((fn, i) => (
+                      <div key={i} className={cn("rounded-xl border p-4 shadow-subtle ring-1", typeColor(fn.type))}>
+                        <div className="mb-2 flex items-start justify-between gap-2">
+                          <p className="text-xs font-bold text-slate-900">{fn.title}</p>
+                          <div className="flex shrink-0 gap-1">
+                            <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold uppercase", sigColor(fn.significance))}>
+                              {fn.significance}
+                            </span>
+                          </div>
+                        </div>
+                        <p className="text-[11px] leading-relaxed text-slate-600">{fn.summary}</p>
+                        <span className={cn("mt-2 inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1", typeColor(fn.type))}>
+                          {fn.type}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Adjusted Metrics */}
+              <div>
+                <h3 className="mb-3 text-sm font-bold text-slate-800">
+                  Non-GAAP Adjusted Metrics
+                  {adjustedMetrics.length > 0 && (
+                    <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">{adjustedMetrics.length}</span>
+                  )}
+                </h3>
+                {adjustedMetrics.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-400">
+                    No non-GAAP adjusted metrics found in this filing, or extraction not yet run.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {adjustedMetrics.map((am, i) => {
+                      const totalAdj = am.adjustments.reduce((s, a) => s + a.value, 0);
+                      const unit = am.unit === "per-share" ? "" : "M";
+                      return (
+                        <div key={i} className="rounded-xl border border-slate-100 bg-white p-4 shadow-subtle">
+                          <div className="mb-3 flex items-center justify-between">
+                            <div>
+                              <p className="text-sm font-bold text-slate-900">{am.name}</p>
+                              <p className="text-[10px] text-slate-400">{am.period}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-xs text-slate-400">Adjusted</p>
+                              <p className="text-lg font-bold tabular-nums text-emerald-600">
+                                {am.adjustedValue != null ? `$${am.adjustedValue.toLocaleString()}${unit}` : "—"}
+                              </p>
+                            </div>
+                          </div>
+                          <table className="w-full text-xs">
+                            <tbody>
+                              <tr className="border-b border-slate-100">
+                                <td className="py-1 text-slate-500">GAAP</td>
+                                <td className="py-1 text-right tabular-nums font-semibold text-slate-700">
+                                  {am.gaapValue != null ? `$${am.gaapValue.toLocaleString()}${unit}` : "—"}
+                                </td>
+                              </tr>
+                              {am.adjustments.map((adj, j) => (
+                                <tr key={j} className="border-b border-slate-50">
+                                  <td className="py-1 pl-3 text-slate-400">+ {adj.label}</td>
+                                  <td className={cn("py-1 text-right tabular-nums", adj.value >= 0 ? "text-emerald-600" : "text-red-500")}>
+                                    {adj.value >= 0 ? "+" : ""}${adj.value.toLocaleString()}${unit}
+                                  </td>
+                                </tr>
+                              ))}
+                              <tr className="border-t-2 border-slate-200">
+                                <td className="py-1 font-bold text-slate-700">Total adjustments</td>
+                                <td className={cn("py-1 text-right tabular-nums font-bold", totalAdj >= 0 ? "text-emerald-600" : "text-red-500")}>
+                                  {totalAdj >= 0 ? "+" : ""}${totalAdj.toLocaleString()}${unit}
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ─── DATA ─── */}
         {activeTab === "data" && (

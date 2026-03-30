@@ -33,7 +33,12 @@ export type SlideBlockType =
   | "methodology-comparison"
   | "market-data-volume"
   | "market-data-channel"
-  | "competitive-overlap";
+  | "competitive-overlap"
+  | "peer-qoq-comparison"
+  | "peer-yoy-comparison"
+  | "peer-ttm-comparison"
+  | "unit-economics-trend"
+  | "margin-gap-per-unit";
 
 // ---------------------------------------------------------------------------
 // Table structure — presentation-ready

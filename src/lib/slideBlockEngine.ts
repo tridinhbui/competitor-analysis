@@ -1546,6 +1546,695 @@ function buildSGATrendBlock(
 }
 
 // ---------------------------------------------------------------------------
+// Per-Peer QoQ Comparison
+// ---------------------------------------------------------------------------
+
+const PEER_COMPARISON_METRICS: MetricDef[] = CORE_METRICS.filter((d) =>
+  ["revenue", "grossProfit", "operatingIncome", "netIncome",
+   "operatingMargin", "netMargin"].includes(d.key)
+);
+
+export function buildPeerQoQBlock(
+  subjectMetrics: QuarterMetrics[],
+  peerMetrics: QuarterMetrics[],
+  peerTicker: string
+): SlideBlock | null {
+  const sSorted = [...subjectMetrics].sort((a, b) => a.periodEnd.localeCompare(b.periodEnd));
+  const pSorted = [...peerMetrics].sort((a, b) => a.periodEnd.localeCompare(b.periodEnd));
+  if (sSorted.length < 2 || pSorted.length < 2) return null;
+
+  const sCurr = sSorted[sSorted.length - 1];
+  const sPrior = sSorted[sSorted.length - 2];
+  const pCurr = pSorted[pSorted.length - 1];
+  const pPrior = pSorted[pSorted.length - 2];
+
+  const blockId = `peer-qoq-${sCurr.ticker}-vs-${peerTicker}-${sCurr.quarterLabel.replace(/\s/g, "-")}`;
+
+  const columns: SlideColumn[] = [
+    { header: "", align: "left" },
+    rightCol(`${sCurr.ticker} ${sPrior.quarterLabel}`),
+    rightCol(`${sCurr.ticker} ${sCurr.quarterLabel}`),
+    rightCol("Chg"),
+    rightCol(`${peerTicker} ${pPrior.quarterLabel}`),
+    rightCol(`${peerTicker} ${pCurr.quarterLabel}`),
+    rightCol("Chg"),
+  ];
+
+  const rows: SlideTableRow[] = PEER_COMPARISON_METRICS.map((def) => {
+    const sp = sPrior[def.key] as number | null;
+    const sc = sCurr[def.key] as number | null;
+    const sChg = changeForFormat(sc, sp, def.format);
+    const pp = pPrior[def.key] as number | null;
+    const pc = pCurr[def.key] as number | null;
+    const pChg = changeForFormat(pc, pp, def.format);
+
+    return metricRow(def.label, [
+      cell(formatValue(sp, def.format), sp),
+      cell(formatValue(sc, def.format), sc),
+      cell(sChg.change || "—", null, undefined, sChg.direction),
+      cell(formatValue(pp, def.format), pp),
+      cell(formatValue(pc, def.format), pc),
+      cell(pChg.change || "—", null, undefined, pChg.direction),
+    ]);
+  });
+
+  // Headlines: Subject OP change vs Peer OP change
+  const headlines: HeadlineMetric[] = [];
+  const sOpChg = fmtPctChange(sCurr.operatingIncome, sPrior.operatingIncome);
+  const pOpChg = fmtPctChange(pCurr.operatingIncome, pPrior.operatingIncome);
+  if (sOpChg.change) headlines.push({ label: `${sCurr.ticker} OP`, value: sOpChg.change, comparison: "QoQ", direction: sOpChg.direction ?? undefined });
+  if (pOpChg.change) headlines.push({ label: `${peerTicker} OP`, value: pOpChg.change, comparison: "QoQ", direction: pOpChg.direction ?? undefined });
+
+  // Chart: 4 series grouped bar
+  const chartDefs = PEER_COMPARISON_METRICS.filter((d) => d.format === "currency").slice(0, 4);
+  const chartSeries: ChartSeries[] = [
+    { name: `${sCurr.ticker} ${sPrior.quarterLabel}`, data: chartDefs.map((def) => ({ label: def.label, value: sPrior[def.key] as number | null })) },
+    { name: `${sCurr.ticker} ${sCurr.quarterLabel}`, data: chartDefs.map((def) => ({ label: def.label, value: sCurr[def.key] as number | null })) },
+    { name: `${peerTicker} ${pPrior.quarterLabel}`, data: chartDefs.map((def) => ({ label: def.label, value: pPrior[def.key] as number | null })) },
+    { name: `${peerTicker} ${pCurr.quarterLabel}`, data: chartDefs.map((def) => ({ label: def.label, value: pCurr[def.key] as number | null })) },
+  ];
+
+  return {
+    blockId,
+    blockType: "peer-qoq-comparison",
+    title: `${sCurr.ticker} vs ${peerTicker}: ${sPrior.quarterLabel} → ${sCurr.quarterLabel} (QoQ)`,
+    subtitle: `${sCurr.companyName} vs. ${pCurr.companyName}`,
+    headlines,
+    table: { columns, rows },
+    chartSeries,
+    footnotes: [
+      "Source: SEC EDGAR 10-Q/10-K filings.",
+      "All dollar values in millions ($M).",
+    ],
+    assumptions: [
+      "Comparison uses each company's latest two consecutive quarters.",
+    ],
+    metadata: buildMeta("peer-qoq-comparison", sCurr.ticker, [peerTicker], [sPrior, sCurr, pPrior, pCurr]),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Per-Peer YoY Comparison
+// ---------------------------------------------------------------------------
+
+export function buildPeerYoYBlock(
+  subjectMetrics: QuarterMetrics[],
+  peerMetrics: QuarterMetrics[],
+  peerTicker: string
+): SlideBlock | null {
+  const sSorted = [...subjectMetrics].sort((a, b) => b.periodEnd.localeCompare(a.periodEnd));
+  const pSorted = [...peerMetrics].sort((a, b) => b.periodEnd.localeCompare(a.periodEnd));
+  if (sSorted.length === 0 || pSorted.length === 0) return null;
+
+  const sLatest = sSorted[0];
+  const sQ = deriveQuarter(sLatest.periodEnd);
+  const sYearAgo = sSorted.find((m) => {
+    const q = deriveQuarter(m.periodEnd);
+    return q.fiscalQuarter === sQ.fiscalQuarter && q.fiscalYear === sQ.fiscalYear - 1;
+  });
+  if (!sYearAgo) return null;
+
+  const pLatest = pSorted[0];
+  const pQ = deriveQuarter(pLatest.periodEnd);
+  const pYearAgo = pSorted.find((m) => {
+    const q = deriveQuarter(m.periodEnd);
+    return q.fiscalQuarter === pQ.fiscalQuarter && q.fiscalYear === pQ.fiscalYear - 1;
+  });
+  if (!pYearAgo) return null;
+
+  const blockId = `peer-yoy-${sLatest.ticker}-vs-${peerTicker}-${sLatest.quarterLabel.replace(/\s/g, "-")}`;
+
+  const columns: SlideColumn[] = [
+    { header: "", align: "left" },
+    rightCol(`${sLatest.ticker} ${sYearAgo.quarterLabel}`),
+    rightCol(`${sLatest.ticker} ${sLatest.quarterLabel}`),
+    rightCol("Chg"),
+    rightCol(`${peerTicker} ${pYearAgo.quarterLabel}`),
+    rightCol(`${peerTicker} ${pLatest.quarterLabel}`),
+    rightCol("Chg"),
+  ];
+
+  const rows: SlideTableRow[] = PEER_COMPARISON_METRICS.map((def) => {
+    const sp = sYearAgo[def.key] as number | null;
+    const sc = sLatest[def.key] as number | null;
+    const sChg = changeForFormat(sc, sp, def.format);
+    const pp = pYearAgo[def.key] as number | null;
+    const pc = pLatest[def.key] as number | null;
+    const pChg = changeForFormat(pc, pp, def.format);
+
+    return metricRow(def.label, [
+      cell(formatValue(sp, def.format), sp),
+      cell(formatValue(sc, def.format), sc),
+      cell(sChg.change || "—", null, undefined, sChg.direction),
+      cell(formatValue(pp, def.format), pp),
+      cell(formatValue(pc, def.format), pc),
+      cell(pChg.change || "—", null, undefined, pChg.direction),
+    ]);
+  });
+
+  // Headlines: Subject revenue YoY vs Peer revenue YoY
+  const headlines: HeadlineMetric[] = [];
+  const sRevChg = fmtPctChange(sLatest.revenue, sYearAgo.revenue);
+  const pRevChg = fmtPctChange(pLatest.revenue, pYearAgo.revenue);
+  if (sRevChg.change) headlines.push({ label: `${sLatest.ticker} Revenue`, value: sRevChg.change, comparison: "YoY", direction: sRevChg.direction ?? undefined });
+  if (pRevChg.change) headlines.push({ label: `${peerTicker} Revenue`, value: pRevChg.change, comparison: "YoY", direction: pRevChg.direction ?? undefined });
+
+  // Chart: 4 series grouped bar
+  const chartDefs = PEER_COMPARISON_METRICS.filter((d) => d.format === "currency").slice(0, 4);
+  const chartSeries: ChartSeries[] = [
+    { name: `${sLatest.ticker} ${sYearAgo.quarterLabel}`, data: chartDefs.map((def) => ({ label: def.label, value: sYearAgo[def.key] as number | null })) },
+    { name: `${sLatest.ticker} ${sLatest.quarterLabel}`, data: chartDefs.map((def) => ({ label: def.label, value: sLatest[def.key] as number | null })) },
+    { name: `${peerTicker} ${pYearAgo.quarterLabel}`, data: chartDefs.map((def) => ({ label: def.label, value: pYearAgo[def.key] as number | null })) },
+    { name: `${peerTicker} ${pLatest.quarterLabel}`, data: chartDefs.map((def) => ({ label: def.label, value: pLatest[def.key] as number | null })) },
+  ];
+
+  return {
+    blockId,
+    blockType: "peer-yoy-comparison",
+    title: `${sLatest.ticker} vs ${peerTicker}: Q${sQ.fiscalQuarter} ${sQ.fiscalYear - 1} vs Q${sQ.fiscalQuarter} ${sQ.fiscalYear} (YoY)`,
+    subtitle: `${sLatest.companyName} vs. ${pLatest.companyName}`,
+    headlines,
+    table: { columns, rows },
+    chartSeries,
+    footnotes: [
+      "Source: SEC EDGAR 10-Q/10-K filings.",
+      "All dollar values in millions ($M).",
+    ],
+    assumptions: [
+      `Compares same fiscal quarter year-over-year for both companies.`,
+    ],
+    metadata: buildMeta("peer-yoy-comparison", sLatest.ticker, [peerTicker], [sYearAgo, sLatest, pYearAgo, pLatest]),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Per-Peer TTM Comparison
+// ---------------------------------------------------------------------------
+
+export function buildPeerTTMBlock(
+  subjectMetrics: QuarterMetrics[],
+  peerMetrics: QuarterMetrics[],
+  peerTicker: string
+): SlideBlock | null {
+  const sSorted = [...subjectMetrics].sort((a, b) => a.periodEnd.localeCompare(b.periodEnd));
+  const pSorted = [...peerMetrics].sort((a, b) => a.periodEnd.localeCompare(b.periodEnd));
+  if (sSorted.length < 4 || pSorted.length < 4) return null;
+
+  const s4 = sSorted.slice(-4);
+  const p4 = pSorted.slice(-4);
+
+  function sumField(metrics: QuarterMetrics[], key: MetricKey): number | null {
+    const vals = metrics.map((m) => m[key] as number | null).filter((v) => v != null) as number[];
+    return vals.length === 0 ? null : Math.round(vals.reduce((a, b) => a + b, 0) * 10) / 10;
+  }
+
+  function ttmMargin(metrics: QuarterMetrics[], numKey: MetricKey): number | null {
+    const rev = sumField(metrics, "revenue");
+    const num = sumField(metrics, numKey);
+    return rev && num ? Math.round((num / rev) * 1000) / 10 : null;
+  }
+
+  const sTicker = s4[0].ticker;
+  const sLatestLabel = s4[s4.length - 1].quarterLabel;
+  const pLatestLabel = p4[p4.length - 1].quarterLabel;
+  const blockId = `peer-ttm-${sTicker}-vs-${peerTicker}-${sLatestLabel.replace(/\s/g, "-")}`;
+
+  // TTM flow metrics
+  const ttmFlowDefs: MetricDef[] = CORE_METRICS.filter((d) =>
+    ["revenue", "grossProfit", "operatingIncome", "netIncome",
+     "operatingCashFlow", "freeCashFlow"].includes(d.key)
+  );
+
+  const columns: SlideColumn[] = [
+    { header: "", align: "left" },
+    rightCol(`${sTicker} TTM`),
+    rightCol(`${peerTicker} TTM`),
+    rightCol("Difference"),
+    rightCol(`${sTicker} Margin`),
+    rightCol(`${peerTicker} Margin`),
+    rightCol("Gap (bps)"),
+  ];
+
+  const rows: SlideTableRow[] = ttmFlowDefs.map((def) => {
+    const sVal = sumField(s4, def.key);
+    const pVal = sumField(p4, def.key);
+    const diff = sVal != null && pVal != null ? sVal - pVal : null;
+    const sMargin = ttmMargin(s4, def.key);
+    const pMargin = ttmMargin(p4, def.key);
+    const gapBps = sMargin != null && pMargin != null ? Math.round((sMargin - pMargin) * 10) : null;
+    const gapDir: "positive" | "negative" | "neutral" | null =
+      gapBps == null ? null : gapBps > 0 ? "positive" : gapBps < 0 ? "negative" : "neutral";
+
+    return metricRow(def.label, [
+      cell(fmtCurrency(sVal), sVal),
+      cell(fmtCurrency(pVal), pVal),
+      cell(fmtCurrency(diff), diff, undefined, diff != null ? (diff > 0 ? "positive" : diff < 0 ? "negative" : "neutral") : undefined),
+      cell(fmtPct(sMargin), sMargin),
+      cell(fmtPct(pMargin), pMargin),
+      cell(gapBps != null ? `${gapBps > 0 ? "+" : ""}${gapBps}bps` : "—", gapBps, undefined, gapDir ?? undefined),
+    ]);
+  });
+
+  // Headlines: TTM Revenue, TTM OP Margin gap
+  const headlines: HeadlineMetric[] = [];
+  const sRev = sumField(s4, "revenue");
+  const pRev = sumField(p4, "revenue");
+  if (sRev != null) headlines.push({ label: `${sTicker} TTM Revenue`, value: fmtCurrency(sRev) + "M" });
+  if (pRev != null) headlines.push({ label: `${peerTicker} TTM Revenue`, value: fmtCurrency(pRev) + "M" });
+  const sOpMargin = ttmMargin(s4, "operatingIncome");
+  const pOpMargin = ttmMargin(p4, "operatingIncome");
+  if (sOpMargin != null && pOpMargin != null) {
+    const gap = Math.round((sOpMargin - pOpMargin) * 10);
+    headlines.push({
+      label: "OP Margin Gap",
+      value: `${gap > 0 ? "+" : ""}${gap}bps`,
+      comparison: `${sTicker} vs ${peerTicker}`,
+      direction: gap > 0 ? "positive" : gap < 0 ? "negative" : "neutral",
+    });
+  }
+
+  // Chart: grouped bar for TTM values
+  const chartDefs = ttmFlowDefs.slice(0, 4);
+  const chartSeries: ChartSeries[] = [
+    { name: `${sTicker} TTM`, data: chartDefs.map((def) => ({ label: def.label, value: sumField(s4, def.key) })) },
+    { name: `${peerTicker} TTM`, data: chartDefs.map((def) => ({ label: def.label, value: sumField(p4, def.key) })) },
+  ];
+
+  return {
+    blockId,
+    blockType: "peer-ttm-comparison",
+    title: `${sTicker} vs ${peerTicker}: Trailing Twelve Months`,
+    subtitle: `TTM ending ${sLatestLabel} (${sTicker}) / ${pLatestLabel} (${peerTicker})`,
+    headlines,
+    table: { columns, rows },
+    chartSeries,
+    footnotes: [
+      "Source: SEC EDGAR 10-Q/10-K filings.",
+      "TTM = sum of latest four consecutive quarters for flow metrics.",
+      "All dollar values in millions ($M).",
+    ],
+    assumptions: [
+      "TTM aggregation uses simple sum for income and cash flow items.",
+      "Margin gap in basis points (bps); positive = subject leads.",
+    ],
+    metadata: buildMeta("peer-ttm-comparison", sTicker, [peerTicker], [...s4, ...p4]),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// $/unit formatting helper
+// ---------------------------------------------------------------------------
+
+function fmtPerUnit(v: number | null, unitLabel: string): string {
+  if (v == null) return "—";
+  const sign = v < 0 ? "-" : "";
+  return `${sign}$${Math.abs(v).toFixed(2)}/${unitLabel}`;
+}
+
+function fmtPerUnitGap(v: number | null, unitLabel: string): string {
+  if (v == null) return "—";
+  const sign = v > 0 ? "+" : v < 0 ? "-" : "";
+  return `${sign}$${Math.abs(v).toFixed(2)}/${unitLabel}`;
+}
+
+// ---------------------------------------------------------------------------
+// Block: Unit Economics Trend (multi-quarter $/head or $/cwt)
+// ---------------------------------------------------------------------------
+
+export function buildUnitEconomicsTrendBlock(
+  subjectMetrics: QuarterMetrics[],
+  peerMetrics: QuarterMetrics[],
+  peerTicker: string,
+  unitType: string
+): SlideBlock | null {
+  const unitLabel = unitType === "head" ? "hd" : unitType === "cwt" ? "cwt" : "unit";
+
+  // Collect up to 12 quarters, sorted chronologically
+  const quarters = [...subjectMetrics]
+    .sort((a, b) => a.periodEnd.localeCompare(b.periodEnd))
+    .slice(-12);
+
+  if (quarters.length === 0) return null;
+
+  // Helper to get OP/unit for a given metrics set at a given periodEnd
+  function getOpPerUnit(metrics: QuarterMetrics[], periodEnd: string): number | null {
+    const q = metrics.find((m) => m.periodEnd === periodEnd);
+    if (!q) return null;
+    for (const seg of q.segments) {
+      if (
+        seg.volumeUnits != null &&
+        seg.volumeUnits > 0 &&
+        seg.volumeUnitType === unitType &&
+        seg.operatingIncome != null
+      ) {
+        return Math.round((seg.operatingIncome / seg.volumeUnits) * 100) / 100;
+      }
+    }
+    return null;
+  }
+
+  function getOpMargin(metrics: QuarterMetrics[], periodEnd: string): number | null {
+    const q = metrics.find((m) => m.periodEnd === periodEnd);
+    return q?.operatingMargin ?? null;
+  }
+
+  // Check that at least some volume data exists
+  const subjectVals = quarters.map((q) => getOpPerUnit(subjectMetrics, q.periodEnd));
+  const peerVals = quarters.map((q) => getOpPerUnit(peerMetrics, q.periodEnd));
+  const hasAnyData = subjectVals.some((v) => v != null) || peerVals.some((v) => v != null);
+  if (!hasAnyData) return null;
+
+  const subjectTicker = quarters[0].ticker;
+  const blockId = `unit-economics-trend-${subjectTicker}-${peerTicker}`;
+
+  // Compute T8Q (trailing 8 quarter) averages
+  const last8Sub = subjectVals.slice(-8).filter((v): v is number => v != null);
+  const last8Peer = peerVals.slice(-8).filter((v): v is number => v != null);
+  const t8qSub = last8Sub.length > 0 ? last8Sub.reduce((a, b) => a + b, 0) / last8Sub.length : null;
+  const t8qPeer = last8Peer.length > 0 ? last8Peer.reduce((a, b) => a + b, 0) / last8Peer.length : null;
+  const t8qGap = t8qSub != null && t8qPeer != null ? t8qSub - t8qPeer : null;
+
+  // Build columns: Metric | Q1'23 | Q2'23 | ... | T8Q Avg
+  const columns: SlideColumn[] = [
+    { header: "Metric", align: "left" as const },
+    ...quarters.map((q) => rightCol(q.quarterLabel)),
+    rightCol("T8Q Avg"),
+  ];
+
+  // Build rows
+  const subjectOpRow = quarters.map((q) => {
+    const v = getOpPerUnit(subjectMetrics, q.periodEnd);
+    return cell(fmtPerUnit(v, unitLabel), v);
+  });
+  subjectOpRow.push(cell(fmtPerUnit(t8qSub, unitLabel), t8qSub));
+
+  const peerOpRow = quarters.map((q) => {
+    const v = getOpPerUnit(peerMetrics, q.periodEnd);
+    return cell(fmtPerUnit(v, unitLabel), v);
+  });
+  peerOpRow.push(cell(fmtPerUnit(t8qPeer, unitLabel), t8qPeer));
+
+  const gapRow = quarters.map((q) => {
+    const s = getOpPerUnit(subjectMetrics, q.periodEnd);
+    const p = getOpPerUnit(peerMetrics, q.periodEnd);
+    const gap = s != null && p != null ? s - p : null;
+    const dir = gap != null ? (gap > 0 ? "positive" : gap < 0 ? "negative" : "neutral") : undefined;
+    return cell(fmtPerUnitGap(gap, unitLabel), gap, undefined, dir);
+  });
+  gapRow.push(cell(fmtPerUnitGap(t8qGap, unitLabel), t8qGap, undefined,
+    t8qGap != null ? (t8qGap > 0 ? "positive" : t8qGap < 0 ? "negative" : "neutral") : undefined));
+
+  const subjectMarginRow = quarters.map((q) => {
+    const v = getOpMargin(subjectMetrics, q.periodEnd);
+    return cell(fmtPct(v), v);
+  });
+  const last8SubM = quarters.slice(-8).map((q) => getOpMargin(subjectMetrics, q.periodEnd)).filter((v): v is number => v != null);
+  const t8qSubM = last8SubM.length > 0 ? last8SubM.reduce((a, b) => a + b, 0) / last8SubM.length : null;
+  subjectMarginRow.push(cell(fmtPct(t8qSubM), t8qSubM));
+
+  const peerMarginRow = quarters.map((q) => {
+    const v = getOpMargin(peerMetrics, q.periodEnd);
+    return cell(fmtPct(v), v);
+  });
+  const last8PeerM = quarters.slice(-8).map((q) => getOpMargin(peerMetrics, q.periodEnd)).filter((v): v is number => v != null);
+  const t8qPeerM = last8PeerM.length > 0 ? last8PeerM.reduce((a, b) => a + b, 0) / last8PeerM.length : null;
+  peerMarginRow.push(cell(fmtPct(t8qPeerM), t8qPeerM));
+
+  const marginGapRow = quarters.map((q) => {
+    const s = getOpMargin(subjectMetrics, q.periodEnd);
+    const p = getOpMargin(peerMetrics, q.periodEnd);
+    const bps = s != null && p != null ? Math.round((s - p) * 10) : null;
+    const dir = bps != null ? (bps > 0 ? "positive" : bps < 0 ? "negative" : "neutral") : undefined;
+    return cell(bps != null ? `${bps > 0 ? "+" : ""}${bps}bps` : "—", bps, undefined, dir);
+  });
+  const t8qBps = t8qSubM != null && t8qPeerM != null ? Math.round((t8qSubM - t8qPeerM) * 10) : null;
+  marginGapRow.push(cell(t8qBps != null ? `${t8qBps > 0 ? "+" : ""}${t8qBps}bps` : "—", t8qBps, undefined,
+    t8qBps != null ? (t8qBps > 0 ? "positive" : t8qBps < 0 ? "negative" : "neutral") : undefined));
+
+  const rows: SlideTableRow[] = [
+    metricRow(`${subjectTicker} OP/${unitLabel}`, subjectOpRow),
+    metricRow(`${peerTicker} OP/${unitLabel}`, peerOpRow),
+    subtotalRow(`Gap ($/${unitLabel})`, gapRow),
+    metricRow(`${subjectTicker} OP %`, subjectMarginRow),
+    metricRow(`${peerTicker} OP %`, peerMarginRow),
+    subtotalRow("Gap (bps)", marginGapRow),
+  ];
+
+  // Chart series: 2 lines + gap bars
+  const chartSeries: ChartSeries[] = [
+    {
+      name: `${subjectTicker} OP/${unitLabel}`,
+      color: "#3b82f6",
+      data: quarters.map((q) => ({
+        label: q.quarterLabel,
+        value: getOpPerUnit(subjectMetrics, q.periodEnd),
+      })),
+    },
+    {
+      name: `${peerTicker} OP/${unitLabel}`,
+      color: "#ef4444",
+      data: quarters.map((q) => ({
+        label: q.quarterLabel,
+        value: getOpPerUnit(peerMetrics, q.periodEnd),
+      })),
+    },
+    {
+      name: "Gap",
+      color: "#94a3b8",
+      data: quarters.map((q) => {
+        const s = getOpPerUnit(subjectMetrics, q.periodEnd);
+        const p = getOpPerUnit(peerMetrics, q.periodEnd);
+        return { label: q.quarterLabel, value: s != null && p != null ? s - p : null };
+      }),
+    },
+  ];
+
+  // Headlines
+  const latestSub = subjectVals[subjectVals.length - 1];
+  const latestPeer = peerVals[peerVals.length - 1];
+  const latestGap = latestSub != null && latestPeer != null ? latestSub - latestPeer : null;
+
+  // Trend direction: compare latest gap to average gap
+  const allGaps = quarters.map((_q, i) => {
+    const s = subjectVals[i];
+    const p = peerVals[i];
+    return s != null && p != null ? s - p : null;
+  }).filter((v): v is number => v != null);
+  const avgGap = allGaps.length > 0 ? allGaps.reduce((a, b) => a + b, 0) / allGaps.length : null;
+  const trendDir = latestGap != null && avgGap != null
+    ? (latestGap > avgGap ? "widening" : latestGap < avgGap ? "narrowing" : "stable")
+    : "—";
+
+  const headlines: HeadlineMetric[] = [
+    {
+      label: "Latest Gap",
+      value: fmtPerUnitGap(latestGap, unitLabel),
+      direction: latestGap != null ? (latestGap > 0 ? "positive" : "negative") : undefined,
+    },
+    {
+      label: "Avg Gap",
+      value: fmtPerUnitGap(avgGap, unitLabel),
+      direction: avgGap != null ? (avgGap > 0 ? "positive" : "negative") : undefined,
+    },
+    {
+      label: "Trend",
+      value: trendDir,
+      direction: trendDir === "widening" ? "positive" : trendDir === "narrowing" ? "negative" : "neutral",
+    },
+  ];
+
+  return {
+    blockId,
+    blockType: "unit-economics-trend",
+    title: `${subjectTicker} vs ${peerTicker} — OP per ${unitType === "head" ? "Head" : unitType === "cwt" ? "CWT" : "Unit"} Trend`,
+    subtitle: `${quarters[0].quarterLabel} – ${quarters[quarters.length - 1].quarterLabel} (${quarters.length}Q)`,
+    headlines,
+    table: { columns, rows },
+    chartSeries,
+    footnotes: [
+      `OP/${unitLabel} = Segment Operating Income / Volume (${unitType}).`,
+      "Volume data from manual entry or company disclosures.",
+    ],
+    assumptions: ["Volume figures may be estimated if not explicitly reported."],
+    metadata: buildMeta("unit-economics-trend", subjectTicker, [peerTicker], quarters),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Block: Margin Gap Per Unit (focused gap analysis in $/unit)
+// ---------------------------------------------------------------------------
+
+export function buildMarginGapPerUnitBlock(
+  subjectMetrics: QuarterMetrics[],
+  peerMetrics: QuarterMetrics[],
+  peerTicker: string,
+  unitType: string
+): SlideBlock | null {
+  const unitLabel = unitType === "head" ? "hd" : unitType === "cwt" ? "cwt" : "unit";
+
+  // Collect quarters chronologically
+  const quarters = [...subjectMetrics]
+    .sort((a, b) => a.periodEnd.localeCompare(b.periodEnd))
+    .slice(-12);
+
+  if (quarters.length === 0) return null;
+
+  function getOpPerUnit(metrics: QuarterMetrics[], periodEnd: string): number | null {
+    const q = metrics.find((m) => m.periodEnd === periodEnd);
+    if (!q) return null;
+    for (const seg of q.segments) {
+      if (
+        seg.volumeUnits != null &&
+        seg.volumeUnits > 0 &&
+        seg.volumeUnitType === unitType &&
+        seg.operatingIncome != null
+      ) {
+        return Math.round((seg.operatingIncome / seg.volumeUnits) * 100) / 100;
+      }
+    }
+    return null;
+  }
+
+  function getOpMargin(metrics: QuarterMetrics[], periodEnd: string): number | null {
+    const q = metrics.find((m) => m.periodEnd === periodEnd);
+    return q?.operatingMargin ?? null;
+  }
+
+  // Validate data availability
+  const subjectVals = quarters.map((q) => getOpPerUnit(subjectMetrics, q.periodEnd));
+  const peerVals = quarters.map((q) => getOpPerUnit(peerMetrics, q.periodEnd));
+  const hasAnyData = subjectVals.some((v) => v != null) || peerVals.some((v) => v != null);
+  if (!hasAnyData) return null;
+
+  const subjectTicker = quarters[0].ticker;
+  const blockId = `margin-gap-per-unit-${subjectTicker}-${peerTicker}`;
+
+  // Build table: Quarter | Subject $/unit | Peer $/unit | Gap | Subject Margin | Peer Margin | Margin Gap
+  const columns: SlideColumn[] = [
+    { header: "Quarter", align: "left" as const },
+    rightCol(`${subjectTicker} $/${unitLabel}`),
+    rightCol(`${peerTicker} $/${unitLabel}`),
+    rightCol(`Gap ($/${unitLabel})`),
+    rightCol(`${subjectTicker} OP %`),
+    rightCol(`${peerTicker} OP %`),
+    rightCol("Margin Gap"),
+  ];
+
+  // Build rows and compute gaps
+  const rows: SlideTableRow[] = quarters.map((q, i) => {
+    const sOp = subjectVals[i];
+    const pOp = peerVals[i];
+    const gap = sOp != null && pOp != null ? sOp - pOp : null;
+    const sMargin = getOpMargin(subjectMetrics, q.periodEnd);
+    const pMargin = getOpMargin(peerMetrics, q.periodEnd);
+    const marginGap = sMargin != null && pMargin != null ? sMargin - pMargin : null;
+    const marginBps = marginGap != null ? Math.round(marginGap * 10) : null;
+
+    const gapDir = gap != null ? (gap > 0 ? "positive" : gap < 0 ? "negative" : "neutral") : undefined;
+    const mGapDir = marginBps != null ? (marginBps > 0 ? "positive" : marginBps < 0 ? "negative" : "neutral") : undefined;
+
+    return metricRow(q.quarterLabel, [
+      cell(fmtPerUnit(sOp, unitLabel), sOp),
+      cell(fmtPerUnit(pOp, unitLabel), pOp),
+      cell(fmtPerUnitGap(gap, unitLabel), gap, undefined, gapDir),
+      cell(fmtPct(sMargin), sMargin),
+      cell(fmtPct(pMargin), pMargin),
+      cell(marginBps != null ? `${marginBps > 0 ? "+" : ""}${marginBps}bps` : "—", marginBps, undefined, mGapDir),
+    ]);
+  });
+
+  // Track best/worst gap quarters
+  let bestGap: { quarter: string; value: number } | null = null;
+  let worstGap: { quarter: string; value: number } | null = null;
+  for (let i = 0; i < quarters.length; i++) {
+    const s = subjectVals[i];
+    const p = peerVals[i];
+    if (s != null && p != null) {
+      const gap = s - p;
+      if (bestGap == null || gap > bestGap.value) bestGap = { quarter: quarters[i].quarterLabel, value: gap };
+      if (worstGap == null || gap < worstGap.value) worstGap = { quarter: quarters[i].quarterLabel, value: gap };
+    }
+  }
+
+  // Chart series: 2 lines for $/unit + bar for gap
+  const chartSeries: ChartSeries[] = [
+    {
+      name: `${subjectTicker} $/${unitLabel}`,
+      color: "#3b82f6",
+      data: quarters.map((q, i) => ({
+        label: q.quarterLabel,
+        value: subjectVals[i],
+      })),
+    },
+    {
+      name: `${peerTicker} $/${unitLabel}`,
+      color: "#ef4444",
+      data: quarters.map((q, i) => ({
+        label: q.quarterLabel,
+        value: peerVals[i],
+      })),
+    },
+    {
+      name: "Gap",
+      color: "#94a3b8",
+      data: quarters.map((q, i) => {
+        const s = subjectVals[i];
+        const p = peerVals[i];
+        return { label: q.quarterLabel, value: s != null && p != null ? s - p : null };
+      }),
+    },
+  ];
+
+  // Headlines
+  const latestGapVal = (() => {
+    const s = subjectVals[subjectVals.length - 1];
+    const p = peerVals[peerVals.length - 1];
+    return s != null && p != null ? s - p : null;
+  })();
+
+  const headlines: HeadlineMetric[] = [
+    {
+      label: "Current Gap",
+      value: fmtPerUnitGap(latestGapVal, unitLabel),
+      comparison: quarters[quarters.length - 1]?.quarterLabel,
+      direction: latestGapVal != null ? (latestGapVal > 0 ? "positive" : "negative") : undefined,
+    },
+  ];
+  if (bestGap) {
+    headlines.push({
+      label: "Best Quarter",
+      value: fmtPerUnitGap(bestGap.value, unitLabel),
+      comparison: bestGap.quarter,
+      direction: "positive",
+    });
+  }
+  if (worstGap) {
+    headlines.push({
+      label: "Worst Quarter",
+      value: fmtPerUnitGap(worstGap.value, unitLabel),
+      comparison: worstGap.quarter,
+      direction: "negative",
+    });
+  }
+
+  return {
+    blockId,
+    blockType: "margin-gap-per-unit",
+    title: `${subjectTicker} vs ${peerTicker} — $/Unit Margin Gap Analysis`,
+    subtitle: `Operating Profit per ${unitType === "head" ? "Head" : unitType === "cwt" ? "CWT" : "Unit"} gap breakdown`,
+    headlines,
+    table: { columns, rows },
+    chartSeries,
+    footnotes: [
+      `$/${unitLabel} = Segment Operating Income / Volume (${unitType}).`,
+      "Margin Gap in basis points (100bps = 1pp).",
+    ],
+    assumptions: ["Volume figures may be estimated if not explicitly reported."],
+    metadata: buildMeta("margin-gap-per-unit", subjectTicker, [peerTicker], quarters),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Main: generate all slide blocks
 // ---------------------------------------------------------------------------
 
@@ -1643,6 +2332,25 @@ export function generateAllSlideBlocks(input: SlideBlockInput): SlideBlock[] {
   const perUnit = buildPerUnitBlock(subjectMetrics, peerMetrics);
   if (perUnit) blocks.push(perUnit);
 
+  // Unit Economics Trend & Margin Gap Per Unit — for peers with volume data
+  for (const [ticker, data] of input.peerFilings) {
+    const peerType = data.peerType;
+    let unitType: string | null = null;
+    if (peerType === "pork-fresh") unitType = "head";
+    else if (peerType === "packaged-meats") unitType = "cwt";
+
+    if (unitType) {
+      const peerM = peerMetrics.get(ticker);
+      if (peerM && peerM.length > 0) {
+        const ueTrend = buildUnitEconomicsTrendBlock(subjectMetrics, peerM, ticker, unitType);
+        if (ueTrend) blocks.push(ueTrend);
+
+        const mgPerUnit = buildMarginGapPerUnitBlock(subjectMetrics, peerM, ticker, unitType);
+        if (mgPerUnit) blocks.push(mgPerUnit);
+      }
+    }
+  }
+
   // Methodology comparison (if any company has methodology variants)
   const methodologyBlock = buildMethodologyComparisonBlock(subjectMetrics, peerMetrics);
   if (methodologyBlock) blocks.push(methodologyBlock);
@@ -1671,6 +2379,19 @@ export function generateAllSlideBlocks(input: SlideBlockInput): SlideBlock[] {
   if (input.manualData?.guidanceEntries && input.manualData.guidanceEntries.length > 0) {
     const guidanceBlock = buildGuidanceBlock(input.manualData.guidanceEntries, input.subjectTicker);
     if (guidanceBlock) blocks.push(guidanceBlock);
+  }
+
+  // Per-peer QoQ / YoY / TTM comparison blocks
+  for (const [ticker, data] of peerMetrics) {
+    const pm = data;
+    const peerQoQ = buildPeerQoQBlock(subjectMetrics, pm, ticker);
+    if (peerQoQ) blocks.push(peerQoQ);
+
+    const peerYoY = buildPeerYoYBlock(subjectMetrics, pm, ticker);
+    if (peerYoY) blocks.push(peerYoY);
+
+    const peerTTM = buildPeerTTMBlock(subjectMetrics, pm, ticker);
+    if (peerTTM) blocks.push(peerTTM);
   }
 
   // Market data blocks (from manual entry)

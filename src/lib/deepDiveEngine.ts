@@ -60,6 +60,8 @@ const DEEP_DIVE_ORDER = [
   "segment-revenue-composition",
   "margin-gap-trend",
   "per-unit-comparison",
+  "unit-economics-trend",
+  "margin-gap-per-unit",
   "yoy-comparison",
   "sequential-comparison",
   "quarterly-trend",
@@ -67,6 +69,9 @@ const DEEP_DIVE_ORDER = [
   "op-bridge-qoq",
   "op-bridge-yoy",
   "op-bridge-ttm",
+  "peer-qoq-comparison",
+  "peer-yoy-comparison",
+  "peer-ttm-comparison",
 ];
 
 function sortDeepDiveBlocks(blocks: SlideBlock[]): SlideBlock[] {
