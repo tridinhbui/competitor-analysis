@@ -243,7 +243,7 @@ export function QuarterAppendFlow({
         review={review}
         onConfirm={confirmAppend}
         onCancel={resetFlow}
-        confirming={phase === "confirming"}
+        confirming={false}
       />
     );
   }

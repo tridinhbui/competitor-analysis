@@ -1,17 +1,15 @@
 /**
- * Filesystem-based storage for quarterly filings and company registry.
+ * Supabase-backed storage for quarterly filings and company registry.
  *
- * Layout:
- *   filings/
- *     companies.json          — CompanyRegistry
- *     {TICKER}/
- *       {periodEnd}.json      — Filing
+ * Tables:
+ *   companies — Company records (ticker PK)
+ *   filings   — Filing records with analysis JSONB
  *
- * All functions are server-only (Node.js fs).
+ * API surface is identical to the original filesystem version.
  */
 
-import { promises as fs } from "node:fs";
-import path from "node:path";
+import { supabase } from "./supabase";
+import { deriveQuarter } from "./competitorService";
 import type { FullAnalysis } from "@/types/analysis";
 import type {
   Company,
@@ -21,45 +19,38 @@ import type {
 } from "@/types/competitor";
 
 // ---------------------------------------------------------------------------
-// Paths
-// ---------------------------------------------------------------------------
-
-const FILINGS_ROOT = path.join(process.cwd(), "filings");
-const REGISTRY_PATH = path.join(FILINGS_ROOT, "companies.json");
-
-function tickerDir(ticker: string): string {
-  return path.join(FILINGS_ROOT, ticker.toUpperCase());
-}
-
-function filingPath(ticker: string, periodEnd: string): string {
-  return path.join(tickerDir(ticker), `${periodEnd}.json`);
-}
-
-// ---------------------------------------------------------------------------
-// Directory helpers
-// ---------------------------------------------------------------------------
-
-async function ensureDir(dir: string): Promise<void> {
-  await fs.mkdir(dir, { recursive: true });
-}
-
-// ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
 
 export async function loadRegistry(): Promise<CompanyRegistry> {
-  try {
-    const raw = await fs.readFile(REGISTRY_PATH, "utf8");
-    return JSON.parse(raw) as CompanyRegistry;
-  } catch {
+  const { data, error } = await supabase
+    .from("companies")
+    .select("*")
+    .order("ticker");
+
+  if (error) {
+    console.warn("[filingStorage] loadRegistry error:", error.message);
     return { version: "1.0", companies: [], updatedAt: new Date().toISOString() };
   }
+
+  const companies: Company[] = (data ?? []).map((row) => ({
+    ticker: row.ticker,
+    name: row.name,
+    industry: row.industry ?? undefined,
+    peerType: row.peer_type as PeerType,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
+
+  return {
+    version: "1.0",
+    companies,
+    updatedAt: new Date().toISOString(),
+  };
 }
 
-export async function saveRegistry(registry: CompanyRegistry): Promise<void> {
-  await ensureDir(FILINGS_ROOT);
-  registry.updatedAt = new Date().toISOString();
-  await fs.writeFile(REGISTRY_PATH, JSON.stringify(registry, null, 2), "utf8");
+export async function saveRegistry(_registry: CompanyRegistry): Promise<void> {
+  // No-op: companies are managed individually via upsertCompany.
 }
 
 /**
@@ -71,29 +62,49 @@ export async function upsertCompany(
   name: string,
   peerType?: PeerType
 ): Promise<Company> {
-  const registry = await loadRegistry();
   const upper = ticker.toUpperCase();
-  let company = registry.companies.find((c) => c.ticker === upper);
   const now = new Date().toISOString();
 
-  if (company) {
-    // Update name if we have a better one
-    if (name && name !== upper) company.name = name;
-    if (peerType) company.peerType = peerType;
-    company.updatedAt = now;
-  } else {
-    company = {
+  const { data: existing } = await supabase
+    .from("companies")
+    .select("*")
+    .eq("ticker", upper)
+    .single();
+
+  if (existing) {
+    const updates: Record<string, unknown> = { updated_at: now };
+    if (name && name !== upper) updates.name = name;
+    if (peerType) updates.peer_type = peerType;
+
+    await supabase.from("companies").update(updates).eq("ticker", upper);
+
+    return {
       ticker: upper,
-      name: name || upper,
-      peerType: peerType ?? "diversified-protein",
-      createdAt: now,
+      name: name && name !== upper ? name : existing.name,
+      industry: existing.industry ?? undefined,
+      peerType: peerType ?? existing.peer_type,
+      createdAt: existing.created_at,
       updatedAt: now,
     };
-    registry.companies.push(company);
   }
 
-  await saveRegistry(registry);
-  return company;
+  const newCompany = {
+    ticker: upper,
+    name: name || upper,
+    peer_type: peerType ?? "diversified-protein",
+    created_at: now,
+    updated_at: now,
+  };
+
+  await supabase.from("companies").insert(newCompany);
+
+  return {
+    ticker: upper,
+    name: newCompany.name,
+    peerType: newCompany.peer_type as PeerType,
+    createdAt: now,
+    updatedAt: now,
+  };
 }
 
 /**
@@ -103,15 +114,30 @@ export async function setCompanyPeerType(
   ticker: string,
   peerType: PeerType
 ): Promise<Company | null> {
-  const registry = await loadRegistry();
-  const company = registry.companies.find(
-    (c) => c.ticker === ticker.toUpperCase()
-  );
-  if (!company) return null;
-  company.peerType = peerType;
-  company.updatedAt = new Date().toISOString();
-  await saveRegistry(registry);
-  return company;
+  const upper = ticker.toUpperCase();
+  const now = new Date().toISOString();
+
+  const { data: existing } = await supabase
+    .from("companies")
+    .select("*")
+    .eq("ticker", upper)
+    .single();
+
+  if (!existing) return null;
+
+  await supabase
+    .from("companies")
+    .update({ peer_type: peerType, updated_at: now })
+    .eq("ticker", upper);
+
+  return {
+    ticker: upper,
+    name: existing.name,
+    industry: existing.industry ?? undefined,
+    peerType,
+    createdAt: existing.created_at,
+    updatedAt: now,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -119,7 +145,7 @@ export async function setCompanyPeerType(
 // ---------------------------------------------------------------------------
 
 /**
- * Save a filing to disk and ensure the company is in the registry.
+ * Save a filing to Supabase and ensure the company is in the registry.
  */
 export async function saveFiling(
   ticker: string,
@@ -128,25 +154,38 @@ export async function saveFiling(
   analysis: FullAnalysis
 ): Promise<Filing> {
   const upper = ticker.toUpperCase();
-  const filing: Filing = {
+  const quarter = deriveQuarter(periodEnd);
+  const now = new Date().toISOString();
+
+  // Ensure company exists
+  await upsertCompany(upper, analysis.meta.companyName ?? upper);
+
+  // Upsert filing
+  const row = {
+    ticker: upper,
+    period_end: periodEnd,
+    fiscal_year: quarter.fiscalYear,
+    fiscal_quarter: quarter.fiscalQuarter,
+    quarter_label: quarter.label,
+    source,
+    filing_type: "10-Q",
+    filing_date: analysis.meta.filingDate ?? now.split("T")[0],
+    analysis: analysis as unknown,
+    saved_at: now,
+  };
+
+  await supabase.from("filings").upsert(row, { onConflict: "ticker,period_end" });
+
+  return {
     ticker: upper,
     periodEnd,
     source,
-    savedAt: new Date().toISOString(),
+    savedAt: now,
     analysis,
+    filingType: "10-Q",
+    filingDate: analysis.meta.filingDate,
+    quarter,
   };
-
-  await ensureDir(tickerDir(upper));
-  await fs.writeFile(
-    filingPath(upper, periodEnd),
-    JSON.stringify(filing, null, 2),
-    "utf8"
-  );
-
-  // Ensure company is registered
-  await upsertCompany(upper, analysis.meta.companyName ?? upper);
-
-  return filing;
 }
 
 /**
@@ -156,43 +195,66 @@ export async function loadFiling(
   ticker: string,
   periodEnd: string
 ): Promise<Filing | null> {
-  try {
-    const raw = await fs.readFile(
-      filingPath(ticker.toUpperCase(), periodEnd),
-      "utf8"
-    );
-    return JSON.parse(raw) as Filing;
-  } catch {
-    return null;
-  }
+  const { data, error } = await supabase
+    .from("filings")
+    .select("*")
+    .eq("ticker", ticker.toUpperCase())
+    .eq("period_end", periodEnd)
+    .single();
+
+  if (error || !data) return null;
+
+  return rowToFiling(data);
 }
 
 /**
  * List all period-end dates on file for a company, sorted descending.
  */
 export async function listQuarters(ticker: string): Promise<string[]> {
-  try {
-    const dir = tickerDir(ticker.toUpperCase());
-    const entries = await fs.readdir(dir);
-    return entries
-      .filter((e) => e.endsWith(".json"))
-      .map((e) => e.replace(".json", ""))
-      .sort()
-      .reverse();
-  } catch {
-    return [];
-  }
+  const { data, error } = await supabase
+    .from("filings")
+    .select("period_end")
+    .eq("ticker", ticker.toUpperCase())
+    .order("period_end", { ascending: false });
+
+  if (error || !data) return [];
+
+  return data.map((r) => r.period_end);
 }
 
 /**
  * Load all filings for a company, sorted by periodEnd descending.
  */
 export async function loadAllFilings(ticker: string): Promise<Filing[]> {
-  const periods = await listQuarters(ticker);
-  const filings: Filing[] = [];
-  for (const p of periods) {
-    const f = await loadFiling(ticker, p);
-    if (f) filings.push(f);
-  }
-  return filings;
+  const { data, error } = await supabase
+    .from("filings")
+    .select("*")
+    .eq("ticker", ticker.toUpperCase())
+    .order("period_end", { ascending: false });
+
+  if (error || !data) return [];
+
+  return data.map(rowToFiling);
+}
+
+// ---------------------------------------------------------------------------
+// Row → Filing mapping
+// ---------------------------------------------------------------------------
+
+function rowToFiling(row: Record<string, unknown>): Filing {
+  return {
+    ticker: row.ticker as string,
+    periodEnd: row.period_end as string,
+    source: row.source as "sec" | "pdf",
+    savedAt: row.saved_at as string,
+    analysis: row.analysis as FullAnalysis,
+    filingType: (row.filing_type as "10-Q" | "10-K") ?? "10-Q",
+    filingDate: row.filing_date as string | undefined,
+    quarter: {
+      periodEnd: row.period_end as string,
+      fiscalYear: row.fiscal_year as number,
+      fiscalQuarter: row.fiscal_quarter as number,
+      label: row.quarter_label as string,
+    },
+  };
 }

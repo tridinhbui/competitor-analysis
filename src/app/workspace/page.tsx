@@ -3,6 +3,11 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { WorkspacePanel } from "@/components/workspace/WorkspacePanel";
+import { AnalysisResults } from "@/components/workspace/AnalysisResults";
+import { SlideBlocksPanel } from "@/components/workspace/SlideBlocksPanel";
+import { PeerModulePanel } from "@/components/workspace/PeerModulePanel";
+import { AdjustmentPanel } from "@/components/workspace/AdjustmentPanel";
+import { ManualDataPanel } from "@/components/workspace/ManualDataPanel";
 import type { CompanyRegistry } from "@/types/competitor";
 import {
   Boxes,
@@ -98,9 +103,14 @@ export default function WorkspacePage() {
             ))}
           </div>
 
-          {/* Workspace panel */}
-          <div>
+          {/* Workspace panel + Analysis + Slide Blocks */}
+          <div className="space-y-6">
             <WorkspacePanel ticker={selectedTicker} />
+            <ManualDataPanel ticker={selectedTicker} />
+            <PeerModulePanel ticker={selectedTicker} />
+            <AnalysisResults ticker={selectedTicker} />
+            <SlideBlocksPanel ticker={selectedTicker} />
+            <AdjustmentPanel ticker={selectedTicker} />
           </div>
         </div>
       )}

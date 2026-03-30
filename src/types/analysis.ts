@@ -108,6 +108,10 @@ export interface FullAnalysis {
   };
   /** Balance sheet identity check: Assets vs Liabilities + Equity */
   reconcile?: ReconcileResult;
+  /** Segment-level financials (populated from XBRL or manual entry) */
+  segments?: import("./segments").SegmentData[];
+  /** Methodology variants for companies that changed allocation methods */
+  methodologyVariants?: import("./segments").MethodologyVariant[];
 }
 
 /** The step definitions for the agent workflow UI. */
