@@ -10,6 +10,12 @@ import type {
   NarrativeType,
   UnitVolumeEntry,
   SegmentOverrideEntry,
+  ComparisonBlueprintEntry,
+  ComparisonBlueprintType,
+  SegmentMappingEntry,
+  SegmentComparisonBasis,
+  QuarterAlignmentEntry,
+  QuarterAlignmentType,
 } from "@/types/manualData";
 import type { VolumeUnitType } from "@/types/segments";
 import {
@@ -46,6 +52,9 @@ const DATA_TYPE_TABS: Array<{
   { key: "industry-landscape", label: "Landscape", icon: Factory },
   { key: "guidance", label: "Guidance", icon: Target },
   { key: "unit-volume", label: "Volumes", icon: FileText },
+  { key: "comparison-blueprint", label: "Blueprints", icon: Target },
+  { key: "segment-mapping", label: "Mappings", icon: BarChart3 },
+  { key: "quarter-alignment", label: "Alignment", icon: FileText },
 ];
 
 // ---------------------------------------------------------------------------
@@ -582,6 +591,265 @@ function UnitVolumeForm({
   );
 }
 
+function ComparisonBlueprintForm({
+  onSave,
+  saving,
+  ticker,
+}: {
+  onSave: (data: ComparisonBlueprintEntry, periodEnd: string, source: string) => void;
+  saving: boolean;
+  ticker: string;
+}) {
+  const [peerTicker, setPeerTicker] = useState("");
+  const [blueprintType, setBlueprintType] = useState<ComparisonBlueprintType>("custom");
+  const [primaryCompareLabel, setPrimaryCompareLabel] = useState("");
+  const [needsCalendarAlignment, setNeedsCalendarAlignment] = useState("yes");
+  const [needsMethodologyAdjustments, setNeedsMethodologyAdjustments] = useState("no");
+  const [needsMarketData, setNeedsMarketData] = useState("no");
+  const [notes, setNotes] = useState("");
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <FormField label="Subject Ticker">
+          <TextInput value={ticker} onChange={() => {}} />
+        </FormField>
+        <FormField label="Peer Ticker">
+          <TextInput value={peerTicker} onChange={(v) => setPeerTicker(v.toUpperCase())} placeholder="TSN" />
+        </FormField>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <FormField label="Blueprint Type">
+          <SelectInput
+            value={blueprintType}
+            onChange={(v) => setBlueprintType(v as ComparisonBlueprintType)}
+            options={[
+              { value: "methodology-change", label: "Methodology Change" },
+              { value: "packaged-meats-day1", label: "Packaged Meats Day 1" },
+              { value: "multi-peer-operating", label: "Multi-Peer Operating" },
+              { value: "custom", label: "Custom" },
+            ]}
+          />
+        </FormField>
+        <FormField label="Primary Compare Label">
+          <TextInput
+            value={primaryCompareLabel}
+            onChange={setPrimaryCompareLabel}
+            placeholder="e.g. SFD Packaged Meats vs TSN Prepared Foods"
+          />
+        </FormField>
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        <FormField label="Calendar Alignment">
+          <SelectInput
+            value={needsCalendarAlignment}
+            onChange={setNeedsCalendarAlignment}
+            options={[
+              { value: "yes", label: "Required" },
+              { value: "no", label: "Not needed" },
+            ]}
+          />
+        </FormField>
+        <FormField label="Methodology Adjustments">
+          <SelectInput
+            value={needsMethodologyAdjustments}
+            onChange={setNeedsMethodologyAdjustments}
+            options={[
+              { value: "yes", label: "Required" },
+              { value: "no", label: "Not needed" },
+            ]}
+          />
+        </FormField>
+        <FormField label="Market Data">
+          <SelectInput
+            value={needsMarketData}
+            onChange={setNeedsMarketData}
+            options={[
+              { value: "yes", label: "Required" },
+              { value: "no", label: "Not needed" },
+            ]}
+          />
+        </FormField>
+      </div>
+      <FormField label="Notes">
+        <TextArea
+          value={notes}
+          onChange={setNotes}
+          placeholder="What makes this peer comparable, what needs restating, which deck recipe should be used."
+          rows={4}
+        />
+      </FormField>
+      <button
+        onClick={() => {
+          if (!peerTicker || !primaryCompareLabel) return;
+          onSave(
+            {
+              peerTicker,
+              blueprintType,
+              subjectTicker: ticker,
+              primaryCompareLabel,
+              needsCalendarAlignment: needsCalendarAlignment === "yes",
+              needsMethodologyAdjustments: needsMethodologyAdjustments === "yes",
+              needsMarketData: needsMarketData === "yes",
+              notes,
+            },
+            `blueprint:${peerTicker}`,
+            `Blueprint for ${peerTicker}`
+          );
+        }}
+        disabled={saving || !peerTicker || !primaryCompareLabel}
+        className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-[11px] font-semibold text-white shadow-subtle transition hover:opacity-90 disabled:opacity-50"
+      >
+        {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+        Save Blueprint
+      </button>
+    </div>
+  );
+}
+
+function SegmentMappingForm({
+  onSave,
+  saving,
+}: {
+  onSave: (data: SegmentMappingEntry, periodEnd: string, source: string) => void;
+  saving: boolean;
+}) {
+  const [peerTicker, setPeerTicker] = useState("");
+  const [subjectSegment, setSubjectSegment] = useState("");
+  const [peerSegment, setPeerSegment] = useState("");
+  const [compareAs, setCompareAs] = useState<SegmentComparisonBasis>("reported-segment");
+  const [notes, setNotes] = useState("");
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-3 gap-3">
+        <FormField label="Peer Ticker">
+          <TextInput value={peerTicker} onChange={(v) => setPeerTicker(v.toUpperCase())} placeholder="HRL" />
+        </FormField>
+        <FormField label="Subject Segment">
+          <TextInput value={subjectSegment} onChange={setSubjectSegment} placeholder="Smithfield Packaged Meats" />
+        </FormField>
+        <FormField label="Peer Segment">
+          <TextInput value={peerSegment} onChange={setPeerSegment} placeholder="Retail + Foodservice" />
+        </FormField>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <FormField label="Comparison Basis">
+          <SelectInput
+            value={compareAs}
+            onChange={(v) => setCompareAs(v as SegmentComparisonBasis)}
+            options={[
+              { value: "reported-segment", label: "Reported Segment" },
+              { value: "custom-aggregate", label: "Custom Aggregate" },
+              { value: "business-unit", label: "Business Unit" },
+            ]}
+          />
+        </FormField>
+        <FormField label="Notes">
+          <TextInput value={notes} onChange={setNotes} placeholder="Why this mapping is the right comp set" />
+        </FormField>
+      </div>
+      <button
+        onClick={() => {
+          if (!peerTicker || !subjectSegment || !peerSegment) return;
+          onSave(
+            { peerTicker, subjectSegment, peerSegment, compareAs, notes },
+            `mapping:${peerTicker}:${subjectSegment}`,
+            `${subjectSegment} -> ${peerSegment}`
+          );
+        }}
+        disabled={saving || !peerTicker || !subjectSegment || !peerSegment}
+        className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-[11px] font-semibold text-white shadow-subtle transition hover:opacity-90 disabled:opacity-50"
+      >
+        {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+        Save Mapping
+      </button>
+    </div>
+  );
+}
+
+function QuarterAlignmentForm({
+  onSave,
+  saving,
+}: {
+  onSave: (data: QuarterAlignmentEntry, periodEnd: string, source: string) => void;
+  saving: boolean;
+}) {
+  const [peerTicker, setPeerTicker] = useState("");
+  const [subjectPeriodEnd, setSubjectPeriodEnd] = useState("");
+  const [peerPeriodEnd, setPeerPeriodEnd] = useState("");
+  const [subjectQuarterLabel, setSubjectQuarterLabel] = useState("");
+  const [peerQuarterLabel, setPeerQuarterLabel] = useState("");
+  const [alignmentType, setAlignmentType] = useState<QuarterAlignmentType>("fiscal-shift");
+  const [rationale, setRationale] = useState("");
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-3 gap-3">
+        <FormField label="Peer Ticker">
+          <TextInput value={peerTicker} onChange={(v) => setPeerTicker(v.toUpperCase())} placeholder="HRL" />
+        </FormField>
+        <FormField label="Subject Period End">
+          <TextInput value={subjectPeriodEnd} onChange={setSubjectPeriodEnd} placeholder="2025-12-28" />
+        </FormField>
+        <FormField label="Peer Period End">
+          <TextInput value={peerPeriodEnd} onChange={setPeerPeriodEnd} placeholder="2026-01-25" />
+        </FormField>
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        <FormField label="Subject Quarter">
+          <TextInput value={subjectQuarterLabel} onChange={setSubjectQuarterLabel} placeholder="Q4 2025" />
+        </FormField>
+        <FormField label="Peer Quarter">
+          <TextInput value={peerQuarterLabel} onChange={setPeerQuarterLabel} placeholder="Q1 2026" />
+        </FormField>
+        <FormField label="Alignment Type">
+          <SelectInput
+            value={alignmentType}
+            onChange={(v) => setAlignmentType(v as QuarterAlignmentType)}
+            options={[
+              { value: "same-quarter", label: "Same Quarter" },
+              { value: "fiscal-shift", label: "Fiscal Shift" },
+              { value: "estimated-alignment", label: "Estimated" },
+            ]}
+          />
+        </FormField>
+      </div>
+      <FormField label="Rationale">
+        <TextArea
+          value={rationale}
+          onChange={setRationale}
+          rows={3}
+          placeholder="Why these two quarters should be treated as comparable."
+        />
+      </FormField>
+      <button
+        onClick={() => {
+          if (!peerTicker || !subjectPeriodEnd || !peerPeriodEnd) return;
+          onSave(
+            {
+              peerTicker,
+              subjectPeriodEnd,
+              peerPeriodEnd,
+              subjectQuarterLabel,
+              peerQuarterLabel,
+              alignmentType,
+              rationale,
+            },
+            `align:${peerTicker}:${subjectPeriodEnd}`,
+            `${subjectQuarterLabel || subjectPeriodEnd} -> ${peerQuarterLabel || peerPeriodEnd}`
+          );
+        }}
+        disabled={saving || !peerTicker || !subjectPeriodEnd || !peerPeriodEnd}
+        className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-[11px] font-semibold text-white shadow-subtle transition hover:opacity-90 disabled:opacity-50"
+      >
+        {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+        Save Alignment
+      </button>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Record list
 // ---------------------------------------------------------------------------
@@ -790,6 +1058,25 @@ export function ManualDataPanel({ ticker }: Props) {
                 )}
                 {activeTab === "unit-volume" && (
                   <UnitVolumeForm
+                    onSave={(data, pe, src) => handleSave(data, pe, src)}
+                    saving={saving}
+                  />
+                )}
+                {activeTab === "comparison-blueprint" && (
+                  <ComparisonBlueprintForm
+                    onSave={(data, pe, src) => handleSave(data, pe, src)}
+                    saving={saving}
+                    ticker={ticker}
+                  />
+                )}
+                {activeTab === "segment-mapping" && (
+                  <SegmentMappingForm
+                    onSave={(data, pe, src) => handleSave(data, pe, src)}
+                    saving={saving}
+                  />
+                )}
+                {activeTab === "quarter-alignment" && (
+                  <QuarterAlignmentForm
                     onSave={(data, pe, src) => handleSave(data, pe, src)}
                     saving={saving}
                   />

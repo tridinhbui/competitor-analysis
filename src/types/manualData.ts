@@ -17,7 +17,10 @@ export type ManualDataType =
   | "narrative"
   | "unit-volume"
   | "market-data"
-  | "segment-override";
+  | "segment-override"
+  | "comparison-blueprint"
+  | "segment-mapping"
+  | "quarter-alignment";
 
 // ---------------------------------------------------------------------------
 // Industry Landscape — company-level stats not in SEC filings
@@ -129,6 +132,63 @@ export interface SegmentOverrideEntry {
 }
 
 // ---------------------------------------------------------------------------
+// Comparison Blueprint — peer-specific comparison rules
+// ---------------------------------------------------------------------------
+
+export type ComparisonBlueprintType =
+  | "methodology-change"
+  | "packaged-meats-day1"
+  | "multi-peer-operating"
+  | "custom";
+
+export interface ComparisonBlueprintEntry {
+  peerTicker: string;
+  blueprintType: ComparisonBlueprintType;
+  subjectTicker?: string;
+  primaryCompareLabel: string;
+  needsCalendarAlignment: boolean;
+  needsMethodologyAdjustments: boolean;
+  needsMarketData: boolean;
+  notes: string;
+}
+
+// ---------------------------------------------------------------------------
+// Segment Mapping — which subject segment compares to which peer segment
+// ---------------------------------------------------------------------------
+
+export type SegmentComparisonBasis =
+  | "reported-segment"
+  | "custom-aggregate"
+  | "business-unit";
+
+export interface SegmentMappingEntry {
+  peerTicker: string;
+  subjectSegment: string;
+  peerSegment: string;
+  compareAs: SegmentComparisonBasis;
+  notes: string;
+}
+
+// ---------------------------------------------------------------------------
+// Quarter Alignment — explicit subject quarter <-> peer quarter links
+// ---------------------------------------------------------------------------
+
+export type QuarterAlignmentType =
+  | "same-quarter"
+  | "fiscal-shift"
+  | "estimated-alignment";
+
+export interface QuarterAlignmentEntry {
+  peerTicker: string;
+  subjectPeriodEnd: string;
+  peerPeriodEnd: string;
+  subjectQuarterLabel: string;
+  peerQuarterLabel: string;
+  alignmentType: QuarterAlignmentType;
+  rationale: string;
+}
+
+// ---------------------------------------------------------------------------
 // Wrapper: a single manual_data record as stored in Supabase
 // ---------------------------------------------------------------------------
 
@@ -143,7 +203,10 @@ export interface ManualDataRecord {
     | NarrativeEntry
     | UnitVolumeEntry
     | MarketDataEntry
-    | SegmentOverrideEntry;
+    | SegmentOverrideEntry
+    | ComparisonBlueprintEntry
+    | SegmentMappingEntry
+    | QuarterAlignmentEntry;
   sourceNote: string;
   createdAt?: string;
   updatedAt?: string;

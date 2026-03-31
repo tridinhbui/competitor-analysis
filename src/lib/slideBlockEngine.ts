@@ -2263,6 +2263,32 @@ export interface ManualDataForBlocks {
   }>;
   landscapeData?: LandscapeManualData[];
   marketData?: MarketDataEntry[];
+  comparisonBlueprints?: Array<{
+    peerTicker: string;
+    blueprintType: string;
+    subjectTicker?: string;
+    primaryCompareLabel: string;
+    needsCalendarAlignment: boolean;
+    needsMethodologyAdjustments: boolean;
+    needsMarketData: boolean;
+    notes: string;
+  }>;
+  segmentMappings?: Array<{
+    peerTicker: string;
+    subjectSegment: string;
+    peerSegment: string;
+    compareAs: string;
+    notes: string;
+  }>;
+  quarterAlignments?: Array<{
+    peerTicker: string;
+    subjectPeriodEnd: string;
+    peerPeriodEnd: string;
+    subjectQuarterLabel: string;
+    peerQuarterLabel: string;
+    alignmentType: string;
+    rationale: string;
+  }>;
 }
 
 export interface SlideBlockInput {

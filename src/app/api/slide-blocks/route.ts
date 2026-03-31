@@ -10,7 +10,15 @@ import { generateAllSlideBlocks, type ManualDataForBlocks } from "@/lib/slideBlo
 import { listManualData } from "@/lib/manualDataStorage";
 import type { PeerType } from "@/types/competitor";
 import type { SlideBlocksResponse } from "@/types/slideBlocks";
-import type { NarrativeEntry, GuidanceEntry, IndustryLandscapeEntry, MarketDataEntry } from "@/types/manualData";
+import type {
+  NarrativeEntry,
+  GuidanceEntry,
+  IndustryLandscapeEntry,
+  MarketDataEntry,
+  ComparisonBlueprintEntry,
+  SegmentMappingEntry,
+  QuarterAlignmentEntry,
+} from "@/types/manualData";
 
 export const runtime = "nodejs";
 
@@ -58,6 +66,27 @@ export async function GET(request: Request) {
       const marketRecords = await listManualData(ticker, "market-data");
       if (marketRecords.length > 0) {
         manualData.marketData = marketRecords.map((r) => r.data as MarketDataEntry as unknown as import("@/lib/marketDataEngine").MarketDataEntry);
+      }
+
+      const blueprintRecords = await listManualData(ticker, "comparison-blueprint");
+      if (blueprintRecords.length > 0) {
+        manualData.comparisonBlueprints = blueprintRecords.map(
+          (r) => r.data as ComparisonBlueprintEntry
+        );
+      }
+
+      const mappingRecords = await listManualData(ticker, "segment-mapping");
+      if (mappingRecords.length > 0) {
+        manualData.segmentMappings = mappingRecords.map(
+          (r) => r.data as SegmentMappingEntry
+        );
+      }
+
+      const alignmentRecords = await listManualData(ticker, "quarter-alignment");
+      if (alignmentRecords.length > 0) {
+        manualData.quarterAlignments = alignmentRecords.map(
+          (r) => r.data as QuarterAlignmentEntry
+        );
       }
     } catch {
       // Manual data is optional; continue without it
