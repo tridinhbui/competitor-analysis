@@ -61,12 +61,74 @@ export interface CashFlowData {
   netIncome: number | null;
 }
 
+/** Income statement summary (derived from cfItems) */
+export interface IncomeStatement {
+  revenue: number | null;
+  costOfRevenue: number | null;
+  grossProfit: number | null;
+  grossMargin: number | null;
+  sgaExpense: number | null;
+  rdExpense: number | null;
+  operatingExpenses: number | null;
+  operatingIncome: number | null;
+  operatingMargin: number | null;
+  ebit: number | null;
+  ebitMargin: number | null;
+  depreciation: number | null;
+  amortization: number | null;
+  ebitda: number | null;
+  ebitdaMargin: number | null;
+  interestExpense: number | null;
+  incomeTax: number | null;
+  netIncome: number | null;
+  netMargin: number | null;
+  epsBasic: number | null;
+  epsDiluted: number | null;
+}
+
+/** Enhanced financial ratios */
 export interface Ratios {
   debtToEquity: number | null;
   debtToCapital: number | null;
   netDebtToEbitda: number | null;
   interestCoverage: number | null;
   currentRatio: number | null;
+  // Profitability
+  grossMargin: number | null;
+  operatingMargin: number | null;
+  netMargin: number | null;
+  ebitdaMargin: number | null;
+  // Returns
+  returnOnEquity: number | null;
+  returnOnAssets: number | null;
+  returnOnInvestedCapital: number | null;
+  // Efficiency
+  assetTurnover: number | null;
+  inventoryTurnover: number | null;
+  receivablesTurnover: number | null;
+  // Cash
+  fcfYield: number | null;
+  fcfConversion: number | null;
+  // Working capital
+  workingCapital: number | null;
+  workingCapitalRatio: number | null;
+}
+
+export interface EarningsNarrative {
+  /** Headline: "Beat expectations" | "Missed expectations" | "In line" | "N/A" */
+  result: string;
+  /** Q4 2024 beat EPS consensus by 5% | etc. */
+  summary: string;
+  /** Prior year guidance (if disclosed) */
+  priorGuidance: string | null;
+  /** Current guidance (if disclosed) */
+  currentGuidance: string | null;
+  /** Key themes from MD&A or earnings call summary */
+  keyThemes: string[];
+  /** Management tone / confidence */
+  tone: "bullish" | "neutral" | "cautious" | "unknown";
+  /** Source: "sec-text" (from 10-Q/10-K MD&A) or "call-transcript" */
+  source: string;
 }
 
 export interface DividendAnalysis {
@@ -112,11 +174,12 @@ export interface FullAnalysis {
     /** Data quality: SEC=high, PDF+AI=medium, PDF+heuristic=low */
     confidence?: DataConfidence;
     /** How extraction was done (for transparency) */
-    extractionMethod?: "sec" | "pdf-ai" | "pdf-heuristic";
+    extractionMethod?: "sec" | "pdf-ai" | "pdf-ai-section-split" | "pdf-vision" | "pdf-heuristic";
   };
   balanceSheet: BalanceSheet;
   debtStructure: DebtStructure;
   cashFlow: CashFlowData;
+  incomeStatement: IncomeStatement;
   ratios: Ratios;
   dividendAnalysis: DividendAnalysis;
   /** Raw CF / income items for display in the dashboard */
@@ -135,6 +198,8 @@ export interface FullAnalysis {
   footnotes?: FootnoteItem[];
   /** Non-GAAP adjusted metrics with reconciliation */
   adjustedMetrics?: AdjustedMetric[];
+  /** Earnings narrative: beat/miss, guidance, key themes */
+  earningsNarrative?: EarningsNarrative;
 }
 
 /** The step definitions for the agent workflow UI. */

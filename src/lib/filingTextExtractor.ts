@@ -3,7 +3,7 @@
  * then uses OpenAI to extract notable footnotes and non-GAAP adjusted metrics.
  */
 
-import type { FootnoteItem, AdjustedMetric } from "@/types/analysis";
+import type { FootnoteItem, AdjustedMetric, EarningsNarrative } from "@/types/analysis";
 
 const SEC_UA =
   process.env.SEC_EDGAR_USER_AGENT ??
@@ -229,5 +229,108 @@ Rules:
     };
   } catch {
     return { footnotes: [], adjustedMetrics: [] };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 4. Extract earnings narrative from MD&A section
+// ---------------------------------------------------------------------------
+
+function extractMdaSection(text: string): string {
+  // Find "Management's Discussion and Analysis" or "MD&A" section
+  const mdaIdx = text.search(/(?:management[^\n]{0,20}discussion|MD&A|md&a)/i);
+  if (mdaIdx === -1) {
+    // Fallback: use first 5000 chars if MD&A not found
+    return text.slice(0, 5000);
+  }
+  // Extract up to 8000 chars from MD&A start
+  const mdaText = text.slice(mdaIdx, mdaIdx + 8000);
+  // Find end of MD&A section (usually marked by next Item number)
+  const itemIdx = mdaText.search(/(?:^|\n)\s*Item\s+\d+/i);
+  return itemIdx !== -1 ? mdaText.slice(0, itemIdx) : mdaText;
+}
+
+export async function extractEarningsNarrative(
+  text: string,
+  ticker: string,
+  apiKey: string,
+  model: string
+): Promise<EarningsNarrative | null> {
+  const mdaText = extractMdaSection(text);
+
+  if (!mdaText || mdaText.length < 500) {
+    return null;
+  }
+
+  const prompt = `You are a financial analyst extracting earnings insights from an SEC filing MD&A section.
+
+FILING EXCERPT (MD&A):
+${mdaText}
+
+Analyze and extract earnings narrative. Return ONLY valid JSON (no markdown):
+{
+  "result": "Beat expectations|Missed expectations|In line|N/A",
+  "summary": "One sentence: if beat/miss, by how much vs consensus. Otherwise, key earnings metric change.",
+  "priorGuidance": "Prior quarter/year guidance if mentioned, or null",
+  "currentGuidance": "Current guidance for next quarter/year if mentioned, or null",
+  "keyThemes": ["Theme 1 (e.g. 'Strong volume growth in pork segment')", "Theme 2", "Theme 3"],
+  "tone": "bullish|neutral|cautious|unknown",
+  "source": "sec-text"
+}
+
+Rules:
+- result: Only use "Beat expectations" if explicitly stated or strongly implied (actual > consensus)
+- summary: Extract from Results of Operations or Results section. If no beat/miss info, mention key revenue/margin/segment change.
+- priorGuidance: Extract from prior quarter discussion if referenced
+- currentGuidance: Extract forward-looking guidance for next quarter or full year
+- keyThemes: 3–5 bullet points from MD&A describing operational changes, market conditions, or strategic updates relevant to profitability
+- tone: bullish (optimistic, growing demand, strong pricing) | cautious (headwinds, margin pressure, weak guidance) | neutral (mixed) | unknown
+- Return null fields if information is not available in the text.`;
+
+  try {
+    const res = await fetch(OPENAI_API, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.2,
+        max_tokens: 1500,
+        response_format: { type: "json_object" },
+      }),
+      signal: AbortSignal.timeout(45_000),
+    });
+
+    if (!res.ok) return null;
+
+    const data = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const content = data.choices?.[0]?.message?.content ?? "{}";
+    const parsed = JSON.parse(content) as Partial<EarningsNarrative>;
+
+    if (
+      !parsed.result ||
+      !parsed.summary ||
+      !parsed.keyThemes ||
+      !Array.isArray(parsed.keyThemes)
+    ) {
+      return null;
+    }
+
+    return {
+      result: parsed.result || "N/A",
+      summary: parsed.summary || "",
+      priorGuidance: parsed.priorGuidance ?? null,
+      currentGuidance: parsed.currentGuidance ?? null,
+      keyThemes: parsed.keyThemes.slice(0, 5),
+      tone: (parsed.tone as EarningsNarrative["tone"]) || "unknown",
+      source: "sec-text",
+    };
+  } catch {
+    return null;
   }
 }

@@ -1,9 +1,12 @@
 /**
- * PDF → FullAnalysis pipeline.
+ * PDF → FullAnalysis pipeline (client-side).
  *
- * 1. Extract all text from PDF using pdf.js (client-side).
- * 2. Send full text to /api/analyze-pdf which uses OpenAI to parse financials.
- * 3. Fallback to heuristic extraction if API fails.
+ * 1. Extract text from PDF using pdf.js
+ * 2. Send to /api/analyze-pdf which runs 3 parallel AI calls:
+ *    - Balance Sheet extraction (exact XBRL tags)
+ *    - Income Statement + Cash Flow extraction (exact XBRL tags)
+ *    - Qualitative: footnotes, earnings narrative, adjusted metrics
+ * 3. Fallback to heuristic regex extraction if AI unavailable
  */
 
 import type { BSItem, FullAnalysis, StepEvent } from "@/types/analysis";
@@ -69,7 +72,7 @@ export async function extractPdfLines(
 }
 
 // ===========================================================================
-// 2. AI-powered extraction via /api/analyze-pdf
+// 2. AI-powered extraction via /api/analyze-pdf (3 parallel calls)
 // ===========================================================================
 
 async function analyzeWithAI(
@@ -97,7 +100,7 @@ async function analyzeWithAI(
 }
 
 // ===========================================================================
-// 3. Heuristic fallback (simplified from previous version)
+// 3. Heuristic fallback
 // ===========================================================================
 
 type Scale = 1 | 1_000 | 1_000_000 | 1_000_000_000;
@@ -193,25 +196,42 @@ const BS_DEFS: ItemDef[] = [
   { tag: "Goodwill", label: "Goodwill", keywords: [/^goodwill$/i] },
   { tag: "Liabilities", label: "Total liabilities", keywords: [/^total\s+liabilities$/i], section: ["balance_sheet"] },
   { tag: "LiabilitiesCurrent", label: "Current liabilities", keywords: [/^total\s+current\s+liabilities$/i, /^current\s+liabilities$/i] },
-  { tag: "DebtCurrent", label: "Current debt", keywords: [/^current\s+portion.*long-?term\s+debt/i, /^short-?term\s+(debt|borrowings?)/i, /^current\s+debt/i] },
+  { tag: "DebtCurrent", label: "Current debt", keywords: [/^current\s+portion.*long-?term\s+debt/i, /^short-?term\s+(debt|borrowings?)/i, /^current\s+debt/i, /^notes?\s+payable/i] },
   { tag: "LongTermDebtNoncurrent", label: "Long-term debt", keywords: [/^long-?term\s+debt/i, /^non-?current.*debt/i] },
+  { tag: "AccountsPayable", label: "Accounts payable", keywords: [/^accounts?\s+payable/i, /^trade\s+payable/i] },
   { tag: "StockholdersEquity", label: "Total stockholders' equity", keywords: [/^total\s+(stock|share)holders.?\s+equity/i, /^total\s+equity/i] },
   { tag: "RetainedEarningsAccumulatedDeficit", label: "Retained earnings", keywords: [/^retained\s+earnings/i, /^accumulated\s+deficit/i] },
   { tag: "LiabilitiesAndStockholdersEquity", label: "Total liab. + equity", keywords: [/^total\s+liabilities\s+(and|&)\s+(stock|share)holders/i] },
+  { tag: "AccumulatedOtherComprehensiveIncomeLoss", label: "AOCI", keywords: [/^accumulated\s+other\s+comprehensive/i] },
+  { tag: "AdditionalPaidInCapital", label: "APIC", keywords: [/^additional\s+paid-?in\s+capital/i] },
+  { tag: "IntangibleAssetsNet", label: "Intangible assets", keywords: [/^intangible\s+assets/i] },
+  { tag: "AccruedLiabilitiesCurrent", label: "Accrued liabilities", keywords: [/^accrued\s+(expenses?|liabilities)/i] },
 ];
 
 const CF_DEFS: ItemDef[] = [
   { tag: "Revenues", label: "Revenue", keywords: [/^(total\s+)?(net\s+)?revenue/i, /^net\s+sales/i], section: ["income"] },
-  { tag: "GrossProfit", label: "Gross profit", keywords: [/^gross\s+(profit|margin)/i] },
-  { tag: "OperatingIncomeLoss", label: "Operating income", keywords: [/^operating\s+(income|loss)/i] },
+  { tag: "CostOfGoodsSold", label: "Cost of goods sold", keywords: [/^cost\s+of\s+(goods?\s+sold|sales|revenue)/i], section: ["income"] },
+  { tag: "GrossProfit", label: "Gross profit", keywords: [/^gross\s+profit/i] },
+  { tag: "SellingGeneralAndAdministrativeExpense", label: "SG&A", keywords: [/^selling.?\s*general/i, /^sg&a/i] },
+  { tag: "ResearchAndDevelopmentExpense", label: "R&D", keywords: [/^research\s+and\s+development/i, /^r&d/i] },
+  { tag: "OperatingExpenses", label: "Operating expenses", keywords: [/^total\s+operating\s+expenses/i] },
+  { tag: "OperatingIncomeLoss", label: "Operating income", keywords: [/^operating\s+(income|loss)/i, /^income\s+from\s+operations/i] },
   { tag: "InterestExpense", label: "Interest expense", keywords: [/^interest\s+expense/i] },
+  { tag: "IncomeTaxExpenseBenefit", label: "Income tax", keywords: [/^(income\s+tax|provision\s+for\s+income\s+tax)/i] },
   { tag: "NetIncomeLoss", label: "Net income", keywords: [/^net\s+(income|loss|earnings)/i], section: ["income"] },
+  { tag: "EarningsPerShareBasic", label: "EPS (basic)", keywords: [/^(basic\s+)?earnings?\s+per\s+share.*basic/i, /^basic\s+(net\s+)?(income|earnings)\s+per/i] },
+  { tag: "EarningsPerShareDiluted", label: "EPS (diluted)", keywords: [/^(diluted\s+)?earnings?\s+per\s+share.*diluted/i, /^diluted\s+(net\s+)?(income|earnings)\s+per/i] },
+  { tag: "DepreciationDepletionAndAmortization", label: "Depreciation & amortization", keywords: [/^depreciation\s+(and|&)\s+amortization/i, /^depreciation,?\s+depletion/i] },
   { tag: "NetCashProvidedByOperatingActivities", label: "Operating cash flow", keywords: [/^(net\s+)?cash\s+(provided|generated|used).*operating/i], section: ["cash_flow"] },
   { tag: "PaymentsToAcquirePropertyPlantAndEquipment", label: "Capital expenditures", keywords: [/^(capital\s+expenditures?|purchases?\s+of\s+property)/i], abs: true },
-  { tag: "PaymentsOfDividends", label: "Dividends paid", keywords: [/^(payments?\s+of\s+)?dividends?\s+paid/i], abs: true },
+  { tag: "PaymentsOfDividends", label: "Dividends paid", keywords: [/^(payments?\s+of\s+)?dividends?\s+paid/i, /^dividends?\s+to\s+(common\s+)?stock/i], abs: true },
+  { tag: "PaymentsForRepurchaseOfCommonStock", label: "Share repurchases", keywords: [/^(repurchase|buyback|purchase)\s+of\s+(common\s+)?stock/i, /^treasury\s+stock\s+(acquired|purchased)/i], abs: true },
+  { tag: "NetCashProvidedByInvestingActivities", label: "Investing cash flow", keywords: [/^(net\s+)?cash\s+(provided|generated|used).*investing/i], section: ["cash_flow"] },
+  { tag: "NetCashProvidedByFinancingActivities", label: "Financing cash flow", keywords: [/^(net\s+)?cash\s+(provided|generated|used).*financing/i], section: ["cash_flow"] },
+  { tag: "ShareBasedCompensation", label: "Stock-based comp", keywords: [/^(stock|share)-?based\s+compensation/i] },
 ];
 
-function heuristicExtract(lines: PdfLine[], fileName: string): { bs: BSItem[]; cf: BSItem[] } {
+function heuristicExtract(lines: PdfLine[]): { bs: BSItem[]; cf: BSItem[] } {
   const scale = detectScale(lines);
   const sections = detectSections(lines);
   const periodLabel = detectPeriod(lines);
@@ -296,7 +316,7 @@ export async function analyzePdf(
     detail: { file: file.name, sizeKB: Math.round(file.size / 1024), type: file.type },
   });
 
-  // Step 2: Resolve — extract text
+  // Step 2: Extract text
   const t1 = performance.now();
   onStep({ step: "resolve", label: pipeLabel("resolve"), status: "running", message: "Extracting all text from PDF pages…" });
 
@@ -305,11 +325,11 @@ export async function analyzePdf(
     step: "resolve", label: pipeLabel("resolve"), status: "done",
     message: `${pages} pages · ${lines.length.toLocaleString()} lines · ${rawChars.toLocaleString()} chars extracted`,
     durationMs: elapsed(t1),
-    detail: { pages, lines: lines.length, chars: rawChars, avgLinesPerPage: Math.round(lines.length / Math.max(pages, 1)) },
+    detail: { pages, lines: lines.length, chars: rawChars },
   });
 
-  // Step 3: AI analysis (or heuristic fallback)
-  onStep({ step: "fetch_xbrl", label: pipeLabel("fetch_xbrl"), status: "running", message: "Sending extracted text to AI for financial analysis…" });
+  // Step 3: AI extraction (3 parallel calls) or heuristic fallback
+  onStep({ step: "fetch_xbrl", label: pipeLabel("fetch_xbrl"), status: "running", message: "Running 3 parallel AI extractions (BS, IS/CF, qualitative)…" });
 
   const tAi = performance.now();
   let analysis: FullAnalysis;
@@ -324,34 +344,30 @@ export async function analyzePdf(
 
     onStep({
       step: "fetch_xbrl", label: pipeLabel("fetch_xbrl"), status: "done",
-      message: `AI extracted ${bsCount + cfCount} financial line items`,
+      message: `AI extracted ${bsCount} BS + ${cfCount} IS/CF items (3 parallel calls)`,
       durationMs: elapsed(tAi),
-      detail: { method: "OpenAI", balanceSheetItems: bsCount, cashFlowItems: cfCount, model: "gpt-4o-mini" },
+      detail: { method: "3-call-parallel", balanceSheetItems: bsCount, cashFlowItems: cfCount },
     });
   } catch (aiErr) {
     onStep({
       step: "fetch_xbrl", label: pipeLabel("fetch_xbrl"), status: "error",
       message: `AI unavailable: ${aiErr instanceof Error ? aiErr.message : "error"} — falling back to heuristic`,
       durationMs: elapsed(tAi),
-      detail: { error: aiErr instanceof Error ? aiErr.message : String(aiErr) },
     });
 
     const tH = performance.now();
-    onStep({ step: "extract_bs", label: pipeLabel("extract_bs"), status: "running", message: "Heuristic: detecting scale & statement boundaries…" });
+    onStep({ step: "extract_bs", label: pipeLabel("extract_bs"), status: "running", message: "Heuristic extraction…" });
 
-    const { bs, cf } = heuristicExtract(lines, file.name);
+    const { bs, cf } = heuristicExtract(lines);
     onStep({
       step: "extract_bs", label: pipeLabel("extract_bs"), status: "done",
-      message: `Heuristic found ${bs.length} balance sheet items`,
+      message: `Heuristic found ${bs.length} BS + ${cf.length} CF items`,
       durationMs: elapsed(tH),
-      detail: { method: "heuristic", bsItems: bs.length, tags: bs.map(b => b.tag) },
     });
-
     onStep({
       step: "extract_cf", label: pipeLabel("extract_cf"), status: "done",
       message: `Heuristic found ${cf.length} cash flow / income items`,
       durationMs: elapsed(tH),
-      detail: { method: "heuristic", cfItems: cf.length, tags: cf.map(c => c.tag) },
     });
 
     analysis = assembleAnalysis(bs, cf, {
@@ -362,28 +378,26 @@ export async function analyzePdf(
     });
   }
 
-  // Steps 4-5: Extract (for AI path, report what was extracted)
+  // Report extraction details
   if (usedAI) {
     const bsCount = analysis.balanceSheet.items.length;
     const cfCount = analysis.cfItems?.length ?? 0;
-    const bsTags = analysis.balanceSheet.items.map(i => i.tag);
-    const cfTags = (analysis.cfItems ?? []).map(i => i.tag);
 
     onStep({
       step: "extract_bs", label: pipeLabel("extract_bs"), status: "done",
-      message: `${bsCount} balance sheet items extracted via AI`,
+      message: `${bsCount} balance sheet items`,
       durationMs: 0,
-      detail: { items: bsCount, tags: bsTags, topItems: analysis.balanceSheet.items.slice(0, 5).map(i => `${i.label}: ${i.value}M`) },
+      detail: { items: bsCount, tags: analysis.balanceSheet.items.map(i => i.tag) },
     });
     onStep({
       step: "extract_cf", label: pipeLabel("extract_cf"), status: "done",
-      message: `${cfCount} cash flow / P&L items extracted via AI`,
+      message: `${cfCount} income / cash flow items`,
       durationMs: 0,
-      detail: { items: cfCount, tags: cfTags, topItems: (analysis.cfItems ?? []).slice(0, 5).map(i => `${i.label}: ${i.value}M`) },
+      detail: { items: cfCount, tags: (analysis.cfItems ?? []).map(i => i.tag) },
     });
   }
 
-  // Steps 6-10: Compute & validate
+  // Compute & validate steps
   const computeSteps: { id: string; msg: () => string; detailFn: () => Record<string, unknown> }[] = [
     {
       id: "compute_capital",
@@ -393,12 +407,11 @@ export async function analyzePdf(
         totalLiabilities: `$${analysis.balanceSheet.totalLiabilities.toLocaleString()}M`,
         totalEquity: `$${analysis.balanceSheet.totalEquity.toLocaleString()}M`,
         cash: `$${analysis.balanceSheet.cashAndEquivalents.toLocaleString()}M`,
-        retainedEarnings: `$${analysis.balanceSheet.retainedEarnings.toLocaleString()}M`,
       }),
     },
     {
       id: "compute_debt",
-      msg: () => `Net debt: $${analysis.debtStructure.netDebt.toLocaleString()}M · Total debt: $${analysis.debtStructure.totalDebt.toLocaleString()}M`,
+      msg: () => `Net debt: $${analysis.debtStructure.netDebt.toLocaleString()}M · Total: $${analysis.debtStructure.totalDebt.toLocaleString()}M`,
       detailFn: () => ({
         shortTermDebt: `$${analysis.debtStructure.shortTermDebt.toLocaleString()}M`,
         longTermDebt: `$${analysis.debtStructure.longTermDebt.toLocaleString()}M`,
@@ -411,18 +424,20 @@ export async function analyzePdf(
       msg: () => {
         const r = analysis.ratios;
         const parts: string[] = [];
+        if (r.grossMargin != null) parts.push(`GM: ${r.grossMargin}%`);
+        if (r.operatingMargin != null) parts.push(`OP: ${r.operatingMargin}%`);
         if (r.debtToEquity != null) parts.push(`D/E: ${r.debtToEquity}`);
         if (r.currentRatio != null) parts.push(`Current: ${r.currentRatio}`);
-        if (r.interestCoverage != null) parts.push(`Int. coverage: ${r.interestCoverage}x`);
         return parts.length > 0 ? parts.join(" · ") : "Ratios computed";
       },
       detailFn: () => {
         const r = analysis.ratios;
         const d: Record<string, unknown> = {};
+        if (r.grossMargin != null) d["Gross Margin"] = `${r.grossMargin}%`;
+        if (r.operatingMargin != null) d["Operating Margin"] = `${r.operatingMargin}%`;
+        if (r.netMargin != null) d["Net Margin"] = `${r.netMargin}%`;
+        if (r.returnOnEquity != null) d["ROE"] = `${r.returnOnEquity}%`;
         if (r.debtToEquity != null) d["Debt/Equity"] = r.debtToEquity;
-        if (r.debtToCapital != null) d["Debt/Capital"] = r.debtToCapital;
-        if (r.netDebtToEbitda != null) d["Net Debt/EBITDA"] = r.netDebtToEbitda;
-        if (r.interestCoverage != null) d["Interest Coverage"] = `${r.interestCoverage}x`;
         if (r.currentRatio != null) d["Current Ratio"] = r.currentRatio;
         return d;
       },
@@ -434,16 +449,13 @@ export async function analyzePdf(
         verdict: analysis.dividendAnalysis.verdict,
         payoutNI: analysis.dividendAnalysis.payoutRatioNI != null ? `${analysis.dividendAnalysis.payoutRatioNI}%` : "N/A",
         payoutFCF: analysis.dividendAnalysis.payoutRatioFCF != null ? `${analysis.dividendAnalysis.payoutRatioFCF}%` : "N/A",
-        fcfCoverage: analysis.dividendAnalysis.fcfCoverageYears != null ? `${analysis.dividendAnalysis.fcfCoverageYears} years` : "N/A",
-        cashCoverage: analysis.dividendAnalysis.cashCoverageYears != null ? `${analysis.dividendAnalysis.cashCoverageYears} years` : "N/A",
       }),
     },
     {
       id: "validate",
       msg: () => {
         const p = analysis.validation.checks.filter(c => c.passed).length;
-        const t = analysis.validation.checks.length;
-        return `${p}/${t} checks passed`;
+        return `${p}/${analysis.validation.checks.length} checks passed`;
       },
       detailFn: () => {
         const d: Record<string, unknown> = {};
@@ -461,16 +473,29 @@ export async function analyzePdf(
     onStep({ step: s.id, label: pipeLabel(s.id), status: "done", message: s.msg(), durationMs: 120, detail: s.detailFn() });
   }
 
-  // Final complete step
+  // Footnotes step
+  if (analysis.footnotes?.length || analysis.earningsNarrative) {
+    onStep({
+      step: "extract_footnotes", label: pipeLabel("extract_footnotes"), status: "done",
+      message: `${analysis.footnotes?.length ?? 0} footnotes · ${analysis.earningsNarrative ? "Earnings narrative" : "No narrative"}`,
+      durationMs: 0,
+    });
+  } else {
+    onStep({
+      step: "extract_footnotes", label: pipeLabel("extract_footnotes"), status: "skipped",
+      message: "Qualitative data not available",
+    });
+  }
+
+  // Complete
   const totalItems = analysis.balanceSheet.items.length + (analysis.cfItems?.length ?? 0);
   onStep({
     step: "complete", label: pipeLabel("complete"), status: "done",
-    message: `${usedAI ? "AI" : "Heuristic"} analysis — ${totalItems} items in ${((performance.now() - t0) / 1000).toFixed(1)}s`,
+    message: `${usedAI ? "AI (3-call)" : "Heuristic"} — ${totalItems} items in ${((performance.now() - t0) / 1000).toFixed(1)}s`,
     durationMs: elapsed(t0),
     detail: {
-      method: usedAI ? "AI (OpenAI)" : "Heuristic",
+      method: usedAI ? "3-call parallel AI" : "Heuristic",
       totalItems,
-      totalDuration: `${((performance.now() - t0) / 1000).toFixed(1)}s`,
       company: analysis.meta.companyName ?? "Unknown",
       period: analysis.meta.periodEnd ?? "Unknown",
     },

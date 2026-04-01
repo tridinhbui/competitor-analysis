@@ -77,15 +77,55 @@ export async function GET() {
     // Apply overrides
     const overrides = overrideMap.get(f.ticker)?.[f.period_end] ?? {};
 
+    // Compute volume-derived per-unit metrics
+    const rawSga = overrides.sgaExpense ?? m.sgaExpense;
+    const rawRevenue = overrides.revenue ?? m.revenue;
+    const rawOp = overrides.operatingIncome ?? m.operatingIncome;
+    const volumeHeads = (overrides.volumeHeads ?? null) as number | null;
+    const volumeLbs = (overrides.volumeLbs ?? null) as number | null;
+    // cwt = lbs / 100 (but stored as millions of cwt = volumeLbs / 100)
+    const volumeCwt = (overrides.volumeCwt ?? (volumeLbs != null ? volumeLbs / 100 : null)) as number | null;
+    // OP/Head = operatingIncome ($M) * 1,000,000 / (volumeHeads * 1000) = OP * 1000 / volumeHeads
+    const opPerHead = volumeHeads != null && rawOp != null && volumeHeads > 0
+      ? parseFloat(((rawOp * 1000) / volumeHeads).toFixed(2))
+      : null;
+    // OP/cwt = operatingIncome ($M) / volumeCwt (M cwt) = $/cwt
+    const opPerCwt = volumeCwt != null && rawOp != null && volumeCwt > 0
+      ? parseFloat((rawOp / volumeCwt).toFixed(2))
+      : null;
+    const ercAdjustment = (overrides.ercAdjustment ?? null) as number | null;
+    const legalChargeAdjustment = (overrides.legalChargeAdjustment ?? null) as number | null;
+    const transferValueAdjustment = (overrides.transferValueAdjustment ?? null) as number | null;
+    const corporateAllocationAdjustment = (overrides.corporateAllocationAdjustment ?? null) as number | null;
+    // Adjusted OP = OP - ERC (remove favorable ERC) + legalCharge (add back excluded charges)
+    //   - transferValue (remove intercompany transfer pricing impact)
+    //   - corporateAllocation (add back corporate overhead reallocation)
+    const adjustedOperatingIncome = rawOp != null
+      ? rawOp - (ercAdjustment ?? 0) + (legalChargeAdjustment ?? 0) - (transferValueAdjustment ?? 0) + (corporateAllocationAdjustment ?? 0)
+      : null;
+    const adjustedOperatingMargin = adjustedOperatingIncome != null && rawRevenue != null && rawRevenue > 0
+      ? parseFloat((adjustedOperatingIncome / rawRevenue).toFixed(4))
+      : null;
+    // Adjusted per-unit metrics using adjustedOperatingIncome
+    const adjustedOpPerHead = volumeHeads != null && adjustedOperatingIncome != null && volumeHeads > 0
+      ? parseFloat(((adjustedOperatingIncome * 1000) / volumeHeads).toFixed(2))
+      : null;
+    const adjustedOpPerCwt = volumeCwt != null && adjustedOperatingIncome != null && volumeCwt > 0
+      ? parseFloat((adjustedOperatingIncome / volumeCwt).toFixed(2))
+      : null;
+    const sgaAsPercent = rawSga != null && rawRevenue != null && rawRevenue > 0
+      ? parseFloat((Math.abs(rawSga) / rawRevenue).toFixed(4))
+      : null;
+
     const row: DataSourceRow = {
       id: f.id,
       ticker: f.ticker,
       companyName: company?.name ?? f.ticker,
       periodEnd: f.period_end,
       quarterLabel: m.quarterLabel,
-      revenue: overrides.revenue ?? m.revenue,
+      revenue: rawRevenue,
       grossProfit: overrides.grossProfit ?? m.grossProfit,
-      operatingIncome: overrides.operatingIncome ?? m.operatingIncome,
+      operatingIncome: rawOp,
       netIncome: overrides.netIncome ?? m.netIncome,
       totalAssets: overrides.totalAssets ?? m.totalAssets,
       totalLiabilities: overrides.totalLiabilities ?? m.totalLiabilities,
@@ -100,10 +140,26 @@ export async function GET() {
       netMargin: overrides.netMargin ?? m.netMargin,
       debtToEquity: overrides.debtToEquity ?? m.debtToEquity,
       currentRatio: overrides.currentRatio ?? m.currentRatio,
-      sgaExpense: overrides.sgaExpense ?? m.sgaExpense,
+      sgaExpense: rawSga,
       depreciation: overrides.depreciation ?? depItem?.value ?? null,
       ebit: overrides.ebit ?? ebit,
       ebitda: overrides.ebitda ?? ebitda,
+      // Volume & per-unit
+      volumeHeads,
+      volumeLbs,
+      volumeCwt,
+      opPerHead,
+      opPerCwt,
+      // Non-GAAP adjustments
+      ercAdjustment,
+      legalChargeAdjustment,
+      transferValueAdjustment,
+      corporateAllocationAdjustment,
+      adjustedOperatingIncome,
+      adjustedOperatingMargin,
+      adjustedOpPerHead,
+      adjustedOpPerCwt,
+      sgaAsPercent,
     };
 
     rows.push(row);

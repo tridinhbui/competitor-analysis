@@ -15,10 +15,17 @@ import {
   isStepEventPayload,
 } from "@/lib/sseClient";
 import {
-  FileUp, Search, ArrowRight, RotateCcw, Sparkles, FileText,
+  FileUp, Search, ArrowRight, RotateCcw, Sparkles, FileText, History, CheckCircle, XCircle, Loader2,
 } from "lucide-react";
 
 type Phase = "idle" | "analyzing" | "done" | "error";
+
+interface BackfillEvent {
+  step: string;
+  status: string;
+  message: string;
+  detail?: Record<string, unknown>;
+}
 
 export function TenQDropAnalyzer() {
   const [phase, setPhase] = useState<Phase>("idle");
@@ -27,6 +34,10 @@ export function TenQDropAnalyzer() {
   const [error, setError] = useState<string>("");
   const [ticker, setTicker] = useState("");
   const [dragOver, setDragOver] = useState(false);
+  const [backfillTicker, setBackfillTicker] = useState("");
+  const [backfillEvents, setBackfillEvents] = useState<BackfillEvent[]>([]);
+  const [backfillRunning, setBackfillRunning] = useState(false);
+  const [backfillDone, setBackfillDone] = useState(false);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [showPdf, setShowPdf] = useState(true);
   const [pdfWidthPct, setPdfWidthPct] = useState(50);
@@ -186,6 +197,41 @@ export function TenQDropAnalyzer() {
     if (file) analyzePdfFile(file);
   }, [analyzePdfFile]);
 
+  const runBackfill = useCallback(async (t: string) => {
+    const clean = t.trim().toUpperCase();
+    if (!clean) return;
+    setBackfillRunning(true);
+    setBackfillDone(false);
+    setBackfillEvents([]);
+    try {
+      const resp = await fetch(`/api/analyze/history?ticker=${encodeURIComponent(clean)}&quarters=12`);
+      if (!resp.ok || !resp.body) throw new Error(`Server returned ${resp.status}`);
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split("\n\n");
+        buf = parts.pop() ?? "";
+        for (const part of parts) {
+          const dataLine = part.trim().split("\n").find((l) => l.startsWith("data:"));
+          if (!dataLine) continue;
+          try {
+            const evt = JSON.parse(dataLine.slice(5)) as BackfillEvent;
+            setBackfillEvents((prev) => [...prev, evt]);
+          } catch { /* ignore */ }
+        }
+      }
+      setBackfillDone(true);
+    } catch (err) {
+      setBackfillEvents((prev) => [...prev, { step: "error", status: "error", message: String(err) }]);
+    } finally {
+      setBackfillRunning(false);
+    }
+  }, []);
+
   const handleExport = useCallback(async () => {
     if (!result) return;
     const { utils, writeFile } = await import("xlsx");
@@ -268,7 +314,56 @@ export function TenQDropAnalyzer() {
             <p className="text-xs text-slate-500 sm:text-sm">AI-powered extraction — processed server-side for accuracy.</p>
             <input ref={inputRef} type="file" accept=".pdf" className="hidden" onChange={handleFileInput} />
           </div>
+
+          {/* Historical Backfill */}
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-5 shadow-subtle">
+            <div className="mb-3 flex items-center gap-2">
+              <History className="h-4 w-4 text-primary" />
+              <h3 className="text-sm font-bold text-slate-900">Load Historical Quarters</h3>
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">12 qtrs</span>
+            </div>
+            <p className="mb-3 text-xs text-slate-500">Backfill up to 12 quarters of SEC data for any ticker — stores all quarters in the Data Source.</p>
+            <form
+              className="flex items-center gap-2"
+              onSubmit={(e) => { e.preventDefault(); runBackfill(backfillTicker); }}
+            >
+              <input
+                type="text"
+                placeholder="Ticker (e.g. TSN, HRL)…"
+                value={backfillTicker}
+                onChange={(e) => setBackfillTicker(e.target.value.toUpperCase())}
+                className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
+              />
+              <button
+                type="submit"
+                disabled={!backfillTicker.trim() || backfillRunning}
+                className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-white shadow-subtle transition hover:opacity-90 disabled:opacity-40"
+              >
+                {backfillRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <History className="h-3.5 w-3.5" />}
+                {backfillRunning ? "Loading…" : "Load"}
+              </button>
+            </form>
+            {backfillEvents.length > 0 && (
+              <div className="mt-3 max-h-40 overflow-y-auto rounded-lg border border-slate-100 bg-slate-50 p-2">
+                {backfillEvents.map((e, i) => (
+                  <div key={i} className="flex items-start gap-1.5 py-0.5">
+                    {e.status === "done" && <CheckCircle className="mt-0.5 h-3 w-3 shrink-0 text-emerald-500" />}
+                    {e.status === "error" && <XCircle className="mt-0.5 h-3 w-3 shrink-0 text-red-500" />}
+                    {e.status === "running" && <Loader2 className="mt-0.5 h-3 w-3 shrink-0 animate-spin text-primary" />}
+                    {e.status === "skipped" && <span className="mt-0.5 h-3 w-3 shrink-0 text-center text-[8px] text-slate-400">—</span>}
+                    <span className="text-[11px] text-slate-600">{e.message}</span>
+                  </div>
+                ))}
+                {backfillDone && (
+                  <div className="mt-1 rounded bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">
+                    ✓ Complete — check Data Source page for results
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
+
         <div className="mx-auto w-full max-w-2xl px-4 pb-8">
           <FinanceQuiz />
         </div>

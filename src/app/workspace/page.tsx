@@ -8,6 +8,8 @@ import { SlideBlocksPanel } from "@/components/workspace/SlideBlocksPanel";
 import { PeerModulePanel } from "@/components/workspace/PeerModulePanel";
 import { AdjustmentPanel } from "@/components/workspace/AdjustmentPanel";
 import { ManualDataPanel } from "@/components/workspace/ManualDataPanel";
+import { PeerComparisonView } from "@/components/workspace/PeerComparisonView";
+import { MacroInsightsPanel } from "@/components/workspace/MacroInsightsPanel";
 import type { CompanyRegistry, PeerType } from "@/types/competitor";
 import {
   Boxes,
@@ -209,6 +211,8 @@ export default function WorkspacePage() {
             <AnalysisResults ticker={selectedTicker} />
             <SlideBlocksPanel ticker={selectedTicker} />
             <AdjustmentPanel ticker={selectedTicker} />
+            <PeerComparisonView />
+            <MacroInsightsPanel />
           </div>
         </div>
       )}

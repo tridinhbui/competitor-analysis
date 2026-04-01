@@ -24,11 +24,14 @@ export async function POST(request: Request) {
       return Response.json({ error: "Missing analysis" }, { status: 400 });
     }
 
-    const resolvedTicker = (
-      ticker ||
-      analysis.meta.ticker ||
-      "UNKNOWN"
-    ).toUpperCase();
+    const rawTicker = ticker || analysis.meta.ticker || "";
+    if (!rawTicker.trim()) {
+      return Response.json(
+        { error: "A valid ticker is required. Please provide ticker in the request body or ensure analysis.meta.ticker is set." },
+        { status: 400 }
+      );
+    }
+    const resolvedTicker = rawTicker.toUpperCase();
     const resolvedPeriod =
       periodEnd ||
       analysis.meta.periodEnd ||

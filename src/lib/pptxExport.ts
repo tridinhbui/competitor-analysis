@@ -18,7 +18,12 @@ const CHART_COLORS = ["3B82F6", "F97316", "10B981", "8B5CF6", "EF4444", "06B6D4"
 const LINE_CHART_COLORS = ["1E40AF", "C2410C", "047857", "6D28D9"];
 
 // Block types that should render as LINE charts
-const LINE_BLOCK_TYPES = new Set(["margin-gap-trend", "sga-trend"]);
+const LINE_BLOCK_TYPES = new Set([
+  "margin-gap-trend",
+  "sga-trend",
+  "unit-economics-trend",
+  "margin-gap-per-unit",
+]);
 
 // Block types that use BAR with possible LINE overlay
 const BAR_WITH_LINE_BLOCK_TYPES = new Set([
@@ -37,6 +42,9 @@ const GROUPED_BAR_BLOCK_TYPES = new Set([
   "methodology-comparison",
   "market-data-volume",
   "market-data-channel",
+  "peer-qoq-comparison",
+  "peer-yoy-comparison",
+  "peer-ttm-comparison",
 ]);
 
 // ---------------------------------------------------------------------------

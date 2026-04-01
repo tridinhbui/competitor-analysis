@@ -39,6 +39,36 @@ export interface DataSourceRow {
   depreciation: number | null;
   ebit: number | null;
   ebitda: number | null;
+  // -- Volume & Per-Unit Metrics (for pork/packaged comparison) --
+  /** Heads processed / slaughtered (thousands) — for pork segments */
+  volumeHeads: number | null;
+  /** Volume in millions of lbs — for packaged meats segments */
+  volumeLbs: number | null;
+  /** Volume in hundredweight (cwt = lbs/100), millions — for packaged meats */
+  volumeCwt: number | null;
+  /** Operating Income per head ($) = operatingIncome × 1000 / volumeHeads */
+  opPerHead: number | null;
+  /** Operating Income per cwt ($/cwt) = operatingIncome / volumeCwt */
+  opPerCwt: number | null;
+  // -- Non-GAAP Adjustments --
+  /** Employee Retention Credit favorability (back out for comparability) */
+  ercAdjustment: number | null;
+  /** Legal / antitrust charge exclusion (e.g. Tyson antitrust) */
+  legalChargeAdjustment: number | null;
+  /** Intercompany transfer value adjustment (SFD hog production → packaged meats) */
+  transferValueAdjustment: number | null;
+  /** Corporate allocation adjustment (e.g. TSN corporate overhead reallocation) */
+  corporateAllocationAdjustment: number | null;
+  /** Adjusted operating income (after removing non-comparable items) */
+  adjustedOperatingIncome: number | null;
+  /** Adjusted operating margin */
+  adjustedOperatingMargin: number | null;
+  /** Adjusted OP per head (using adjustedOperatingIncome) */
+  adjustedOpPerHead: number | null;
+  /** Adjusted OP per cwt (using adjustedOperatingIncome) */
+  adjustedOpPerCwt: number | null;
+  /** SG&A as % of revenue */
+  sgaAsPercent: number | null;
 }
 
 /** The list of metric columns displayed in the grid, in order. */
@@ -70,6 +100,22 @@ export const METRIC_COLUMNS: MetricColumn[] = [
   { key: "depreciation", label: "Depreciation", format: "currency" },
   { key: "ebit", label: "EBIT", format: "currency" },
   { key: "ebitda", label: "EBITDA", format: "currency" },
+  // Volume & per-unit
+  { key: "volumeHeads", label: "Volume (000 Hd)", format: "number" },
+  { key: "volumeLbs", label: "Volume (M lbs)", format: "number" },
+  { key: "volumeCwt", label: "Volume (M cwt)", format: "number" },
+  { key: "opPerHead", label: "OP / Head ($)", format: "ratio" },
+  { key: "opPerCwt", label: "OP / cwt ($)", format: "ratio" },
+  // Adjustments
+  { key: "ercAdjustment", label: "ERC Adjustment", format: "currency" },
+  { key: "legalChargeAdjustment", label: "Legal Charges Excl.", format: "currency" },
+  { key: "transferValueAdjustment", label: "Transfer Value Adj.", format: "currency" },
+  { key: "corporateAllocationAdjustment", label: "Corp. Alloc. Adj.", format: "currency" },
+  { key: "adjustedOperatingIncome", label: "Adj. OP Income", format: "currency" },
+  { key: "adjustedOperatingMargin", label: "Adj. OP Margin", format: "percent" },
+  { key: "adjustedOpPerHead", label: "Adj. OP/Head ($)", format: "ratio" },
+  { key: "adjustedOpPerCwt", label: "Adj. OP/cwt ($)", format: "ratio" },
+  { key: "sgaAsPercent", label: "SG&A %", format: "percent" },
 ];
 
 /** Payload for a single cell edit sent to PATCH /api/data-source */

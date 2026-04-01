@@ -174,19 +174,59 @@ const BS_TAGS: [string, string][] = [
   ["TreasuryStockValue", "Treasury stock"],
   ["AssetsCurrent", "Current assets"],
   ["LiabilitiesCurrent", "Current liabilities"],
+  // Working capital components
+  ["AccountsReceivableNetCurrent", "Accounts receivable"],
+  ["InventoryNet", "Inventories"],
+  ["AccountsPayableCurrent", "Accounts payable"],
+  ["PrepaidExpenseAndOtherAssetsCurrent", "Prepaid & other current assets"],
+  ["AccruedLiabilitiesCurrent", "Accrued liabilities"],
+  // Fixed assets
+  ["PropertyPlantAndEquipmentNet", "PP&E (net)"],
+  ["Goodwill", "Goodwill"],
+  ["IntangibleAssetsNetExcludingGoodwill", "Intangible assets (net)"],
+  // Other
+  ["MinorityInterest", "Minority interest"],
+  ["CommonStockSharesOutstanding", "Shares outstanding"],
 ];
 
 /** Cash-flow / income tags (duration values) */
 const CF_TAGS: [string, string][] = [
+  // Income statement
+  ["Revenues", "Revenue"],
+  ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenue (ASC 606)"],
+  ["SalesRevenueNet", "Net sales"],
+  ["CostOfGoodsAndServicesSold", "Cost of goods sold"],
+  ["CostOfRevenue", "Cost of revenue"],
+  ["CostOfGoodsSold", "Cost of goods sold (alt)"],
+  ["GrossProfit", "Gross profit"],
+  ["SellingGeneralAndAdministrativeExpense", "SG&A expense"],
+  ["SellingAndMarketingExpense", "Selling & marketing"],
+  ["GeneralAndAdministrativeExpense", "General & admin"],
+  ["ResearchAndDevelopmentExpense", "R&D expense"],
+  ["OperatingIncomeLoss", "Operating income"],
+  ["OperatingExpenses", "Operating expenses"],
+  ["InterestExpense", "Interest expense"],
+  ["InterestExpenseNet", "Interest expense (net)"],
+  ["OtherNonoperatingIncomeExpense", "Other non-operating income"],
+  ["IncomeTaxExpenseBenefit", "Income tax expense"],
+  ["NetIncomeLoss", "Net income"],
+  ["EarningsPerShareBasic", "EPS (basic)"],
+  ["EarningsPerShareDiluted", "EPS (diluted)"],
+  // D&A
+  ["DepreciationDepletionAndAmortization", "D&A (total)"],
+  ["DepreciationAndAmortization", "D&A"],
+  ["Depreciation", "Depreciation"],
+  ["AmortizationOfIntangibleAssets", "Amortization of intangibles"],
+  // Cash flow
   ["NetCashProvidedByOperatingActivities", "Operating cash flow"],
   ["PaymentsToAcquirePropertyPlantAndEquipment", "Capital expenditures"],
   ["PaymentsOfDividendsCommonStock", "Dividends paid (common)"],
   ["PaymentsOfDividends", "Dividends paid (total)"],
-  ["NetIncomeLoss", "Net income"],
-  ["InterestExpense", "Interest expense"],
-  ["OperatingIncomeLoss", "Operating income"],
-  ["Revenues", "Revenue"],
-  ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenue (ASC 606)"],
+  ["PaymentsForRepurchaseOfCommonStock", "Share repurchases"],
+  ["ProceedsFromIssuanceOfLongTermDebt", "LT debt issuance"],
+  ["RepaymentsOfLongTermDebt", "LT debt repayments"],
+  ["NetCashProvidedByFinancingActivities", "Financing cash flow"],
+  ["NetCashProvidedByInvestingActivities", "Investing cash flow"],
 ];
 
 export interface ExtractedFacts {
@@ -197,6 +237,119 @@ export interface ExtractedFacts {
     latestPeriod: string;
     latestFiled: string;
   };
+}
+
+// ---------------------------------------------------------------------------
+// 5b. Extract facts filtered to a specific period end date
+// ---------------------------------------------------------------------------
+
+/**
+ * Same as extractAllFacts but filters all values to those filed
+ * for the given periodEnd date (YYYY-MM-DD). Used for multi-quarter backfill.
+ */
+export function extractFactsForPeriod(
+  facts: CompanyFacts,
+  periodEnd: string,
+  form?: string
+): ExtractedFacts {
+  const targetForms = form ? [form] : ["10-Q", "10-K"];
+
+  function extractForPeriod(
+    tag: string,
+    label: string,
+    preferInstant: boolean
+  ): BSItem | null {
+    const concept = facts.facts["us-gaap"]?.[tag];
+    if (!concept) return null;
+    const entries = concept.units["USD"];
+    if (!Array.isArray(entries) || entries.length === 0) return null;
+
+    // Filter to target period + form
+    let filtered = entries.filter(
+      (e) => e.end === periodEnd && targetForms.includes(e.form)
+    );
+
+    if (filtered.length === 0) return null;
+
+    // For balance sheet (instant): prefer entries without start date
+    if (preferInstant) {
+      const instants = filtered.filter((e) => !e.start);
+      if (instants.length > 0) filtered = instants;
+    }
+
+    // Sort by filed date desc, pick most recently filed
+    filtered.sort((a, b) => b.filed.localeCompare(a.filed));
+    const entry = filtered[0];
+    if (!entry) return null;
+
+    return {
+      tag,
+      label,
+      value: Math.round(entry.val / 1e6),
+      period: entry.end,
+      source: `XBRL:us-gaap:${tag} (${entry.form})`,
+    };
+  }
+
+  const bs: BSItem[] = [];
+  for (const [tag, label] of BS_TAGS) {
+    const item = extractForPeriod(tag, label, true);
+    if (item) bs.push(item);
+  }
+
+  const cf: BSItem[] = [];
+  for (const [tag, label] of CF_TAGS) {
+    const item = extractForPeriod(tag, label, false);
+    if (item) cf.push(item);
+  }
+
+  return {
+    bs,
+    cf,
+    meta: {
+      entityName: facts.entityName,
+      latestPeriod: periodEnd,
+      latestFiled:
+        bs.find((i) => i.period === periodEnd)?.source.split("(")[0] ?? "",
+    },
+  };
+}
+
+/**
+ * List all available period ends for a ticker from companyfacts,
+ * filtering to 10-Q and 10-K forms and a date range.
+ */
+export function listAvailablePeriods(
+  facts: CompanyFacts,
+  opts?: { since?: string; forms?: string[] }
+): Array<{ periodEnd: string; form: string; filed: string }> {
+  const targetForms = opts?.forms ?? ["10-Q", "10-K"];
+  const since = opts?.since ?? "2022-01-01";
+
+  // Use Revenue tag as the source of truth for filing periods
+  const revTags = [
+    "Revenues",
+    "RevenueFromContractWithCustomerExcludingAssessedTax",
+  ];
+
+  const seen = new Map<string, { periodEnd: string; form: string; filed: string }>();
+
+  for (const tag of revTags) {
+    const concept = facts.facts["us-gaap"]?.[tag];
+    if (!concept) continue;
+    const entries = concept.units["USD"] ?? [];
+    for (const e of entries) {
+      if (!targetForms.includes(e.form)) continue;
+      if (e.end < since) continue;
+      // Dedup by periodEnd — keep most recently filed
+      const existing = seen.get(e.end);
+      if (!existing || e.filed > existing.filed) {
+        seen.set(e.end, { periodEnd: e.end, form: e.form, filed: e.filed });
+      }
+    }
+  }
+
+  return [...seen.values()].sort((a, b) => b.periodEnd.localeCompare(a.periodEnd));
 }
 
 export function extractAllFacts(facts: CompanyFacts): ExtractedFacts {

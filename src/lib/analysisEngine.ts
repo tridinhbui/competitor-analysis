@@ -10,6 +10,7 @@ import type {
   DebtStructure,
   DividendAnalysis,
   FullAnalysis,
+  IncomeStatement,
   Ratios,
   ReconcileResult,
   ValidationCheck,
@@ -138,46 +139,73 @@ export function buildCashFlow(cf: BSItem[]): CashFlowData {
 // Ratios
 // ---------------------------------------------------------------------------
 
+/** @deprecated Use buildRatiosFull instead. Kept for backward compat. */
 export function buildRatios(
   bs: BalanceSheet,
   debt: DebtStructure,
   cf: CashFlowData
 ): Ratios {
-  const debtToEquity = ratio(debt.totalDebt, bs.totalEquity);
-  const debtToCapital = ratio(
-    debt.totalDebt,
-    debt.totalDebt + bs.totalEquity
-  );
+  return buildRatiosFull(bs, debt, cf, [...bs.items]);
+}
 
-  const ebitdaApprox =
-    cf.netIncome != null ? cf.netIncome * 1.35 : null; // rough proxy
-  const netDebtToEbitda = ratio(debt.netDebt, ebitdaApprox);
+// ---------------------------------------------------------------------------
+// Income Statement
+// ---------------------------------------------------------------------------
 
-  const interestExpense = findOrNull(
-    bs.items.concat(
-      // we might have it from the cf array — callers should merge
-      [] as BSItem[]
-    ),
-    "InterestExpense"
-  );
-  const operatingIncome = findOrNull([] as BSItem[], "OperatingIncomeLoss");
-  const interestCoverage = ratio(operatingIncome, interestExpense);
+export function buildIncomeStatement(cf: BSItem[], bs: BSItem[]): IncomeStatement {
+  const allItems = [...cf, ...bs];
 
-  const currentAssets = findOrNull(bs.items, "AssetsCurrent");
-  const currentLiab = findOrNull(bs.items, "LiabilitiesCurrent");
-  const currentRatio = ratio(currentAssets, currentLiab);
+  const revenue = findOrNull(cf, "Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet");
+  const cogs = findOrNull(cf, "CostOfGoodsAndServicesSold", "CostOfRevenue", "CostOfGoodsSold");
+  const grossProfitRaw = findOrNull(cf, "GrossProfit");
+  const grossProfit = grossProfitRaw ?? (revenue != null && cogs != null ? revenue - Math.abs(cogs) : null);
+  const sga = findOrNull(cf, "SellingGeneralAndAdministrativeExpense");
+  const rd = findOrNull(cf, "ResearchAndDevelopmentExpense");
+  const opExpenses = findOrNull(cf, "OperatingExpenses");
+  const operatingIncome = findOrNull(cf, "OperatingIncomeLoss");
+  const interestExpense = findOrNull(cf, "InterestExpense", "InterestExpenseNet");
+  const incomeTax = findOrNull(cf, "IncomeTaxExpenseBenefit");
+  const netIncome = findOrNull(cf, "NetIncomeLoss");
+  const epsBasic = findOrNull(cf, "EarningsPerShareBasic");
+  const epsDiluted = findOrNull(cf, "EarningsPerShareDiluted");
+
+  const dep = findOrNull(cf, "DepreciationDepletionAndAmortization", "DepreciationAndAmortization", "Depreciation");
+  const amort = findOrNull(cf, "AmortizationOfIntangibleAssets");
+
+  const ebit = operatingIncome;
+  const totalDA = dep != null ? Math.abs(dep) + (amort != null ? Math.abs(amort) : 0) : (amort != null ? Math.abs(amort) : null);
+  const ebitda = ebit != null && totalDA != null ? ebit + totalDA
+    : ebit != null && interestExpense != null ? ebit + Math.abs(interestExpense)
+    : null;
+
+  const r2 = (v: number | null) => v != null ? Math.round(v * 10) / 10 : null;
+  const margin = (num: number | null, den: number | null) => {
+    if (num == null || den == null || den === 0) return null;
+    return Math.round((num / den) * 1000) / 10;
+  };
 
   return {
-    debtToEquity: debtToEquity != null ? Math.round(debtToEquity * 100) / 100 : null,
-    debtToCapital: debtToCapital != null ? Math.round(debtToCapital * 1000) / 10 : null,
-    netDebtToEbitda:
-      netDebtToEbitda != null ? Math.round(netDebtToEbitda * 10) / 10 : null,
-    interestCoverage:
-      interestCoverage != null
-        ? Math.round(interestCoverage * 10) / 10
-        : null,
-    currentRatio:
-      currentRatio != null ? Math.round(currentRatio * 100) / 100 : null,
+    revenue,
+    costOfRevenue: cogs != null ? Math.abs(cogs) : null,
+    grossProfit,
+    grossMargin: margin(grossProfit, revenue),
+    sgaExpense: sga != null ? Math.abs(sga) : null,
+    rdExpense: rd != null ? Math.abs(rd) : null,
+    operatingExpenses: opExpenses != null ? Math.abs(opExpenses) : null,
+    operatingIncome,
+    operatingMargin: margin(operatingIncome, revenue),
+    ebit,
+    ebitMargin: margin(ebit, revenue),
+    depreciation: dep != null ? Math.abs(dep) : null,
+    amortization: amort != null ? Math.abs(amort) : null,
+    ebitda,
+    ebitdaMargin: margin(ebitda, revenue),
+    interestExpense: interestExpense != null ? Math.abs(interestExpense) : null,
+    incomeTax: incomeTax != null ? Math.abs(incomeTax) : null,
+    netIncome,
+    netMargin: margin(netIncome, revenue),
+    epsBasic,
+    epsDiluted,
   };
 }
 
@@ -189,7 +217,8 @@ export function buildRatiosFull(
   bs: BalanceSheet,
   debt: DebtStructure,
   cf: CashFlowData,
-  allItems: BSItem[]
+  allItems: BSItem[],
+  income?: IncomeStatement
 ): Ratios {
   const debtToEquity = ratio(debt.totalDebt, bs.totalEquity);
   const debtToCapital = ratio(
@@ -197,38 +226,78 @@ export function buildRatiosFull(
     debt.totalDebt + bs.totalEquity
   );
 
-  const da = findOrNull(allItems, "DepreciationAndAmortization");
-  const interestExpense = findOrNull(allItems, "InterestExpense");
-  const operatingIncome = findOrNull(allItems, "OperatingIncomeLoss");
+  const ebitda = income?.ebitda ?? null;
+  const operatingIncome = income?.operatingIncome ?? findOrNull(allItems, "OperatingIncomeLoss");
+  const interestExpense = income?.interestExpense ?? null;
 
-  // EBITDA = operating income + D&A, fallback to NI × 1.35
-  const ebitda =
-    operatingIncome != null && da != null
-      ? operatingIncome + Math.abs(da)
-      : operatingIncome != null && interestExpense != null
-        ? operatingIncome + Math.abs(interestExpense)
-        : cf.netIncome != null
-          ? cf.netIncome * 1.35
-          : null;
+  // Fallback EBITDA if income statement couldn't derive it
+  const ebitdaFinal = ebitda ?? (cf.netIncome != null ? cf.netIncome * 1.35 : null);
 
-  const netDebtToEbitda = ratio(debt.netDebt, ebitda);
-  const interestCoverage = ratio(operatingIncome ?? ebitda, interestExpense);
+  const netDebtToEbitda = ratio(debt.netDebt, ebitdaFinal);
+  const interestCoverage = ratio(operatingIncome ?? ebitdaFinal, interestExpense);
 
   const currentAssets = findOrNull(allItems, "AssetsCurrent");
   const currentLiab = findOrNull(allItems, "LiabilitiesCurrent");
   const currentRatio = ratio(currentAssets, currentLiab);
 
+  // Profitability
+  const revenue = income?.revenue ?? null;
+  const grossMarginR = income?.grossMargin ?? null;
+  const opMarginR = income?.operatingMargin ?? null;
+  const netMarginR = income?.netMargin ?? null;
+  const ebitdaMarginR = income?.ebitdaMargin ?? null;
+
+  // Returns
+  const netIncome = cf.netIncome;
+  const roe = ratio(netIncome, bs.totalEquity);
+  const roa = ratio(netIncome, bs.totalAssets);
+  // ROIC = NOPAT / (Equity + Debt - Cash)
+  const nopat = operatingIncome != null && income?.incomeTax != null && income?.netIncome != null && operatingIncome !== 0
+    ? operatingIncome * (1 - (income.incomeTax / Math.max(Math.abs(operatingIncome), 1)))
+    : null;
+  const investedCapital = bs.totalEquity + debt.totalDebt - bs.cashAndEquivalents;
+  const roic = ratio(nopat, investedCapital > 0 ? investedCapital : null);
+
+  // Efficiency
+  const assetTurnover = ratio(revenue, bs.totalAssets);
+  const inventory = findOrNull(allItems, "InventoryNet");
+  const cogs = income?.costOfRevenue ?? null;
+  const inventoryTurnover = ratio(cogs, inventory);
+  const receivables = findOrNull(allItems, "AccountsReceivableNetCurrent");
+  const receivablesTurnover = ratio(revenue, receivables);
+
+  // Cash
+  const fcfYield = cf.freeCashFlow != null && bs.totalEquity > 0
+    ? cf.freeCashFlow / (bs.totalEquity + debt.totalDebt) : null;
+  const fcfConversion = ratio(cf.freeCashFlow, netIncome);
+
+  // Working capital
+  const wc = currentAssets != null && currentLiab != null ? currentAssets - currentLiab : null;
+  const wcRatio = ratio(wc, revenue);
+
+  const r1 = (v: number | null) => v != null ? Math.round(v * 100) / 100 : null;
+  const r10 = (v: number | null) => v != null ? Math.round(v * 10) / 10 : null;
+
   return {
-    debtToEquity: debtToEquity != null ? Math.round(debtToEquity * 100) / 100 : null,
+    debtToEquity: r1(debtToEquity),
     debtToCapital: debtToCapital != null ? Math.round(debtToCapital * 1000) / 10 : null,
-    netDebtToEbitda:
-      netDebtToEbitda != null ? Math.round(netDebtToEbitda * 10) / 10 : null,
-    interestCoverage:
-      interestCoverage != null
-        ? Math.round(interestCoverage * 10) / 10
-        : null,
-    currentRatio:
-      currentRatio != null ? Math.round(currentRatio * 100) / 100 : null,
+    netDebtToEbitda: r10(netDebtToEbitda),
+    interestCoverage: r10(interestCoverage),
+    currentRatio: r1(currentRatio),
+    grossMargin: grossMarginR,
+    operatingMargin: opMarginR,
+    netMargin: netMarginR,
+    ebitdaMargin: ebitdaMarginR,
+    returnOnEquity: roe != null ? Math.round(roe * 1000) / 10 : null,
+    returnOnAssets: roa != null ? Math.round(roa * 1000) / 10 : null,
+    returnOnInvestedCapital: roic != null ? Math.round(roic * 1000) / 10 : null,
+    assetTurnover: r1(assetTurnover),
+    inventoryTurnover: r10(inventoryTurnover),
+    receivablesTurnover: r10(receivablesTurnover),
+    fcfYield: fcfYield != null ? Math.round(fcfYield * 1000) / 10 : null,
+    fcfConversion: fcfConversion != null ? Math.round(fcfConversion * 1000) / 10 : null,
+    workingCapital: wc,
+    workingCapitalRatio: wcRatio != null ? Math.round(wcRatio * 1000) / 10 : null,
   };
 }
 
@@ -494,7 +563,8 @@ export function assembleAnalysis(
   const balanceSheet = buildBalanceSheet(bs);
   const debtStructure = buildDebtStructure(bs);
   const cashFlow = buildCashFlow(cf);
-  const ratios = buildRatiosFull(balanceSheet, debtStructure, cashFlow, allItems);
+  const incomeStatement = buildIncomeStatement(cf, bs);
+  const ratios = buildRatiosFull(balanceSheet, debtStructure, cashFlow, allItems, incomeStatement);
   const dividendAnalysis = buildDividendAnalysis(
     balanceSheet,
     debtStructure,
@@ -509,6 +579,7 @@ export function assembleAnalysis(
     balanceSheet,
     debtStructure,
     cashFlow,
+    incomeStatement,
     ratios,
     dividendAnalysis,
     cfItems: cf,

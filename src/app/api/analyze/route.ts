@@ -16,6 +16,7 @@ import { saveFiling } from "@/lib/filingStorage";
 import {
   fetchLatestFilingText,
   extractFootnotesAndAdjusted,
+  extractEarningsNarrative,
 } from "@/lib/filingTextExtractor";
 import type { StepEvent, FullAnalysis } from "@/types/analysis";
 import { PIPELINE_STEPS } from "@/types/analysis";
@@ -182,13 +183,27 @@ export async function GET(request: Request) {
         const computeSteps: { id: string; msg: () => string; detailFn: () => Record<string, unknown> }[] = [
           {
             id: "compute_capital",
-            msg: () => `Assets: $${result.balanceSheet.totalAssets.toLocaleString()}M · Equity: $${result.balanceSheet.totalEquity.toLocaleString()}M`,
-            detailFn: () => ({
-              totalAssets: `$${result.balanceSheet.totalAssets.toLocaleString()}M`,
-              totalLiabilities: `$${result.balanceSheet.totalLiabilities.toLocaleString()}M`,
-              totalEquity: `$${result.balanceSheet.totalEquity.toLocaleString()}M`,
-              cash: `$${result.balanceSheet.cashAndEquivalents.toLocaleString()}M`,
-            }),
+            msg: () => {
+              const inc = result.incomeStatement;
+              const parts = [`Assets: $${result.balanceSheet.totalAssets.toLocaleString()}M`];
+              if (inc.revenue != null) parts.push(`Revenue: $${inc.revenue.toLocaleString()}M`);
+              if (inc.grossMargin != null) parts.push(`Gross margin: ${inc.grossMargin}%`);
+              if (inc.ebitda != null) parts.push(`EBITDA: $${inc.ebitda.toLocaleString()}M`);
+              return parts.join(" · ");
+            },
+            detailFn: () => {
+              const inc = result.incomeStatement;
+              return {
+                totalAssets: `$${result.balanceSheet.totalAssets.toLocaleString()}M`,
+                totalEquity: `$${result.balanceSheet.totalEquity.toLocaleString()}M`,
+                revenue: inc.revenue != null ? `$${inc.revenue.toLocaleString()}M` : "N/A",
+                grossProfit: inc.grossProfit != null ? `$${inc.grossProfit.toLocaleString()}M` : "N/A",
+                grossMargin: inc.grossMargin != null ? `${inc.grossMargin}%` : "N/A",
+                operatingIncome: inc.operatingIncome != null ? `$${inc.operatingIncome.toLocaleString()}M` : "N/A",
+                ebitda: inc.ebitda != null ? `$${inc.ebitda.toLocaleString()}M` : "N/A",
+                netIncome: inc.netIncome != null ? `$${inc.netIncome.toLocaleString()}M` : "N/A",
+              };
+            },
           },
           {
             id: "compute_debt",
@@ -205,19 +220,28 @@ export async function GET(request: Request) {
             msg: () => {
               const r = result.ratios;
               const parts: string[] = [];
+              if (r.grossMargin != null) parts.push(`GM: ${r.grossMargin}%`);
+              if (r.operatingMargin != null) parts.push(`OP: ${r.operatingMargin}%`);
+              if (r.returnOnEquity != null) parts.push(`ROE: ${r.returnOnEquity}%`);
               if (r.debtToEquity != null) parts.push(`D/E: ${r.debtToEquity}`);
               if (r.currentRatio != null) parts.push(`Current: ${r.currentRatio}`);
-              if (r.interestCoverage != null) parts.push(`Int. cov: ${r.interestCoverage}x`);
               return parts.length ? parts.join(" · ") : "Ratios computed";
             },
             detailFn: () => {
               const r = result.ratios;
               const d: Record<string, unknown> = {};
+              if (r.grossMargin != null) d["Gross Margin"] = `${r.grossMargin}%`;
+              if (r.operatingMargin != null) d["Operating Margin"] = `${r.operatingMargin}%`;
+              if (r.ebitdaMargin != null) d["EBITDA Margin"] = `${r.ebitdaMargin}%`;
+              if (r.netMargin != null) d["Net Margin"] = `${r.netMargin}%`;
+              if (r.returnOnEquity != null) d["ROE"] = `${r.returnOnEquity}%`;
+              if (r.returnOnAssets != null) d["ROA"] = `${r.returnOnAssets}%`;
+              if (r.returnOnInvestedCapital != null) d["ROIC"] = `${r.returnOnInvestedCapital}%`;
               if (r.debtToEquity != null) d["Debt/Equity"] = r.debtToEquity;
-              if (r.debtToCapital != null) d["Debt/Capital"] = r.debtToCapital;
               if (r.netDebtToEbitda != null) d["Net Debt/EBITDA"] = r.netDebtToEbitda;
               if (r.interestCoverage != null) d["Interest Coverage"] = `${r.interestCoverage}x`;
               if (r.currentRatio != null) d["Current Ratio"] = r.currentRatio;
+              if (r.fcfYield != null) d["FCF Yield"] = `${r.fcfYield}%`;
               return d;
             },
           },
@@ -285,8 +309,15 @@ export async function GET(request: Request) {
                 apiKey,
                 model
               );
+              const earningsNarrative = await extractEarningsNarrative(
+                filingDoc.text,
+                ticker,
+                apiKey,
+                model
+              );
               result.footnotes = footnotes;
               result.adjustedMetrics = adjustedMetrics;
+              result.earningsNarrative = earningsNarrative ?? undefined;
               send({
                 step: "extract_footnotes",
                 label: labelFor("extract_footnotes"),
