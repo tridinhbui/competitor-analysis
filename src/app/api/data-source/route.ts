@@ -63,16 +63,19 @@ export async function GET() {
 
     const m = extractMetrics(filing, peerType);
 
-    // Find depreciation from raw items
+    // Find depreciation and other items from raw items
     const cfItems = analysis.cfItems ?? [];
     const depItem = cfItems.find((i) =>
       i.tag === "DepreciationDepletionAndAmortization" ||
       i.tag === "DepreciationAndAmortization" ||
       i.tag === "Depreciation"
     );
+    const sbcItem = cfItems.find((i) => i.tag === "ShareBasedCompensation");
 
     const ebit = m.operatingIncome;
     const ebitda = ebit != null && depItem?.value != null ? ebit + Math.abs(depItem.value) : null;
+    const ebitdaMargin = ebitda != null && m.revenue != null && m.revenue > 0
+      ? parseFloat(((ebitda / m.revenue) * 100).toFixed(1)) : null;
 
     // Apply overrides
     const overrides = overrideMap.get(f.ticker)?.[f.period_end] ?? {};
@@ -144,6 +147,15 @@ export async function GET() {
       depreciation: overrides.depreciation ?? depItem?.value ?? null,
       ebit: overrides.ebit ?? ebit,
       ebitda: overrides.ebitda ?? ebitda,
+      ebitdaMargin: overrides.ebitdaMargin ?? ebitdaMargin,
+      interestExpense: overrides.interestExpense ?? analysis.incomeStatement?.interestExpense ?? null,
+      epsBasic: overrides.epsBasic ?? analysis.incomeStatement?.epsBasic ?? null,
+      epsDiluted: overrides.epsDiluted ?? analysis.incomeStatement?.epsDiluted ?? null,
+      shareBasedComp: overrides.shareBasedComp ?? sbcItem?.value ?? null,
+      dividendsPaid: overrides.dividendsPaid ?? m.dividendsPaid ?? null,
+      roe: overrides.roe ?? m.roe ?? null,
+      roa: overrides.roa ?? m.roa ?? null,
+      fcfMargin: overrides.fcfMargin ?? m.fcfMargin ?? null,
       // Volume & per-unit
       volumeHeads,
       volumeLbs,
@@ -165,7 +177,92 @@ export async function GET() {
     rows.push(row);
   }
 
-  return NextResponse.json({ rows, updatedAt: new Date().toISOString() });
+  // ── Compute TTM rows: sum last 4 quarters per ticker for flow metrics
+  const byTicker = new Map<string, DataSourceRow[]>();
+  for (const r of rows) {
+    if (!byTicker.has(r.ticker)) byTicker.set(r.ticker, []);
+    byTicker.get(r.ticker)!.push(r);
+  }
+
+  const ttmRows: DataSourceRow[] = [];
+  for (const [tk, tickerRows] of byTicker) {
+    const sorted = tickerRows.sort((a, b) => a.periodEnd.localeCompare(b.periodEnd));
+    if (sorted.length < 4) continue;
+    const last4 = sorted.slice(-4);
+    const latest = last4[3];
+    const sumN = (fn: (r: DataSourceRow) => number | null) => {
+      const vals = last4.map(fn).filter((v): v is number => v != null);
+      return vals.length === 4 ? Math.round(vals.reduce((a, b) => a + b, 0)) : null;
+    };
+    const rev = sumN(r => r.revenue);
+    const gp = sumN(r => r.grossProfit);
+    const op = sumN(r => r.operatingIncome);
+    const ni = sumN(r => r.netIncome);
+    const ebitdaVal = sumN(r => r.ebitda);
+    const ocf = sumN(r => r.operatingCashFlow);
+    const fcfVal = sumN(r => r.freeCashFlow);
+    const capexVal = sumN(r => r.capex);
+    const divPaid = sumN(r => r.dividendsPaid);
+    const sgaVal = sumN(r => r.sgaExpense);
+    const depVal = sumN(r => r.depreciation);
+
+    const pctCalc = (a: number | null, b: number | null) =>
+      a != null && b != null && b > 0 ? parseFloat(((a / b) * 100).toFixed(1)) : null;
+
+    ttmRows.push({
+      id: `${tk}_TTM`,
+      ticker: tk,
+      companyName: latest.companyName,
+      periodEnd: "TTM",
+      quarterLabel: `TTM (${last4[0].quarterLabel}–${last4[3].quarterLabel})`,
+      revenue: rev,
+      grossProfit: gp,
+      operatingIncome: op,
+      netIncome: ni,
+      totalAssets: latest.totalAssets,
+      totalLiabilities: latest.totalLiabilities,
+      totalEquity: latest.totalEquity,
+      totalDebt: latest.totalDebt,
+      cashAndEquivalents: latest.cashAndEquivalents,
+      operatingCashFlow: ocf,
+      capex: capexVal,
+      freeCashFlow: fcfVal,
+      grossMargin: pctCalc(gp, rev),
+      operatingMargin: pctCalc(op, rev),
+      netMargin: pctCalc(ni, rev),
+      debtToEquity: latest.debtToEquity,
+      currentRatio: latest.currentRatio,
+      sgaExpense: sgaVal,
+      depreciation: depVal,
+      ebit: op,
+      ebitda: ebitdaVal,
+      ebitdaMargin: pctCalc(ebitdaVal, rev),
+      interestExpense: sumN(r => r.interestExpense),
+      epsBasic: null, // TTM EPS not simple sum
+      epsDiluted: null,
+      shareBasedComp: sumN(r => r.shareBasedComp),
+      dividendsPaid: divPaid,
+      roe: pctCalc(ni, latest.totalEquity),
+      roa: pctCalc(ni, latest.totalAssets),
+      fcfMargin: pctCalc(fcfVal, rev),
+      volumeHeads: null,
+      volumeLbs: null,
+      volumeCwt: null,
+      opPerHead: null,
+      opPerCwt: null,
+      ercAdjustment: null,
+      legalChargeAdjustment: null,
+      transferValueAdjustment: null,
+      corporateAllocationAdjustment: null,
+      adjustedOperatingIncome: null,
+      adjustedOperatingMargin: null,
+      adjustedOpPerHead: null,
+      adjustedOpPerCwt: null,
+      sgaAsPercent: pctCalc(sgaVal != null ? Math.abs(sgaVal) : null, rev),
+    });
+  }
+
+  return NextResponse.json({ rows: [...rows, ...ttmRows], updatedAt: new Date().toISOString() });
 }
 
 /** PATCH /api/data-source — save cell overrides */

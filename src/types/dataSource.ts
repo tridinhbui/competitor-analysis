@@ -39,6 +39,15 @@ export interface DataSourceRow {
   depreciation: number | null;
   ebit: number | null;
   ebitda: number | null;
+  ebitdaMargin: number | null;
+  interestExpense: number | null;
+  epsBasic: number | null;
+  epsDiluted: number | null;
+  shareBasedComp: number | null;
+  dividendsPaid: number | null;
+  roe: number | null;
+  roa: number | null;
+  fcfMargin: number | null;
   // -- Volume & Per-Unit Metrics (for pork/packaged comparison) --
   /** Heads processed / slaughtered (thousands) — for pork segments */
   volumeHeads: number | null;
@@ -100,6 +109,15 @@ export const METRIC_COLUMNS: MetricColumn[] = [
   { key: "depreciation", label: "Depreciation", format: "currency" },
   { key: "ebit", label: "EBIT", format: "currency" },
   { key: "ebitda", label: "EBITDA", format: "currency" },
+  { key: "ebitdaMargin", label: "EBITDA Margin", format: "percent" },
+  { key: "interestExpense", label: "Interest Exp.", format: "currency" },
+  { key: "epsBasic", label: "EPS (Basic)", format: "ratio" },
+  { key: "epsDiluted", label: "EPS (Diluted)", format: "ratio" },
+  { key: "shareBasedComp", label: "SBC", format: "currency" },
+  { key: "dividendsPaid", label: "Dividends Paid", format: "currency" },
+  { key: "roe", label: "ROE", format: "percent" },
+  { key: "roa", label: "ROA", format: "percent" },
+  { key: "fcfMargin", label: "FCF Margin", format: "percent" },
   // Volume & per-unit
   { key: "volumeHeads", label: "Volume (000 Hd)", format: "number" },
   { key: "volumeLbs", label: "Volume (M lbs)", format: "number" },

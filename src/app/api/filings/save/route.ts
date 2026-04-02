@@ -32,6 +32,13 @@ export async function POST(request: Request) {
       );
     }
     const resolvedTicker = rawTicker.toUpperCase();
+    // Reject placeholder tickers
+    if (resolvedTicker === "UNKNOWN" || resolvedTicker === "N/A" || resolvedTicker === "UNDEFINED") {
+      return Response.json(
+        { error: `Invalid ticker "${resolvedTicker}". Please provide a real stock ticker before saving.` },
+        { status: 400 }
+      );
+    }
     const resolvedPeriod =
       periodEnd ||
       analysis.meta.periodEnd ||

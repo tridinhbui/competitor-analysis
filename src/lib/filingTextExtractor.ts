@@ -4,6 +4,7 @@
  */
 
 import type { FootnoteItem, AdjustedMetric, EarningsNarrative } from "@/types/analysis";
+import type { SegmentData, VolumeUnitType } from "@/types/segments";
 
 const SEC_UA =
   process.env.SEC_EDGAR_USER_AGENT ??
@@ -332,5 +333,176 @@ Rules:
     };
   } catch {
     return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 5. Extract segment-level data from SEC filing text
+// ---------------------------------------------------------------------------
+
+function extractSegmentSection(text: string): string {
+  const patterns = [
+    /(?:segment|operating\s+segments?)\s+(?:results|information|data|reporting)/i,
+    /results\s+of\s+operations\s+(?:by|for)\s+(?:each\s+)?segment/i,
+    /segment\s+(?:financial\s+)?(?:results|performance)/i,
+    /(?:reportable\s+)?segments/i,
+  ];
+
+  for (const re of patterns) {
+    const idx = text.search(re);
+    if (idx !== -1) {
+      return text.slice(idx, idx + 15_000);
+    }
+  }
+
+  // Fallback: try MD&A which often contains segment breakdowns
+  const mdaIdx = text.search(/(?:management[^\n]{0,20}discussion|results\s+of\s+operations)/i);
+  if (mdaIdx !== -1) {
+    return text.slice(mdaIdx, mdaIdx + 15_000);
+  }
+
+  return "";
+}
+
+interface SegmentExtractionResult {
+  segments: Array<{
+    segmentName: string;
+    segmentType?: "business" | "channel" | "geography";
+    revenue: number | null;
+    operatingIncome: number | null;
+    depreciation?: number | null;
+    capitalExpenditures?: number | null;
+    totalAssets?: number | null;
+    volumeUnits?: number | null;
+    volumeUnitType?: VolumeUnitType | null;
+  }>;
+  intercompanyEliminations?: { revenue?: number | null; operatingIncome?: number | null };
+  corporateAndOther?: { operatingIncome?: number | null };
+}
+
+const SEGMENT_EXTRACT_PROMPT = `You are a financial data extraction engine. Extract SEGMENT-LEVEL financial data from this SEC 10-Q/10-K filing text.
+
+Return ONLY valid JSON (no markdown):
+{
+  "segments": [
+    {
+      "segmentName": "Beef",
+      "segmentType": "business",
+      "revenue": 5234,
+      "operatingIncome": 123,
+      "depreciation": null,
+      "capitalExpenditures": null,
+      "totalAssets": null,
+      "volumeUnits": null,
+      "volumeUnitType": null
+    }
+  ],
+  "intercompanyEliminations": {
+    "revenue": -500,
+    "operatingIncome": -10
+  },
+  "corporateAndOther": {
+    "operatingIncome": -200
+  }
+}
+
+RULES:
+- ALL values in USD millions. If filing uses thousands, divide by 1000.
+- Parenthesized numbers (1,234) = NEGATIVE.
+- segmentType: "business" for product/division segments (Beef, Pork, Chicken, Prepared Foods), "channel" for distribution channels (Retail, Foodservice), "geography" for regions.
+- volumeUnitType: "head" for animals processed/slaughtered, "cwt" for hundredweight, "lbs" for pounds, "cases" for product cases. Set to null if not available.
+- volumeUnits: in thousands. E.g. if filing says "8.1 million head", put 8100.
+- Include intersegment eliminations and corporate/other if shown as separate line items.
+- Extract ALL segments shown in the filing's segment disclosure tables.
+- Look for segment data in: "Segment Results", "Operating Segments", "Results of Operations by Segment", notes to financial statements.
+- Operating income may be called "segment profit", "segment income", "operating profit", or "income from operations".
+- Do NOT invent segments or numbers. Only extract what exists.
+- If no segment data is found, return {"segments": []}.`;
+
+export async function extractSegments(
+  text: string,
+  apiKey: string,
+  model: string
+): Promise<SegmentData[]> {
+  const segText = extractSegmentSection(text);
+
+  if (!segText || segText.length < 300) {
+    return [];
+  }
+
+  try {
+    const res = await fetch(OPENAI_API, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: SEGMENT_EXTRACT_PROMPT },
+          { role: "user", content: `Extract segment data:\n\n${segText}` },
+        ],
+        temperature: 0.1,
+        max_tokens: 3000,
+        response_format: { type: "json_object" },
+      }),
+      signal: AbortSignal.timeout(45_000),
+    });
+
+    if (!res.ok) return [];
+
+    const data = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const content = data.choices?.[0]?.message?.content ?? "{}";
+    const parsed = JSON.parse(content) as SegmentExtractionResult;
+
+    if (!parsed.segments || !Array.isArray(parsed.segments) || parsed.segments.length === 0) {
+      return [];
+    }
+
+    const validVolumeTypes = new Set<string>(["head", "cwt", "lbs", "cases"]);
+
+    return parsed.segments.map((seg) => {
+      const revenue = seg.revenue != null ? Math.round(Number(seg.revenue)) : null;
+      const operatingIncome = seg.operatingIncome != null ? Math.round(Number(seg.operatingIncome)) : null;
+      const opMargin = revenue && operatingIncome
+        ? Math.round((operatingIncome / revenue) * 1000) / 10
+        : null;
+      const volType = seg.volumeUnitType && validVolumeTypes.has(seg.volumeUnitType)
+        ? seg.volumeUnitType as VolumeUnitType
+        : null;
+      const volUnits = seg.volumeUnits != null ? Number(seg.volumeUnits) : null;
+      const revPerUnit = volUnits && volUnits > 0 && revenue
+        ? Math.round((revenue / volUnits) * 100) / 100
+        : null;
+      const opPerUnit = volUnits && volUnits > 0 && operatingIncome
+        ? Math.round((operatingIncome / volUnits) * 100) / 100
+        : null;
+
+      return {
+        segmentName: seg.segmentName || "Unknown Segment",
+        segmentType: (seg.segmentType === "business" || seg.segmentType === "channel" || seg.segmentType === "geography")
+          ? seg.segmentType
+          : "business" as const,
+        revenue,
+        costOfRevenue: null,
+        grossProfit: null,
+        sgaExpense: null,
+        operatingIncome,
+        operatingMargin: opMargin,
+        depreciation: seg.depreciation != null ? Math.round(Number(seg.depreciation)) : null,
+        capitalExpenditures: seg.capitalExpenditures != null ? Math.round(Number(seg.capitalExpenditures)) : null,
+        totalAssets: seg.totalAssets != null ? Math.round(Number(seg.totalAssets)) : null,
+        intercompanyEliminations: null,
+        volumeUnits: volUnits,
+        volumeUnitType: volType,
+        revenuePerUnit: revPerUnit,
+        operatingIncomePerUnit: opPerUnit,
+      } satisfies SegmentData;
+    });
+  } catch {
+    return [];
   }
 }

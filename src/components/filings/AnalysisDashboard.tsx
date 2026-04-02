@@ -1,11 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FullAnalysis, BSItem, IncomeStatement } from "@/types/analysis";
+import type { DataSourceRow } from "@/types/dataSource";
 import { cn } from "@/lib/utils";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
+  LineChart, Line, CartesianGrid,
+  RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
 } from "recharts";
 import {
   CheckCircle2, XCircle, Download, AlertCircle,
@@ -35,13 +38,14 @@ const tooltipStyle = {
 
 /* ──────────────────── Tabs ──────────────────── */
 
-type TabId = "summary" | "income" | "balance" | "cashflow" | "deep-dive";
+type TabId = "summary" | "income" | "balance" | "cashflow" | "insights" | "deep-dive";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "summary", label: "Executive Summary" },
   { id: "income", label: "Income & Margins" },
   { id: "balance", label: "Balance Sheet" },
   { id: "cashflow", label: "Cash Flow" },
+  { id: "insights", label: "Insights" },
   { id: "deep-dive", label: "Deep Dive" },
 ];
 
@@ -604,6 +608,9 @@ export function AnalysisDashboard({ result, onExport }: Props) {
           );
         })()}
 
+        {/* ─── INSIGHTS ─── */}
+        {activeTab === "insights" && <InsightsTab result={result} />}
+
         {/* ─── DEEP DIVE ─── */}
         {activeTab === "deep-dive" && (() => {
           const footnotes = result.footnotes ?? [];
@@ -880,6 +887,1322 @@ function IncomeStatementTable({ inc }: { inc: IncomeStatement }) {
         ))}
       </tbody>
     </table>
+  );
+}
+
+/* ──────────────────── Insights Tab ──────────────────── */
+
+function InsightsTab({ result }: { result: FullAnalysis }) {
+  const { balanceSheet: bs, debtStructure: debt, cashFlow: cf, ratios, incomeStatement: inc } = result;
+  const cfItems = result.cfItems ?? [];
+
+  // ── Fetch ALL data source rows for trend charts + peer comparison
+  const [allRows, setAllRows] = useState<DataSourceRow[]>([]);
+  useEffect(() => {
+    fetch("/api/data-source")
+      .then(r => r.json())
+      .then((d: { rows?: DataSourceRow[] }) => setAllRows(d.rows ?? []))
+      .catch(() => {});
+  }, []);
+
+  const ticker = result.meta.ticker;
+
+  // Current ticker's historical rows (sorted chronologically)
+  const historyRows = useMemo(() =>
+    allRows.filter(r => r.ticker === ticker).sort((a, b) => a.periodEnd.localeCompare(b.periodEnd)),
+    [allRows, ticker]
+  );
+
+  // ── TTM computation: sum last 4 quarters for flow metrics, latest for stock metrics
+  const ttm = useMemo(() => {
+    if (historyRows.length < 4) return null;
+    const last4 = historyRows.slice(-4);
+    const sumN = (fn: (r: DataSourceRow) => number | null) => {
+      const vals = last4.map(fn).filter((v): v is number => v != null);
+      return vals.length === 4 ? vals.reduce((a, b) => a + b, 0) : null;
+    };
+    const latest = last4[last4.length - 1];
+    const rev = sumN(r => r.revenue);
+    const gp = sumN(r => r.grossProfit);
+    const op = sumN(r => r.operatingIncome);
+    const ni = sumN(r => r.netIncome);
+    const ebitda = sumN(r => r.ebitda);
+    const ocf = sumN(r => r.operatingCashFlow);
+    const fcf = sumN(r => r.freeCashFlow);
+    const capex = sumN(r => r.capex);
+    const divPaid = sumN(r => r.dividendsPaid);
+    return {
+      label: `TTM (${last4[0].quarterLabel}–${last4[3].quarterLabel})`,
+      revenue: rev,
+      grossProfit: gp,
+      operatingIncome: op,
+      netIncome: ni,
+      ebitda,
+      operatingCashFlow: ocf,
+      freeCashFlow: fcf,
+      capex,
+      dividendsPaid: divPaid,
+      grossMargin: rev && gp ? Math.round((gp / rev) * 1000) / 10 : null,
+      operatingMargin: rev && op ? Math.round((op / rev) * 1000) / 10 : null,
+      netMargin: rev && ni ? Math.round((ni / rev) * 1000) / 10 : null,
+      ebitdaMargin: rev && ebitda ? Math.round((ebitda / rev) * 1000) / 10 : null,
+      fcfMargin: rev && fcf ? Math.round((fcf / rev) * 1000) / 10 : null,
+      // Stock metrics from latest quarter
+      totalAssets: latest.totalAssets,
+      totalEquity: latest.totalEquity,
+      totalDebt: latest.totalDebt,
+      cashAndEquivalents: latest.cashAndEquivalents,
+      debtToEquity: latest.debtToEquity,
+      currentRatio: latest.currentRatio,
+      roe: ni != null && latest.totalEquity ? Math.round((ni / latest.totalEquity) * 1000) / 10 : null,
+      roa: ni != null && latest.totalAssets ? Math.round((ni / latest.totalAssets) * 1000) / 10 : null,
+    };
+  }, [historyRows]);
+
+  // ── Peer comparison: compute latest-quarter metrics per company
+  interface PeerSummary {
+    ticker: string;
+    companyName: string;
+    revenue: number | null;
+    grossMargin: number | null;
+    operatingMargin: number | null;
+    netMargin: number | null;
+    ebitdaMargin: number | null;
+    roe: number | null;
+    roa: number | null;
+    debtToEquity: number | null;
+    currentRatio: number | null;
+    fcfMargin: number | null;
+    totalDebt: number | null;
+    totalEquity: number | null;
+    netIncome: number | null;
+    ebitda: number | null;
+    freeCashFlow: number | null;
+  }
+
+  const peers = useMemo((): PeerSummary[] => {
+    // Group by ticker, take most recent quarter. Filter out UNKNOWN, TTM rows.
+    const byTicker = new Map<string, DataSourceRow>();
+    for (const r of allRows) {
+      if (r.ticker === "UNKNOWN" || r.periodEnd === "TTM") continue;
+      const existing = byTicker.get(r.ticker);
+      if (!existing || r.periodEnd > existing.periodEnd) byTicker.set(r.ticker, r);
+    }
+    return [...byTicker.values()]
+      .map(r => ({
+        ticker: r.ticker,
+        companyName: r.companyName,
+        revenue: r.revenue,
+        grossMargin: r.grossMargin,
+        operatingMargin: r.operatingMargin,
+        netMargin: r.netMargin,
+        ebitdaMargin: r.ebitdaMargin ?? null,
+        roe: r.roe ?? null,
+        roa: r.roa ?? null,
+        debtToEquity: r.debtToEquity,
+        currentRatio: r.currentRatio,
+        fcfMargin: r.fcfMargin ?? null,
+        totalDebt: r.totalDebt,
+        totalEquity: r.totalEquity,
+        netIncome: r.netIncome,
+        ebitda: r.ebitda,
+        freeCashFlow: r.freeCashFlow,
+      }))
+      .sort((a, b) => (a.ticker === ticker ? -1 : b.ticker === ticker ? 1 : a.ticker.localeCompare(b.ticker)));
+  }, [allRows, ticker]);
+
+  // ── DuPont 3-Factor: ROE = Net Margin × Asset Turnover × Equity Multiplier
+  const dupont = useMemo(() => {
+    const netMargin = inc.revenue && inc.netIncome ? inc.netIncome / inc.revenue : null;
+    const assetTurnover = inc.revenue && bs.totalAssets ? inc.revenue / bs.totalAssets : null;
+    const equityMultiplier = bs.totalAssets && bs.totalEquity ? bs.totalAssets / bs.totalEquity : null;
+    const computed = netMargin && assetTurnover && equityMultiplier
+      ? netMargin * assetTurnover * equityMultiplier * 100 : null;
+
+    // 5-factor: ROE = (EBT/EBIT) × (EBIT/Revenue) × (Revenue/Assets) × (Assets/Equity) × (NI/EBT)
+    const ebit = inc.operatingIncome;
+    const ebt = inc.netIncome != null && inc.incomeTax != null ? inc.netIncome + inc.incomeTax : null;
+    const taxBurden = inc.netIncome != null && ebt != null && ebt !== 0 ? inc.netIncome / ebt : null;
+    const interestBurden = ebt != null && ebit != null && ebit !== 0 ? ebt / ebit : null;
+    const opMarginFactor = ebit != null && inc.revenue ? ebit / inc.revenue : null;
+
+    return { netMargin, assetTurnover, equityMultiplier, computed, taxBurden, interestBurden, opMarginFactor };
+  }, [inc, bs]);
+
+  // ── Altman Z-Score (manufacturing model)
+  const zScore = useMemo(() => {
+    if (!bs.totalAssets) return null;
+    const ta = bs.totalAssets;
+    const wc = ratios.workingCapital ?? 0;
+    const re = bs.retainedEarnings;
+    const ebit = inc.operatingIncome ?? 0;
+    const equity = bs.totalEquity;
+    const totalLiab = bs.totalLiabilities;
+    const revenue = inc.revenue ?? 0;
+
+    const x1 = wc / ta;
+    const x2 = re / ta;
+    const x3 = ebit / ta;
+    const x4 = totalLiab > 0 ? equity / totalLiab : 0;
+    const x5 = revenue / ta;
+
+    const z = 1.2 * x1 + 1.4 * x2 + 3.3 * x3 + 0.6 * x4 + 1.0 * x5;
+    const zone: "safe" | "grey" | "distress" = z > 2.99 ? "safe" : z > 1.81 ? "grey" : "distress";
+    return { z: Math.round(z * 100) / 100, zone, x1, x2, x3, x4, x5 };
+  }, [bs, inc, ratios]);
+
+  // ── Piotroski F-Score (0-9)
+  const piotroski = useMemo(() => {
+    const signals: { name: string; pass: boolean | null; desc: string }[] = [];
+    // Profitability
+    signals.push({ name: "ROA > 0", pass: inc.netIncome != null && bs.totalAssets ? (inc.netIncome / bs.totalAssets) > 0 : null, desc: "Positive return on assets" });
+    signals.push({ name: "OCF > 0", pass: cf.operatingCashFlow != null ? cf.operatingCashFlow > 0 : null, desc: "Positive operating cash flow" });
+    signals.push({ name: "Accruals < 0", pass: cf.operatingCashFlow != null && inc.netIncome != null ? (cf.operatingCashFlow - inc.netIncome) > 0 : null, desc: "OCF exceeds net income (quality earnings)" });
+    // Leverage & Liquidity
+    const ltDebtRatio = bs.totalAssets ? debt.longTermDebt / bs.totalAssets : null;
+    signals.push({ name: "LT Debt ↓", pass: ltDebtRatio != null ? ltDebtRatio < 0.4 : null, desc: "LT debt/assets < 40% (lower is better)" });
+    signals.push({ name: "Current Ratio > 1", pass: ratios.currentRatio != null ? ratios.currentRatio > 1 : null, desc: "Sufficient liquidity" });
+    // Operating efficiency
+    signals.push({ name: "Gross Margin ↑", pass: inc.grossMargin != null ? inc.grossMargin > 0 : null, desc: "Positive gross margins" });
+    signals.push({ name: "Asset Turnover", pass: ratios.assetTurnover != null ? ratios.assetTurnover > 0.5 : null, desc: "Efficient asset utilization" });
+    // Equity
+    signals.push({ name: "No Dilution", pass: true, desc: "Not issuing excessive new shares (assumed)" });
+    signals.push({ name: "Positive Equity", pass: bs.totalEquity > 0, desc: "Positive shareholders' equity" });
+
+    const score = signals.filter(s => s.pass === true).length;
+    return { score, signals };
+  }, [inc, cf, bs, debt, ratios]);
+
+  // ── Earnings Quality
+  const earningsQuality = useMemo(() => {
+    const accruals = cf.operatingCashFlow != null && inc.netIncome != null
+      ? cf.operatingCashFlow - inc.netIncome : null;
+    const accrualRatio = accruals != null && bs.totalAssets
+      ? Math.round((accruals / bs.totalAssets) * 1000) / 10 : null;
+    const ocfToNI = cf.operatingCashFlow != null && inc.netIncome != null && inc.netIncome !== 0
+      ? Math.round((cf.operatingCashFlow / inc.netIncome) * 100) / 100 : null;
+    const fcfToNI = cf.freeCashFlow != null && inc.netIncome != null && inc.netIncome !== 0
+      ? Math.round((cf.freeCashFlow / inc.netIncome) * 100) / 100 : null;
+    const quality: "high" | "moderate" | "low" | "unknown" =
+      ocfToNI == null ? "unknown" :
+      ocfToNI >= 1.0 ? "high" :
+      ocfToNI >= 0.7 ? "moderate" : "low";
+    return { accruals, accrualRatio, ocfToNI, fcfToNI, quality };
+  }, [cf, inc, bs]);
+
+  // ── Cash Conversion Cycle
+  const ccc = useMemo(() => {
+    const rev = inc.revenue;
+    const cogs = inc.costOfRevenue;
+    const ar = cfItems.find(i => i.tag === "AccountsReceivableNetCurrent")?.value ?? bs.items.find(i => i.tag === "AccountsReceivableNetCurrent")?.value ?? null;
+    const inv = cfItems.find(i => i.tag === "InventoryNet")?.value ?? bs.items.find(i => i.tag === "InventoryNet")?.value ?? null;
+    const ap = cfItems.find(i => i.tag === "AccountsPayableCurrent")?.value ?? bs.items.find(i => i.tag === "AccountsPayableCurrent")?.value ?? null;
+
+    const dso = ar != null && rev ? Math.round((ar / rev) * 365) : null;
+    const dio = inv != null && cogs ? Math.round((inv / cogs) * 365) : null;
+    const dpo = ap != null && cogs ? Math.round((ap / cogs) * 365) : null;
+    const cycle = dso != null && dio != null && dpo != null ? dso + dio - dpo : null;
+    return { dso, dio, dpo, cycle };
+  }, [inc, cfItems, bs]);
+
+  // ── Capital Allocation
+  const capAlloc = useMemo(() => {
+    const buyback = cfItems.find(i => i.tag === "PaymentsForRepurchaseOfCommonStock")?.value ?? null;
+    const sbc = cfItems.find(i => i.tag === "ShareBasedCompensation")?.value ?? null;
+    const capex = cf.capitalExpenditures;
+    const ocf = cf.operatingCashFlow;
+    const divPaid = cf.dividendsPaid;
+    const reinvestmentRate = ocf && capex ? Math.round((Math.abs(capex) / ocf) * 1000) / 10 : null;
+    const totalReturn = (divPaid ?? 0) + (buyback ?? 0);
+    const returnYieldOnEquity = totalReturn && bs.totalEquity ? Math.round((totalReturn / bs.totalEquity) * 1000) / 10 : null;
+    return { buyback, sbc, reinvestmentRate, totalReturn, returnYieldOnEquity };
+  }, [cf, cfItems, bs]);
+
+  // ── Overall Financial Health
+  const healthScore = useMemo(() => {
+    let score = 0; let max = 0;
+    // Profitability (3 pts)
+    if (inc.operatingMargin != null) { max += 3; if (inc.operatingMargin > 15) score += 3; else if (inc.operatingMargin > 5) score += 2; else if (inc.operatingMargin > 0) score += 1; }
+    // Leverage (3 pts)
+    if (ratios.debtToEquity != null) { max += 3; if (ratios.debtToEquity < 0.5) score += 3; else if (ratios.debtToEquity < 1.5) score += 2; else if (ratios.debtToEquity < 3) score += 1; }
+    // Liquidity (2 pts)
+    if (ratios.currentRatio != null) { max += 2; if (ratios.currentRatio > 2) score += 2; else if (ratios.currentRatio > 1) score += 1; }
+    // Cash generation (3 pts)
+    if (earningsQuality.ocfToNI != null) { max += 3; if (earningsQuality.ocfToNI >= 1.2) score += 3; else if (earningsQuality.ocfToNI >= 0.8) score += 2; else if (earningsQuality.ocfToNI > 0) score += 1; }
+    // Returns (3 pts)
+    if (ratios.returnOnEquity != null) { max += 3; if (ratios.returnOnEquity > 20) score += 3; else if (ratios.returnOnEquity > 10) score += 2; else if (ratios.returnOnEquity > 0) score += 1; }
+    // FCF (2 pts)
+    if (ratios.fcfYield != null) { max += 2; if (ratios.fcfYield > 8) score += 2; else if (ratios.fcfYield > 3) score += 1; }
+    // Interest coverage (2 pts)
+    if (ratios.interestCoverage != null) { max += 2; if (ratios.interestCoverage > 5) score += 2; else if (ratios.interestCoverage > 2) score += 1; }
+    const pctScore = max > 0 ? Math.round((score / max) * 100) : 0;
+    const grade: string = pctScore >= 80 ? "A" : pctScore >= 65 ? "B" : pctScore >= 45 ? "C" : pctScore >= 25 ? "D" : "F";
+    return { score, max, pctScore, grade };
+  }, [inc, ratios, earningsQuality]);
+
+  const footnotes = result.footnotes ?? [];
+  const adjustedMetrics = result.adjustedMetrics ?? [];
+  const narrative = result.earningsNarrative;
+
+  // ── Valuation Multiples (needs market cap input)
+  const [marketCapInput, setMarketCapInput] = useState("");
+  const marketCap = useMemo(() => {
+    const v = parseFloat(marketCapInput);
+    return isNaN(v) || v <= 0 ? null : v;
+  }, [marketCapInput]);
+
+  const valuation = useMemo(() => {
+    if (!marketCap) return null;
+    const netDebt = (debt.longTermDebt + (debt.shortTermDebt ?? 0)) - (bs.cashAndEquivalents);
+    const ev = marketCap + netDebt;
+    const ebitdaVal = ttm?.ebitda ?? (inc.operatingIncome != null && cfItems.find(i => i.tag === "DepreciationDepletionAndAmortization" || i.tag === "DepreciationAndAmortization")?.value != null
+      ? inc.operatingIncome + Math.abs(cfItems.find(i => i.tag === "DepreciationDepletionAndAmortization" || i.tag === "DepreciationAndAmortization")!.value)
+      : null);
+    const niVal = ttm?.netIncome ?? inc.netIncome;
+    const fcfVal = ttm?.freeCashFlow ?? cf.freeCashFlow;
+    const revVal = ttm?.revenue ?? inc.revenue;
+
+    const evToEbitda = ebitdaVal && ebitdaVal > 0 ? Math.round((ev / ebitdaVal) * 10) / 10 : null;
+    const evToRev = revVal && revVal > 0 ? Math.round((ev / revVal) * 10) / 10 : null;
+    const pe = niVal && niVal > 0 ? Math.round((marketCap / niVal) * 10) / 10 : null;
+    const pFcf = fcfVal && fcfVal > 0 ? Math.round((marketCap / fcfVal) * 10) / 10 : null;
+    const fcfYield = fcfVal && marketCap > 0 ? Math.round((fcfVal / marketCap) * 1000) / 10 : null;
+    const divYield = cf.dividendsPaid && marketCap > 0 ? Math.round((Math.abs(cf.dividendsPaid) / marketCap) * 1000) / 10 : null;
+
+    return { ev, netDebt, evToEbitda, evToRev, pe, pFcf, fcfYield, divYield };
+  }, [marketCap, debt, bs, inc, cf, cfItems, ttm]);
+
+  // ── AI Commentary state ──
+  interface Commentary {
+    dupont: string | null;
+    zScore: string | null;
+    piotroski: string | null;
+    earningsQuality: string | null;
+    ccc: string | null;
+    peerPositioning: string | null;
+    ttmOutlook: string | null;
+    overallAssessment: string;
+  }
+  const [commentary, setCommentary] = useState<Commentary | null>(null);
+  const [commentaryLoading, setCommentaryLoading] = useState(false);
+
+  const generateCommentary = async () => {
+    setCommentaryLoading(true);
+    try {
+      const resp = await fetch("/api/insights-commentary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ticker,
+          companyName: result.meta.companyName,
+          dupont: {
+            netMargin: dupont.netMargin != null ? Math.round(dupont.netMargin * 1000) / 10 : null,
+            assetTurnover: dupont.assetTurnover != null ? Math.round(dupont.assetTurnover * 100) / 100 : null,
+            equityMultiplier: dupont.equityMultiplier != null ? Math.round(dupont.equityMultiplier * 100) / 100 : null,
+            roe: dupont.computed,
+          },
+          zScore: zScore ? { score: zScore.z, zone: zScore.zone } : undefined,
+          piotroski: { score: piotroski.score, maxScore: 9 },
+          earningsQuality: {
+            accrualRatio: earningsQuality.accrualRatio,
+            cashConversion: earningsQuality.ocfToNI,
+          },
+          ccc: { dso: ccc.dso, dio: ccc.dio, dpo: ccc.dpo, ccc: ccc.cycle },
+          peerMetrics: peers.slice(0, 6).map(p => ({
+            ticker: p.ticker,
+            operatingMargin: p.operatingMargin,
+            roe: p.roe,
+            debtToEquity: p.debtToEquity,
+          })),
+          ttm: ttm ? {
+            revenue: ttm.revenue,
+            operatingMargin: ttm.operatingMargin,
+            netMargin: ttm.netMargin,
+            fcfMargin: ttm.fcfMargin,
+          } : undefined,
+        }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setCommentary(data);
+      }
+    } catch (e) {
+      console.error("Commentary generation failed:", e);
+    } finally {
+      setCommentaryLoading(false);
+    }
+  };
+
+  const [deckLoading, setDeckLoading] = useState(false);
+  const exportInsightsDeck = async () => {
+    setDeckLoading(true);
+    try {
+      const resp = await fetch("/api/export/insights-deck", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker: result.meta.ticker, analysis: result }),
+      });
+      if (!resp.ok) throw new Error("Export failed");
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${result.meta.ticker ?? "Insights"}_Deck_${new Date().toISOString().slice(0, 10)}.pptx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error("Deck export failed:", e);
+    } finally {
+      setDeckLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* ── Action Buttons ── */}
+      <div className="flex justify-end gap-2">
+        <button
+          onClick={generateCommentary}
+          disabled={commentaryLoading}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white shadow-subtle transition hover:bg-violet-700 disabled:opacity-50"
+        >
+          <Info className="h-3.5 w-3.5" />
+          {commentaryLoading ? "Analyzing…" : commentary ? "Refresh Commentary" : "Generate AI Commentary"}
+        </button>
+        <button
+          onClick={exportInsightsDeck}
+          disabled={deckLoading}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-subtle transition hover:bg-indigo-700 disabled:opacity-50"
+        >
+          <Download className="h-3.5 w-3.5" />
+          {deckLoading ? "Generating…" : "Export Insights Deck"}
+        </button>
+      </div>
+
+      {/* ── Overall AI Assessment ── */}
+      {commentary?.overallAssessment && (
+        <div className="rounded-xl border-2 border-violet-200 bg-violet-50 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Info className="h-4 w-4 text-violet-600" />
+            <p className="text-xs font-bold uppercase tracking-wider text-violet-600">AI Analyst Assessment</p>
+          </div>
+          <p className="text-sm text-slate-800 leading-relaxed">{commentary.overallAssessment}</p>
+        </div>
+      )}
+
+      {/* ── Financial Health Summary ── */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className={cn("rounded-xl border-2 p-4 text-center",
+          healthScore.grade === "A" ? "border-emerald-300 bg-emerald-50" :
+          healthScore.grade === "B" ? "border-blue-300 bg-blue-50" :
+          healthScore.grade === "C" ? "border-amber-300 bg-amber-50" :
+          "border-red-300 bg-red-50"
+        )}>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Financial Health</p>
+          <p className={cn("text-4xl font-black mt-1",
+            healthScore.grade === "A" ? "text-emerald-600" :
+            healthScore.grade === "B" ? "text-blue-600" :
+            healthScore.grade === "C" ? "text-amber-600" : "text-red-600"
+          )}>{healthScore.grade}</p>
+          <p className="text-xs text-slate-500 mt-1">{healthScore.score}/{healthScore.max} points ({healthScore.pctScore}%)</p>
+        </div>
+
+        {zScore && (
+          <div className={cn("rounded-xl border-2 p-4 text-center",
+            zScore.zone === "safe" ? "border-emerald-300 bg-emerald-50" :
+            zScore.zone === "grey" ? "border-amber-300 bg-amber-50" :
+            "border-red-300 bg-red-50"
+          )}>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Altman Z-Score</p>
+            <p className={cn("text-3xl font-black mt-1",
+              zScore.zone === "safe" ? "text-emerald-600" :
+              zScore.zone === "grey" ? "text-amber-600" : "text-red-600"
+            )}>{zScore.z.toFixed(2)}</p>
+            <p className="text-xs mt-1">
+              <span className={cn("rounded px-1.5 py-0.5 font-bold text-[10px]",
+                zScore.zone === "safe" ? "bg-emerald-200 text-emerald-800" :
+                zScore.zone === "grey" ? "bg-amber-200 text-amber-800" : "bg-red-200 text-red-800"
+              )}>
+                {zScore.zone === "safe" ? "SAFE ZONE" : zScore.zone === "grey" ? "GREY ZONE" : "DISTRESS ZONE"}
+              </span>
+            </p>
+          </div>
+        )}
+
+        <div className={cn("rounded-xl border-2 p-4 text-center",
+          piotroski.score >= 7 ? "border-emerald-300 bg-emerald-50" :
+          piotroski.score >= 4 ? "border-amber-300 bg-amber-50" :
+          "border-red-300 bg-red-50"
+        )}>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Piotroski F-Score</p>
+          <p className={cn("text-3xl font-black mt-1",
+            piotroski.score >= 7 ? "text-emerald-600" :
+            piotroski.score >= 4 ? "text-amber-600" : "text-red-600"
+          )}>{piotroski.score}/9</p>
+          <p className="text-xs text-slate-500 mt-1">{piotroski.score >= 7 ? "Strong" : piotroski.score >= 4 ? "Moderate" : "Weak"} fundamentals</p>
+        </div>
+
+        <div className={cn("rounded-xl border-2 p-4 text-center",
+          earningsQuality.quality === "high" ? "border-emerald-300 bg-emerald-50" :
+          earningsQuality.quality === "moderate" ? "border-blue-300 bg-blue-50" :
+          earningsQuality.quality === "low" ? "border-red-300 bg-red-50" :
+          "border-slate-300 bg-slate-50"
+        )}>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Earnings Quality</p>
+          <p className={cn("text-2xl font-black mt-1",
+            earningsQuality.quality === "high" ? "text-emerald-600" :
+            earningsQuality.quality === "moderate" ? "text-blue-600" :
+            earningsQuality.quality === "low" ? "text-red-600" : "text-slate-500"
+          )}>{earningsQuality.quality === "unknown" ? "N/A" : earningsQuality.quality.toUpperCase()}</p>
+          <p className="text-xs text-slate-500 mt-1">OCF/NI: {earningsQuality.ocfToNI != null ? `${earningsQuality.ocfToNI}x` : "—"}</p>
+        </div>
+      </div>
+
+      {/* ── Segment Analysis (Insights tab) ── */}
+      {result.segments && result.segments.length > 1 && (() => {
+        const segs = result.segments!.filter(s => s.revenue != null && s.revenue > 0);
+        const totalRev = segs.reduce((acc, s) => acc + (s.revenue ?? 0), 0);
+        const pieData = segs.map((s, i) => ({
+          name: s.segmentName,
+          value: s.revenue ?? 0,
+          pct: totalRev > 0 ? Math.round(((s.revenue ?? 0) / totalRev) * 1000) / 10 : 0,
+          fill: PIE_PALETTE[i % PIE_PALETTE.length],
+        }));
+        const barData = segs.map(s => ({
+          name: s.segmentName.length > 12 ? s.segmentName.slice(0, 12) + "…" : s.segmentName,
+          opMargin: s.operatingMargin ?? 0,
+          opIncome: s.operatingIncome ?? 0,
+        }));
+        return (
+          <Section title={`Segment Analysis (${segs.length} segments)`}>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div>
+                <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Revenue Mix</p>
+                <div className="h-52">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%"
+                        outerRadius={80} label={(props) => `${props.name} ${(props as unknown as { pct: number }).pct}%`}
+                        labelLine={false} fontSize={9}>
+                        {pieData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
+                      </Pie>
+                      <Tooltip contentStyle={tooltipStyle} formatter={(v) => `$${Number(v).toLocaleString()}M`} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Operating Margin by Segment (%)</p>
+                <div className="h-52">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={barData} layout="vertical" margin={{ left: 4, right: 12 }}>
+                      <XAxis type="number" tick={{ fontSize: 9 }} unit="%" />
+                      <YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 9 }} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${Number(v).toFixed(1)}%`} />
+                      <Bar dataKey="opMargin" fill={COLORS.primary} radius={[0, 4, 4, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+            {/* Segment table */}
+            <div className="overflow-x-auto mt-3">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b-2 border-slate-200 text-slate-500">
+                    <th className="px-2 py-1.5 text-left font-semibold">Segment</th>
+                    <th className="px-2 py-1.5 text-right font-semibold">Revenue</th>
+                    <th className="px-2 py-1.5 text-right font-semibold">Rev %</th>
+                    <th className="px-2 py-1.5 text-right font-semibold">OP Income</th>
+                    <th className="px-2 py-1.5 text-right font-semibold">OP Margin</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {segs.map((seg, i) => (
+                    <tr key={i} className="border-b border-slate-100">
+                      <td className="px-2 py-1.5 font-medium">{seg.segmentName}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{fmt(seg.revenue)}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">
+                        {totalRev > 0 ? `${(((seg.revenue ?? 0) / totalRev) * 100).toFixed(1)}%` : "—"}
+                      </td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{fmt(seg.operatingIncome)}</td>
+                      <td className={cn("px-2 py-1.5 text-right tabular-nums font-semibold",
+                        (seg.operatingMargin ?? 0) >= 0 ? "text-emerald-600" : "text-red-500"
+                      )}>{fmtPct(seg.operatingMargin)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Section>
+        );
+      })()}
+
+      {/* ── Historical Trend Charts (if multi-quarter data) ── */}
+      {historyRows.length >= 2 && (
+        <Section title={`Quarterly Trends (${historyRows.length} quarters)`}>
+          <div className="grid gap-4 lg:grid-cols-2">
+            {/* Revenue & Net Income */}
+            <div>
+              <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Revenue & Net Income ($M)</p>
+              <div className="h-48">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={historyRows.map(r => ({ q: r.quarterLabel || r.periodEnd.slice(0, 7), rev: r.revenue, ni: r.netIncome }))}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis dataKey="q" tick={{ fontSize: 9 }} interval={historyRows.length > 8 ? 1 : 0} angle={-30} textAnchor="end" height={40} />
+                    <YAxis tick={{ fontSize: 9 }} />
+                    <Tooltip contentStyle={tooltipStyle} formatter={(v) => `$${Number(v).toLocaleString()}M`} />
+                    <Line type="monotone" dataKey="rev" name="Revenue" stroke={COLORS.blue} strokeWidth={2} dot={{ r: 3 }} />
+                    <Line type="monotone" dataKey="ni" name="Net Income" stroke={COLORS.emerald} strokeWidth={2} dot={{ r: 3 }} />
+                    <Legend wrapperStyle={{ fontSize: 10 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+            {/* Margin Trends */}
+            <div>
+              <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Margin Trends (%)</p>
+              <div className="h-48">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={historyRows.map(r => ({ q: r.quarterLabel || r.periodEnd.slice(0, 7), gm: r.grossMargin, om: r.operatingMargin, nm: r.netMargin }))}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis dataKey="q" tick={{ fontSize: 9 }} interval={historyRows.length > 8 ? 1 : 0} angle={-30} textAnchor="end" height={40} />
+                    <YAxis tick={{ fontSize: 9 }} />
+                    <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${Number(v).toFixed(1)}%`} />
+                    <Line type="monotone" dataKey="gm" name="Gross" stroke={COLORS.blue} strokeWidth={2} dot={{ r: 3 }} />
+                    <Line type="monotone" dataKey="om" name="Operating" stroke={COLORS.emerald} strokeWidth={2} dot={{ r: 3 }} />
+                    <Line type="monotone" dataKey="nm" name="Net" stroke={COLORS.purple} strokeWidth={2} dot={{ r: 3 }} />
+                    <Legend wrapperStyle={{ fontSize: 10 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+            {/* Debt & Leverage */}
+            <div>
+              <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Debt & Cash ($M)</p>
+              <div className="h-48">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={historyRows.map(r => ({ q: r.quarterLabel || r.periodEnd.slice(0, 7), debt: r.totalDebt, cash: r.cashAndEquivalents }))}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis dataKey="q" tick={{ fontSize: 9 }} interval={historyRows.length > 8 ? 1 : 0} angle={-30} textAnchor="end" height={40} />
+                    <YAxis tick={{ fontSize: 9 }} />
+                    <Tooltip contentStyle={tooltipStyle} formatter={(v) => `$${Number(v).toLocaleString()}M`} />
+                    <Bar dataKey="debt" name="Total Debt" fill={COLORS.red} radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="cash" name="Cash" fill={COLORS.emerald} radius={[3, 3, 0, 0]} />
+                    <Legend wrapperStyle={{ fontSize: 10 }} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+            {/* Cash Flow Trends */}
+            <div>
+              <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Cash Flow ($M)</p>
+              <div className="h-48">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={historyRows.map(r => ({ q: r.quarterLabel || r.periodEnd.slice(0, 7), ocf: r.operatingCashFlow, fcf: r.freeCashFlow, capex: r.capex != null ? -Math.abs(r.capex) : null }))}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis dataKey="q" tick={{ fontSize: 9 }} interval={historyRows.length > 8 ? 1 : 0} angle={-30} textAnchor="end" height={40} />
+                    <YAxis tick={{ fontSize: 9 }} />
+                    <Tooltip contentStyle={tooltipStyle} formatter={(v) => `$${Number(v).toLocaleString()}M`} />
+                    <Line type="monotone" dataKey="ocf" name="Operating CF" stroke={COLORS.blue} strokeWidth={2} dot={{ r: 3 }} />
+                    <Line type="monotone" dataKey="fcf" name="FCF" stroke={COLORS.emerald} strokeWidth={2} dot={{ r: 3 }} />
+                    <Line type="monotone" dataKey="capex" name="CapEx" stroke={COLORS.red} strokeWidth={2} dot={{ r: 3 }} strokeDasharray="5 5" />
+                    <Legend wrapperStyle={{ fontSize: 10 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+        </Section>
+      )}
+
+      {/* ── QoQ Momentum ── */}
+      {historyRows.length >= 2 && (() => {
+        const curr = historyRows[historyRows.length - 1];
+        const prev = historyRows[historyRows.length - 2];
+        const qoq = (c: number | null, p: number | null) => {
+          if (c == null || p == null || p === 0) return null;
+          return Math.round(((c - p) / Math.abs(p)) * 1000) / 10;
+        };
+        const metrics = [
+          { label: "Revenue", change: qoq(curr.revenue, prev.revenue), curr: curr.revenue, prev: prev.revenue },
+          { label: "Gross Profit", change: qoq(curr.grossProfit, prev.grossProfit), curr: curr.grossProfit, prev: prev.grossProfit },
+          { label: "Operating Income", change: qoq(curr.operatingIncome, prev.operatingIncome), curr: curr.operatingIncome, prev: prev.operatingIncome },
+          { label: "Net Income", change: qoq(curr.netIncome, prev.netIncome), curr: curr.netIncome, prev: prev.netIncome },
+          { label: "Operating CF", change: qoq(curr.operatingCashFlow, prev.operatingCashFlow), curr: curr.operatingCashFlow, prev: prev.operatingCashFlow },
+          { label: "FCF", change: qoq(curr.freeCashFlow, prev.freeCashFlow), curr: curr.freeCashFlow, prev: prev.freeCashFlow },
+        ].filter(m => m.change != null);
+
+        if (metrics.length === 0) return null;
+        return (
+          <Section title={`QoQ Momentum: ${prev.quarterLabel ?? prev.periodEnd} → ${curr.quarterLabel ?? curr.periodEnd}`}>
+            <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+              {metrics.map((m, i) => (
+                <div key={i} className={cn("rounded-lg border p-3 text-center",
+                  m.change! > 0 ? "border-emerald-200 bg-emerald-50/50" :
+                  m.change! < -10 ? "border-red-200 bg-red-50/50" :
+                  "border-slate-200 bg-white"
+                )}>
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{m.label}</p>
+                  <div className="flex items-center justify-center gap-1 mt-1">
+                    {m.change! > 0 ? <ArrowUpRight className="h-3.5 w-3.5 text-emerald-600" /> :
+                     m.change! < 0 ? <ArrowDownRight className="h-3.5 w-3.5 text-red-500" /> :
+                     <Minus className="h-3.5 w-3.5 text-slate-400" />}
+                    <span className={cn("text-lg font-black tabular-nums",
+                      m.change! > 0 ? "text-emerald-600" : m.change! < 0 ? "text-red-500" : "text-slate-600"
+                    )}>{m.change! > 0 ? "+" : ""}{m.change}%</span>
+                  </div>
+                  <p className="text-[9px] text-slate-400 tabular-nums mt-0.5">
+                    {fmt(m.prev)} → {fmt(m.curr)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </Section>
+        );
+      })()}
+
+      {/* ── TTM Summary (if 4+ quarters) ── */}
+      {ttm && (
+        <Section title={ttm.label}>
+          <div className="space-y-3">
+            {commentary?.ttmOutlook && (
+              <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2">
+                <p className="text-xs text-violet-700 leading-relaxed"><span className="font-bold">AI:</span> {commentary.ttmOutlook}</p>
+              </div>
+            )}
+            <p className="text-xs text-slate-500">Trailing 12 months computed from last 4 quarters. Flow metrics are summed; balance sheet metrics use the latest quarter.</p>
+            <div className="grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-slate-200 bg-slate-200 sm:grid-cols-6">
+              <KpiCell label="Revenue TTM" value={fmt(ttm.revenue)} />
+              <KpiCell label="EBITDA TTM" value={fmt(ttm.ebitda)} />
+              <KpiCell label="Net Income TTM" value={fmt(ttm.netIncome)} highlight={ttm.netIncome} />
+              <KpiCell label="OCF TTM" value={fmt(ttm.operatingCashFlow)} />
+              <KpiCell label="FCF TTM" value={fmt(ttm.freeCashFlow)} highlight={ttm.freeCashFlow} />
+              <KpiCell label="CapEx TTM" value={fmt(ttm.capex != null ? -Math.abs(ttm.capex) : null)} />
+            </div>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+              <RatioCard label="Gross Margin" value={fmtPct(ttm.grossMargin)} />
+              <RatioCard label="OP Margin" value={fmtPct(ttm.operatingMargin)} />
+              <RatioCard label="EBITDA Margin" value={fmtPct(ttm.ebitdaMargin)} />
+              <RatioCard label="Net Margin" value={fmtPct(ttm.netMargin)} />
+              <RatioCard label="ROE (TTM)" value={fmtPct(ttm.roe)} />
+              <RatioCard label="ROA (TTM)" value={fmtPct(ttm.roa)} />
+              <RatioCard label="FCF Margin" value={fmtPct(ttm.fcfMargin)} />
+            </div>
+          </div>
+        </Section>
+      )}
+
+      {/* ── Peer Comparison (if 2+ companies in Data Source) ── */}
+      {peers.length >= 2 && (
+        <>
+          {commentary?.peerPositioning && (
+            <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2">
+              <p className="text-xs text-violet-700 leading-relaxed"><span className="font-bold">AI Peer Analysis:</span> {commentary.peerPositioning}</p>
+            </div>
+          )}
+          {/* Margin Comparison */}
+          <Section title={`Peer Margin Comparison (${peers.length} companies)`}>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div>
+                <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Operating Margin (%)</p>
+                <div className="h-52">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={peers.map(p => ({ name: p.ticker, gm: p.grossMargin, om: p.operatingMargin, nm: p.netMargin }))} layout="vertical" margin={{ left: 4 }}>
+                      <XAxis type="number" tick={{ fontSize: 9 }} />
+                      <YAxis type="category" dataKey="name" width={50} tick={{ fontSize: 10, fontWeight: 600 }} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${Number(v).toFixed(1)}%`} />
+                      <Bar dataKey="gm" name="Gross" fill={COLORS.blue} radius={[0, 3, 3, 0]} />
+                      <Bar dataKey="om" name="Operating" fill={COLORS.emerald} radius={[0, 3, 3, 0]} />
+                      <Bar dataKey="nm" name="Net" fill={COLORS.purple} radius={[0, 3, 3, 0]} />
+                      <Legend wrapperStyle={{ fontSize: 10 }} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Return & Efficiency (%)</p>
+                <div className="h-52">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={peers.map(p => ({ name: p.ticker, roe: p.roe, roa: p.roa, fcf: p.fcfMargin }))} layout="vertical" margin={{ left: 4 }}>
+                      <XAxis type="number" tick={{ fontSize: 9 }} />
+                      <YAxis type="category" dataKey="name" width={50} tick={{ fontSize: 10, fontWeight: 600 }} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${Number(v).toFixed(1)}%`} />
+                      <Bar dataKey="roe" name="ROE" fill={COLORS.primary} radius={[0, 3, 3, 0]} />
+                      <Bar dataKey="roa" name="ROA" fill={COLORS.cyan} radius={[0, 3, 3, 0]} />
+                      <Bar dataKey="fcf" name="FCF Margin" fill={COLORS.amber} radius={[0, 3, 3, 0]} />
+                      <Legend wrapperStyle={{ fontSize: 10 }} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          </Section>
+
+          {/* Radar Chart */}
+          <Section title="Peer Financial Profile — Radar">
+            <div className="flex justify-center">
+              <div className="h-72 w-full max-w-lg">
+                <ResponsiveContainer width="100%" height="100%">
+                  <RadarChart data={[
+                    { metric: "Gross Margin", ...Object.fromEntries(peers.map(p => [p.ticker, Math.max(0, p.grossMargin ?? 0)])) },
+                    { metric: "OP Margin", ...Object.fromEntries(peers.map(p => [p.ticker, Math.max(0, p.operatingMargin ?? 0)])) },
+                    { metric: "Net Margin", ...Object.fromEntries(peers.map(p => [p.ticker, Math.max(0, p.netMargin ?? 0)])) },
+                    { metric: "ROE", ...Object.fromEntries(peers.map(p => [p.ticker, Math.max(0, p.roe ?? 0)])) },
+                    { metric: "Current Ratio", ...Object.fromEntries(peers.map(p => [p.ticker, Math.min((p.currentRatio ?? 0) * 10, 50)])) },
+                    { metric: "FCF Margin", ...Object.fromEntries(peers.map(p => [p.ticker, Math.max(0, p.fcfMargin ?? 0)])) },
+                  ]}>
+                    <PolarGrid stroke="#e2e8f0" />
+                    <PolarAngleAxis dataKey="metric" tick={{ fontSize: 10 }} />
+                    <PolarRadiusAxis tick={{ fontSize: 8 }} />
+                    {peers.slice(0, 6).map((p, i) => (
+                      <Radar key={p.ticker} name={p.ticker} dataKey={p.ticker}
+                        stroke={PIE_PALETTE[i % PIE_PALETTE.length]}
+                        fill={PIE_PALETTE[i % PIE_PALETTE.length]}
+                        fillOpacity={p.ticker === ticker ? 0.25 : 0.08}
+                        strokeWidth={p.ticker === ticker ? 2.5 : 1.5} />
+                    ))}
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Tooltip contentStyle={tooltipStyle} />
+                  </RadarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </Section>
+
+          {/* Relative Valuation / Comparison Table */}
+          <Section title="Peer Comparison Table">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b-2 border-slate-200">
+                    <th className="px-2 py-2 text-left font-bold text-slate-600">Company</th>
+                    <th className="px-2 py-2 text-right font-semibold text-slate-500">Revenue</th>
+                    <th className="px-2 py-2 text-right font-semibold text-slate-500">EBITDA</th>
+                    <th className="px-2 py-2 text-right font-semibold text-slate-500">Net Inc.</th>
+                    <th className="px-2 py-2 text-right font-semibold text-slate-500">FCF</th>
+                    <th className="px-2 py-2 text-right font-semibold text-slate-500">GM %</th>
+                    <th className="px-2 py-2 text-right font-semibold text-slate-500">OP %</th>
+                    <th className="px-2 py-2 text-right font-semibold text-slate-500">NM %</th>
+                    <th className="px-2 py-2 text-right font-semibold text-slate-500">ROE %</th>
+                    <th className="px-2 py-2 text-right font-semibold text-slate-500">D/E</th>
+                    <th className="px-2 py-2 text-right font-semibold text-slate-500">Curr.</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {peers.map((p, i) => {
+                    const isSubject = p.ticker === ticker;
+                    return (
+                      <tr key={i} className={cn("border-b border-slate-100", isSubject && "bg-indigo-50/50 font-semibold")}>
+                        <td className="px-2 py-2">
+                          <div className="flex items-center gap-1.5">
+                            {isSubject && <span className="h-2 w-2 rounded-full bg-indigo-500" />}
+                            <span className={cn("font-bold", isSubject ? "text-indigo-700" : "text-slate-800")}>{p.ticker}</span>
+                            <span className="text-[10px] text-slate-400 truncate max-w-[100px]">{p.companyName}</span>
+                          </div>
+                        </td>
+                        <td className="px-2 py-2 text-right tabular-nums">{fmt(p.revenue)}</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{fmt(p.ebitda)}</td>
+                        <td className={cn("px-2 py-2 text-right tabular-nums", p.netIncome != null && p.netIncome < 0 && "text-red-500")}>{fmt(p.netIncome)}</td>
+                        <td className={cn("px-2 py-2 text-right tabular-nums", p.freeCashFlow != null && p.freeCashFlow < 0 && "text-red-500")}>{fmt(p.freeCashFlow)}</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{fmtPct(p.grossMargin)}</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{fmtPct(p.operatingMargin)}</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{fmtPct(p.netMargin)}</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{fmtPct(p.roe)}</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{fmtX(p.debtToEquity)}</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{fmtX(p.currentRatio)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Section>
+        </>
+      )}
+
+      {/* ── Valuation Multiples ── */}
+      <Section title="Valuation Multiples">
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <label className="text-xs font-semibold text-slate-600 whitespace-nowrap">Market Cap ($M):</label>
+            <input
+              type="number"
+              value={marketCapInput}
+              onChange={(e) => setMarketCapInput(e.target.value)}
+              placeholder="e.g. 25000"
+              className="w-40 rounded-lg border border-slate-300 px-3 py-1.5 text-sm tabular-nums focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200 focus:outline-none"
+            />
+            {!marketCap && <span className="text-xs text-slate-400">Enter market cap to compute multiples</span>}
+          </div>
+          {valuation && (
+            <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-slate-200 bg-slate-200 sm:grid-cols-4">
+              <div className="bg-white p-3 text-center">
+                <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">EV / EBITDA</p>
+                <p className="text-xl font-black tabular-nums text-slate-900 mt-1">{valuation.evToEbitda != null ? `${valuation.evToEbitda}x` : "—"}</p>
+                <p className="text-[9px] text-slate-400">EV: {fmt(Math.round(valuation.ev))}</p>
+              </div>
+              <div className="bg-white p-3 text-center">
+                <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">EV / Revenue</p>
+                <p className="text-xl font-black tabular-nums text-slate-900 mt-1">{valuation.evToRev != null ? `${valuation.evToRev}x` : "—"}</p>
+                <p className="text-[9px] text-slate-400">Net Debt: {fmt(Math.round(valuation.netDebt))}</p>
+              </div>
+              <div className="bg-white p-3 text-center">
+                <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">P/E Ratio</p>
+                <p className={cn("text-xl font-black tabular-nums mt-1", valuation.pe != null && valuation.pe < 15 ? "text-emerald-600" : valuation.pe != null && valuation.pe > 30 ? "text-amber-600" : "text-slate-900")}>
+                  {valuation.pe != null ? `${valuation.pe}x` : "—"}
+                </p>
+                <p className="text-[9px] text-slate-400">{ttm ? "TTM basis" : "Quarterly"}</p>
+              </div>
+              <div className="bg-white p-3 text-center">
+                <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">P/FCF</p>
+                <p className={cn("text-xl font-black tabular-nums mt-1", valuation.pFcf != null && valuation.pFcf < 20 ? "text-emerald-600" : "text-slate-900")}>
+                  {valuation.pFcf != null ? `${valuation.pFcf}x` : "—"}
+                </p>
+                <p className="text-[9px] text-slate-400">FCF Yield: {valuation.fcfYield != null ? `${valuation.fcfYield}%` : "—"}</p>
+              </div>
+            </div>
+          )}
+          {valuation && valuation.divYield != null && (
+            <div className="flex items-center gap-4">
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2">
+                <p className="text-[9px] font-bold uppercase text-emerald-500">Dividend Yield</p>
+                <p className="text-lg font-black text-emerald-700 tabular-nums">{valuation.divYield}%</p>
+              </div>
+            </div>
+          )}
+        </div>
+      </Section>
+
+      {/* ── DuPont ROE Decomposition ── */}
+      <Section title="DuPont ROE Decomposition">
+        <div className="space-y-3">
+          {commentary?.dupont && (
+            <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2">
+              <p className="text-xs text-violet-700 leading-relaxed"><span className="font-bold">AI:</span> {commentary.dupont}</p>
+            </div>
+          )}
+          <p className="text-xs text-slate-500">
+            ROE = Net Profit Margin × Asset Turnover × Equity Multiplier
+          </p>
+          <div className="flex flex-wrap items-center gap-2 text-center">
+            <DupontFactor label="Net Margin" value={dupont.netMargin != null ? `${(dupont.netMargin * 100).toFixed(1)}%` : "—"}
+              sub={inc.netIncome != null && inc.revenue ? `$${inc.netIncome.toLocaleString()}M / $${inc.revenue.toLocaleString()}M` : undefined} />
+            <span className="text-lg font-bold text-slate-400">×</span>
+            <DupontFactor label="Asset Turnover" value={dupont.assetTurnover != null ? `${dupont.assetTurnover.toFixed(2)}x` : "—"}
+              sub={inc.revenue != null && bs.totalAssets ? `$${inc.revenue.toLocaleString()}M / $${bs.totalAssets.toLocaleString()}M` : undefined} />
+            <span className="text-lg font-bold text-slate-400">×</span>
+            <DupontFactor label="Equity Multiplier" value={dupont.equityMultiplier != null ? `${dupont.equityMultiplier.toFixed(2)}x` : "—"}
+              sub={bs.totalAssets && bs.totalEquity ? `$${bs.totalAssets.toLocaleString()}M / $${bs.totalEquity.toLocaleString()}M` : undefined} />
+            <span className="text-lg font-bold text-slate-400">=</span>
+            <DupontFactor label="ROE" value={dupont.computed != null ? `${dupont.computed.toFixed(1)}%` : "—"} highlight />
+          </div>
+
+          {/* 5-Factor Extension */}
+          {dupont.taxBurden != null && dupont.interestBurden != null && (
+            <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50/50 p-3">
+              <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">5-Factor Breakdown</p>
+              <div className="grid grid-cols-5 gap-2 text-center text-xs">
+                <div>
+                  <p className="text-[10px] text-slate-400">Tax Burden</p>
+                  <p className="font-bold tabular-nums">{dupont.taxBurden != null ? `${(dupont.taxBurden * 100).toFixed(1)}%` : "—"}</p>
+                  <p className="text-[9px] text-slate-400">NI/EBT</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-slate-400">Interest Burden</p>
+                  <p className="font-bold tabular-nums">{dupont.interestBurden != null ? `${(dupont.interestBurden * 100).toFixed(1)}%` : "—"}</p>
+                  <p className="text-[9px] text-slate-400">EBT/EBIT</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-slate-400">OP Margin</p>
+                  <p className="font-bold tabular-nums">{dupont.opMarginFactor != null ? `${(dupont.opMarginFactor * 100).toFixed(1)}%` : "—"}</p>
+                  <p className="text-[9px] text-slate-400">EBIT/Rev</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-slate-400">Asset Turn.</p>
+                  <p className="font-bold tabular-nums">{dupont.assetTurnover != null ? `${dupont.assetTurnover.toFixed(2)}x` : "—"}</p>
+                  <p className="text-[9px] text-slate-400">Rev/Assets</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-slate-400">Leverage</p>
+                  <p className="font-bold tabular-nums">{dupont.equityMultiplier != null ? `${dupont.equityMultiplier.toFixed(2)}x` : "—"}</p>
+                  <p className="text-[9px] text-slate-400">Assets/Equity</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </Section>
+
+      {/* ── Altman Z-Score Detail ── */}
+      {zScore && (
+        <Section title="Altman Z-Score Breakdown">
+          {commentary?.zScore && (
+            <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2 mb-3">
+              <p className="text-xs text-violet-700 leading-relaxed"><span className="font-bold">AI:</span> {commentary.zScore}</p>
+            </div>
+          )}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="rounded-lg border border-slate-100 p-3">
+              <p className="text-xs text-slate-500 mb-2">
+                Z = 1.2×X1 + 1.4×X2 + 3.3×X3 + 0.6×X4 + 1.0×X5
+              </p>
+              <table className="w-full text-xs">
+                <tbody>
+                  <ZRow label="X1: WC/Assets" raw={zScore.x1} weight={1.2} />
+                  <ZRow label="X2: RE/Assets" raw={zScore.x2} weight={1.4} />
+                  <ZRow label="X3: EBIT/Assets" raw={zScore.x3} weight={3.3} />
+                  <ZRow label="X4: Equity/Liabilities" raw={zScore.x4} weight={0.6} />
+                  <ZRow label="X5: Revenue/Assets" raw={zScore.x5} weight={1.0} />
+                  <tr className="border-t-2 border-slate-200">
+                    <td className="py-1.5 font-bold text-slate-800">Z-Score</td>
+                    <td></td>
+                    <td className={cn("py-1.5 text-right font-black tabular-nums",
+                      zScore.zone === "safe" ? "text-emerald-600" : zScore.zone === "grey" ? "text-amber-600" : "text-red-600"
+                    )}>{zScore.z.toFixed(2)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div className="rounded-lg border border-slate-100 p-3 lg:col-span-2">
+              <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Interpretation</p>
+              <div className="space-y-2 text-xs text-slate-600">
+                <InterpretRow color="emerald" label="> 2.99 — Safe Zone" desc="Low probability of bankruptcy. Strong financial position." active={zScore.zone === "safe"} />
+                <InterpretRow color="amber" label="1.81 – 2.99 — Grey Zone" desc="Moderate risk. Monitor closely for deterioration." active={zScore.zone === "grey"} />
+                <InterpretRow color="red" label="< 1.81 — Distress Zone" desc="High probability of financial distress within 2 years." active={zScore.zone === "distress"} />
+              </div>
+            </div>
+          </div>
+        </Section>
+      )}
+
+      {/* ── Piotroski F-Score Detail ── */}
+      <Section title="Piotroski F-Score Analysis">
+        {commentary?.piotroski && (
+          <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2 mb-3">
+            <p className="text-xs text-violet-700 leading-relaxed"><span className="font-bold">AI:</span> {commentary.piotroski}</p>
+          </div>
+        )}
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {piotroski.signals.map((s, i) => (
+            <div key={i} className={cn("flex items-start gap-2 rounded-lg border p-2.5",
+              s.pass === true ? "border-emerald-200 bg-emerald-50/50" :
+              s.pass === false ? "border-red-200 bg-red-50/50" :
+              "border-slate-200 bg-slate-50/50"
+            )}>
+              {s.pass === true ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" /> :
+               s.pass === false ? <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-500" /> :
+               <Minus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />}
+              <div>
+                <p className="text-[11px] font-bold text-slate-800">{s.name}</p>
+                <p className="text-[10px] text-slate-500">{s.desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      {/* ── Earnings Quality Deep Dive ── */}
+      <Section title="Earnings Quality Analysis">
+        {commentary?.earningsQuality && (
+          <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2 mb-3">
+            <p className="text-xs text-violet-700 leading-relaxed"><span className="font-bold">AI:</span> {commentary.earningsQuality}</p>
+          </div>
+        )}
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <RatioCard label="OCF / Net Income" value={earningsQuality.ocfToNI != null ? `${earningsQuality.ocfToNI}x` : "—"} />
+              <RatioCard label="FCF / Net Income" value={earningsQuality.fcfToNI != null ? `${earningsQuality.fcfToNI}x` : "—"} />
+              <RatioCard label="Accrual Ratio" value={earningsQuality.accrualRatio != null ? `${earningsQuality.accrualRatio}%` : "—"} />
+              <RatioCard label="Accruals ($M)" value={earningsQuality.accruals != null ? `$${earningsQuality.accruals.toLocaleString()}M` : "—"} />
+            </div>
+          </div>
+          <div className="rounded-lg border border-slate-100 p-3">
+            <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">What This Means</p>
+            <div className="space-y-1.5 text-xs text-slate-600">
+              <p><span className="font-semibold">OCF/NI ≥ 1.0:</span> Earnings are backed by real cash — high quality.</p>
+              <p><span className="font-semibold">OCF/NI &lt; 0.7:</span> Significant accruals — earnings may be inflated by non-cash items.</p>
+              <p><span className="font-semibold">Accrual Ratio:</span> Negative is good (cash exceeds reported earnings). Positive is a warning sign.</p>
+              {earningsQuality.quality === "high" && (
+                <p className="mt-2 rounded bg-emerald-50 p-2 text-emerald-700 font-semibold">
+                  This company generates strong cash flows relative to reported earnings — high quality signal.
+                </p>
+              )}
+              {earningsQuality.quality === "low" && (
+                <p className="mt-2 rounded bg-red-50 p-2 text-red-700 font-semibold">
+                  Warning: Cash flows significantly trail reported earnings. Investigate non-cash items and accruals.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      </Section>
+
+      {/* ── Cash Conversion Cycle ── */}
+      {ccc.cycle != null && (
+        <Section title="Cash Conversion Cycle">
+          {commentary?.ccc && (
+            <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2 mb-3">
+              <p className="text-xs text-violet-700 leading-relaxed"><span className="font-bold">AI:</span> {commentary.ccc}</p>
+            </div>
+          )}
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-center gap-2 text-center">
+              <DupontFactor label="DSO" value={ccc.dso != null ? `${ccc.dso} days` : "—"} sub="Days Sales Outstanding" />
+              <span className="text-lg font-bold text-slate-400">+</span>
+              <DupontFactor label="DIO" value={ccc.dio != null ? `${ccc.dio} days` : "—"} sub="Days Inventory Outstanding" />
+              <span className="text-lg font-bold text-slate-400">−</span>
+              <DupontFactor label="DPO" value={ccc.dpo != null ? `${ccc.dpo} days` : "—"} sub="Days Payable Outstanding" />
+              <span className="text-lg font-bold text-slate-400">=</span>
+              <DupontFactor label="CCC" value={`${ccc.cycle} days`} highlight sub="Cash Conversion Cycle" />
+            </div>
+            <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-3 text-xs text-slate-600">
+              {ccc.cycle < 0 ? (
+                <p><span className="font-semibold text-emerald-600">Negative CCC ({ccc.cycle} days):</span> The company gets paid before paying suppliers — excellent working capital efficiency. Common in companies with strong bargaining power.</p>
+              ) : ccc.cycle < 30 ? (
+                <p><span className="font-semibold text-emerald-600">Short CCC ({ccc.cycle} days):</span> Efficient cash management. Capital is tied up for less than a month.</p>
+              ) : ccc.cycle < 90 ? (
+                <p><span className="font-semibold text-amber-600">Moderate CCC ({ccc.cycle} days):</span> Typical for manufacturing/distribution. Look for trends over time.</p>
+              ) : (
+                <p><span className="font-semibold text-red-600">Long CCC ({ccc.cycle} days):</span> Significant capital tied up in working capital. May indicate inventory buildup or slow collections.</p>
+              )}
+            </div>
+          </div>
+        </Section>
+      )}
+
+      {/* ── Capital Allocation ── */}
+      <Section title="Capital Allocation">
+        <div className="grid gap-4 lg:grid-cols-2">
+          <MetricTable rows={[
+            { label: "Operating Cash Flow", value: fmt(cf.operatingCashFlow), bold: true },
+            { label: "CapEx (Reinvestment)", value: fmt(cf.capitalExpenditures != null ? -Math.abs(cf.capitalExpenditures) : null), dim: true },
+            { label: "Reinvestment Rate", value: capAlloc.reinvestmentRate != null ? `${capAlloc.reinvestmentRate}%` : "—", sub: "CapEx / OCF" },
+            { label: "Dividends Paid", value: fmt(cf.dividendsPaid != null ? -Math.abs(cf.dividendsPaid) : null), dim: true },
+            { label: "Share Repurchases", value: fmt(capAlloc.buyback != null ? -Math.abs(capAlloc.buyback) : null), dim: true },
+            { label: "Total Shareholder Returns", value: fmt(capAlloc.totalReturn != null ? -Math.abs(capAlloc.totalReturn) : null), bold: true },
+            { label: "Return Yield on Equity", value: capAlloc.returnYieldOnEquity != null ? `${Math.abs(capAlloc.returnYieldOnEquity).toFixed(1)}%` : "—" },
+            { label: "Stock-Based Comp", value: fmt(capAlloc.sbc) },
+          ]} />
+          <div className="rounded-lg border border-slate-100 p-3">
+            <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Allocation Insight</p>
+            <div className="space-y-1.5 text-xs text-slate-600">
+              {capAlloc.reinvestmentRate != null && capAlloc.reinvestmentRate > 50 && (
+                <p>High reinvestment rate ({capAlloc.reinvestmentRate}%) — company is investing heavily in growth.</p>
+              )}
+              {capAlloc.reinvestmentRate != null && capAlloc.reinvestmentRate < 20 && (
+                <p>Low reinvestment rate ({capAlloc.reinvestmentRate}%) — mature business returning capital to shareholders.</p>
+              )}
+              {cf.freeCashFlow != null && cf.freeCashFlow > 0 && cf.dividendsPaid != null && (
+                <p>FCF after dividends: <span className="font-semibold">${(cf.freeCashFlow - Math.abs(cf.dividendsPaid)).toLocaleString()}M</span> — {cf.freeCashFlow > Math.abs(cf.dividendsPaid) ? "dividend is well-covered by FCF" : "FCF does not fully cover dividends"}.</p>
+              )}
+              {capAlloc.sbc != null && inc.netIncome != null && inc.netIncome > 0 && (
+                <p>SBC as % of Net Income: <span className="font-semibold">{((capAlloc.sbc / inc.netIncome) * 100).toFixed(1)}%</span> — {capAlloc.sbc / inc.netIncome > 0.15 ? "elevated dilution risk" : "manageable level"}.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      </Section>
+
+      {/* ── Footnotes & Commentary ── */}
+      {footnotes.length > 0 && (
+        <Section title={`Filing Commentary & Footnotes (${footnotes.length})`}>
+          <div className="space-y-3">
+            {/* High significance first */}
+            {footnotes.filter(fn => fn.significance === "high").length > 0 && (
+              <div>
+                <p className="text-[10px] font-bold uppercase text-red-500 mb-2 flex items-center gap-1">
+                  <AlertCircle className="h-3 w-3" /> Critical Items
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {footnotes.filter(fn => fn.significance === "high").map((fn, i) => (
+                    <FootnoteCard key={i} fn={fn} />
+                  ))}
+                </div>
+              </div>
+            )}
+            {footnotes.filter(fn => fn.significance === "medium").length > 0 && (
+              <div>
+                <p className="text-[10px] font-bold uppercase text-amber-500 mb-2">Notable Items</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {footnotes.filter(fn => fn.significance === "medium").map((fn, i) => (
+                    <FootnoteCard key={i} fn={fn} />
+                  ))}
+                </div>
+              </div>
+            )}
+            {footnotes.filter(fn => fn.significance === "low").length > 0 && (
+              <div>
+                <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Other Disclosures</p>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {footnotes.filter(fn => fn.significance === "low").map((fn, i) => (
+                    <FootnoteCard key={i} fn={fn} compact />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </Section>
+      )}
+
+      {/* ── Non-GAAP Adjusted Metrics ── */}
+      {adjustedMetrics.length > 0 && (
+        <Section title={`Non-GAAP Reconciliation (${adjustedMetrics.length})`}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {adjustedMetrics.map((am, i) => {
+              const totalAdj = am.adjustments.reduce((s, a) => s + a.value, 0);
+              const unit = am.unit === "per-share" ? "" : "M";
+              return (
+                <div key={i} className="rounded-lg border border-slate-100 p-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-bold text-slate-800">{am.name}</p>
+                      <p className="text-[10px] text-slate-400">{am.period}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-slate-400">GAAP → Adjusted</p>
+                      <p className="text-sm font-bold tabular-nums">
+                        <span className="text-slate-500">{am.gaapValue != null ? `$${am.gaapValue.toLocaleString()}${unit}` : "—"}</span>
+                        <ArrowRight className="inline h-3 w-3 mx-1 text-slate-400" />
+                        <span className="text-emerald-600">{am.adjustedValue != null ? `$${am.adjustedValue.toLocaleString()}${unit}` : "—"}</span>
+                      </p>
+                    </div>
+                  </div>
+                  {am.adjustments.length > 0 && (
+                    <div className="space-y-0.5">
+                      {am.adjustments.map((adj, j) => (
+                        <div key={j} className="flex justify-between text-[11px]">
+                          <span className="text-slate-400 truncate mr-2">{adj.label}</span>
+                          <span className={cn("tabular-nums font-semibold shrink-0", adj.value >= 0 ? "text-emerald-600" : "text-red-500")}>
+                            {adj.value >= 0 ? "+" : ""}{adj.value.toLocaleString()}{unit}
+                          </span>
+                        </div>
+                      ))}
+                      <div className="flex justify-between text-[11px] border-t border-slate-200 pt-1 mt-1">
+                        <span className="font-bold text-slate-700">Net Adjustment</span>
+                        <span className={cn("tabular-nums font-bold", totalAdj >= 0 ? "text-emerald-600" : "text-red-500")}>
+                          {totalAdj >= 0 ? "+" : ""}{totalAdj.toLocaleString()}{unit}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </Section>
+      )}
+
+      {/* ── Earnings Narrative (if available) ── */}
+      {narrative && (
+        <Section title="Management Commentary & Earnings">
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              <span className={cn("rounded-lg px-3 py-1.5 text-sm font-bold",
+                narrative.result.includes("Beat") ? "bg-emerald-100 text-emerald-700" :
+                narrative.result.includes("Missed") ? "bg-red-100 text-red-700" :
+                "bg-amber-100 text-amber-700"
+              )}>{narrative.result}</span>
+              <span className={cn("rounded-lg px-3 py-1.5 text-sm font-semibold",
+                narrative.tone === "bullish" ? "bg-emerald-100 text-emerald-700" :
+                narrative.tone === "cautious" ? "bg-amber-100 text-amber-700" :
+                "bg-slate-100 text-slate-700"
+              )}>Tone: {narrative.tone.charAt(0).toUpperCase() + narrative.tone.slice(1)}</span>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <p className="text-sm text-slate-800 leading-relaxed">{narrative.summary}</p>
+            </div>
+            {(narrative.priorGuidance || narrative.currentGuidance) && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                {narrative.priorGuidance && (
+                  <div className="rounded-lg border border-slate-200 p-3">
+                    <p className="text-[10px] font-bold uppercase text-slate-400 mb-1">Prior Guidance</p>
+                    <p className="text-xs text-slate-700">{narrative.priorGuidance}</p>
+                  </div>
+                )}
+                {narrative.currentGuidance && (
+                  <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-3">
+                    <p className="text-[10px] font-bold uppercase text-blue-500 mb-1">Current Guidance</p>
+                    <p className="text-xs text-slate-700">{narrative.currentGuidance}</p>
+                  </div>
+                )}
+              </div>
+            )}
+            {narrative.keyThemes.length > 0 && (
+              <div>
+                <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Key Themes from MD&A</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {narrative.keyThemes.map((theme, i) => (
+                    <div key={i} className="flex items-start gap-2 rounded-lg border border-slate-100 bg-white p-2.5">
+                      <TrendingUp className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+                      <p className="text-xs text-slate-700">{theme}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </Section>
+      )}
+    </div>
+  );
+}
+
+function DupontFactor({ label, value, sub, highlight }: { label: string; value: string; sub?: string; highlight?: boolean }) {
+  return (
+    <div className={cn("rounded-lg px-4 py-3 min-w-[100px]", highlight ? "bg-indigo-100 border-2 border-indigo-300" : "bg-slate-50 border border-slate-200")}>
+      <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{label}</p>
+      <p className={cn("text-lg font-black tabular-nums mt-0.5", highlight ? "text-indigo-700" : "text-slate-900")}>{value}</p>
+      {sub && <p className="text-[9px] text-slate-400 mt-0.5">{sub}</p>}
+    </div>
+  );
+}
+
+function ZRow({ label, raw, weight }: { label: string; raw: number; weight: number }) {
+  return (
+    <tr className="border-b border-slate-100">
+      <td className="py-1 text-xs text-slate-600">{label}</td>
+      <td className="py-1 text-right text-[10px] tabular-nums text-slate-400">{raw.toFixed(3)} × {weight}</td>
+      <td className="py-1 text-right text-xs tabular-nums font-semibold text-slate-800">{(raw * weight).toFixed(3)}</td>
+    </tr>
+  );
+}
+
+function InterpretRow({ color, label, desc, active }: { color: "emerald" | "amber" | "red"; label: string; desc: string; active: boolean }) {
+  const styles = {
+    emerald: { border: "border-emerald-300 bg-emerald-50", text: "text-emerald-700" },
+    amber: { border: "border-amber-300 bg-amber-50", text: "text-amber-700" },
+    red: { border: "border-red-300 bg-red-50", text: "text-red-700" },
+  };
+  return (
+    <div className={cn("rounded-lg p-2.5 border", active ? styles[color].border : "border-slate-100 bg-white opacity-50")}>
+      <p className={cn("text-xs font-bold", active ? styles[color].text : "text-slate-500")}>{label}</p>
+      <p className="text-[10px] text-slate-500">{desc}</p>
+    </div>
+  );
+}
+
+function FootnoteCard({ fn, compact }: { fn: import("@/types/analysis").FootnoteItem; compact?: boolean }) {
+  return (
+    <div className={cn("rounded-lg border p-3",
+      fn.significance === "high" ? "border-red-200 bg-red-50/30" :
+      fn.significance === "medium" ? "border-amber-200 bg-amber-50/30" :
+      "border-slate-100"
+    )}>
+      <div className="flex items-start justify-between gap-2 mb-1">
+        <p className={cn("font-bold text-slate-800", compact ? "text-[10px]" : "text-xs")}>{fn.title}</p>
+        <span className={cn("shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase",
+          fn.type === "debt" ? "bg-purple-100 text-purple-700" :
+          fn.type === "contingency" ? "bg-red-100 text-red-700" :
+          fn.type === "tax" ? "bg-cyan-100 text-cyan-700" :
+          fn.type === "revenue" ? "bg-emerald-100 text-emerald-700" :
+          fn.type === "segment" ? "bg-blue-100 text-blue-700" :
+          "bg-slate-100 text-slate-500"
+        )}>{fn.type}</span>
+      </div>
+      <p className={cn("leading-relaxed text-slate-600", compact ? "text-[10px]" : "text-[11px]")}>{fn.summary}</p>
+    </div>
   );
 }
 

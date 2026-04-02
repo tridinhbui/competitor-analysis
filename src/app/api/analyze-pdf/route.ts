@@ -171,6 +171,46 @@ ADJUSTED METRICS: Include ALL non-GAAP reconciliations found. Values in USD mill
 
 Return empty arrays if no relevant content found. Do NOT hallucinate.`;
 
+const SEGMENT_PROMPT = `You are a financial data extraction engine. Extract SEGMENT-LEVEL financial data from this 10-Q/10-K text.
+
+Return ONLY valid JSON (no markdown):
+{
+  "segments": [
+    {
+      "segmentName": "Beef",
+      "segmentType": "business",
+      "revenue": 5234,
+      "operatingIncome": 123,
+      "depreciation": null,
+      "capitalExpenditures": null,
+      "totalAssets": null,
+      "volumeUnits": null,
+      "volumeUnitType": null
+    }
+  ],
+  "intercompanyEliminations": {
+    "revenue": -500,
+    "operatingIncome": -10
+  },
+  "corporateAndOther": {
+    "operatingIncome": -200
+  }
+}
+
+RULES:
+- ALL values in USD millions. If filing uses thousands, divide by 1000.
+- Parenthesized numbers (1,234) = NEGATIVE.
+- segmentType: "business" for product/division segments (Beef, Pork, Chicken, Prepared Foods), "channel" for distribution channels (Retail, Foodservice), "geography" for regions.
+- volumeUnitType: "head" for animals processed/slaughtered, "cwt" for hundredweight, "lbs" for pounds, "cases" for product cases. Set to null if not available.
+- volumeUnits: in thousands. E.g. if filing says "8.1 million head", put 8100.
+- Include intersegment eliminations and corporate/other if shown as separate line items.
+- Extract ALL segments shown in the filing's segment disclosure tables.
+- Look for segment data in: "Segment Results", "Operating Segments", "Results of Operations by Segment", notes to financial statements.
+- Operating income may be called "segment profit", "segment income", "operating profit", or "income from operations".
+- Do NOT invent segments or numbers. Only extract what exists.
+- If no segment data is found, return {"segments": []}.`;
+
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -199,6 +239,22 @@ interface QualExtraction {
   }>;
 }
 
+interface SegmentExtraction {
+  segments?: Array<{
+    segmentName: string;
+    segmentType?: "business" | "channel" | "geography";
+    revenue: number | null;
+    operatingIncome: number | null;
+    depreciation?: number | null;
+    capitalExpenditures?: number | null;
+    totalAssets?: number | null;
+    volumeUnits?: number | null;
+    volumeUnitType?: "head" | "cwt" | "lbs" | "cases" | null;
+  }>;
+  intercompanyEliminations?: { revenue?: number | null; operatingIncome?: number | null };
+  corporateAndOther?: { operatingIncome?: number | null };
+}
+
 // ---------------------------------------------------------------------------
 // Section detection — find the right text for each AI call
 // ---------------------------------------------------------------------------
@@ -219,6 +275,7 @@ function extractSections(text: string): {
   bsText: string;
   isCfText: string;
   qualText: string;
+  segmentText: string;
 } {
   const bsText = findSection(text, [
     /(?:condensed\s+)?(?:consolidated\s+)?balance\s+sheet/i,
@@ -244,13 +301,23 @@ function extractSections(text: string): {
     /notes\s+to\s+(?:the\s+)?(?:condensed\s+)?(?:consolidated\s+)?financial\s+statements/i,
   ], 20_000);
 
+  const segText = findSection(text, [
+    /(?:segment|operating\s+segments?)\s+(?:results|information|data|reporting)/i,
+    /results\s+of\s+operations\s+(?:by|for)\s+(?:each\s+)?segment/i,
+    /segment\s+(?:financial\s+)?(?:results|performance)/i,
+    /(?:reportable\s+)?segments/i,
+  ], 15_000);
+
   // Combine IS + CF for the income/cashflow call
   const isCfText = [isText, cfText].filter(Boolean).join("\n\n---\n\n");
 
   // Combine MD&A + Notes for qualitative call
   const qualText = [mdaText, notesText].filter(Boolean).join("\n\n---\n\n");
 
-  return { bsText, isCfText, qualText };
+  // Segment text — combine segment section + MD&A (often has segment breakdowns)
+  const segmentText = [segText, mdaText].filter(Boolean).join("\n\n---\n\n");
+
+  return { bsText, isCfText, qualText, segmentText };
 }
 
 // ---------------------------------------------------------------------------
@@ -340,19 +407,21 @@ export async function POST(request: Request) {
   const model = process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini";
 
   // Split text into sections
-  const { bsText, isCfText, qualText } = extractSections(text);
+  const { bsText, isCfText, qualText, segmentText } = extractSections(text);
 
   // Fallback: if section detection found nothing, use the full text (truncated)
   const bsInput = bsText.length > 500 ? bsText : text.slice(0, 60_000);
   const isCfInput = isCfText.length > 500 ? isCfText : text.slice(0, 60_000);
   const qualInput = qualText.length > 500 ? qualText : text.slice(0, 40_000);
+  const segInput = segmentText.length > 300 ? segmentText : text.slice(0, 40_000);
 
   try {
-    // Run 3 AI calls in parallel
-    const [bsRaw, isCfRaw, qualRaw] = await Promise.all([
+    // Run 4 AI calls in parallel
+    const [bsRaw, isCfRaw, qualRaw, segRaw] = await Promise.all([
       callOpenAI(apiKey, model, BS_PROMPT, `Extract balance sheet data:\n\n${bsInput}`, 4000),
       callOpenAI(apiKey, model, IS_CF_PROMPT, `Extract income statement and cash flow data:\n\n${isCfInput}`, 4000),
       callOpenAI(apiKey, model, QUALITATIVE_PROMPT, `Extract qualitative insights:\n\n${qualInput}`, 4000),
+      callOpenAI(apiKey, model, SEGMENT_PROMPT, `Extract segment data:\n\n${segInput}`, 3000),
     ]);
 
     // Parse BS
@@ -371,6 +440,12 @@ export async function POST(request: Request) {
     let qualExtraction: QualExtraction = {};
     if (qualRaw) {
       try { qualExtraction = JSON.parse(qualRaw); } catch { /* ignore */ }
+    }
+
+    // Parse Segments
+    let segExtraction: SegmentExtraction = {};
+    if (segRaw) {
+      try { segExtraction = JSON.parse(segRaw); } catch { /* ignore */ }
     }
 
     const period = bsExtraction.periodEnd ?? new Date().toISOString().slice(0, 10);
@@ -435,6 +510,39 @@ export async function POST(request: Request) {
 
     if (qualExtraction.adjustedMetrics && Array.isArray(qualExtraction.adjustedMetrics)) {
       analysis.adjustedMetrics = qualExtraction.adjustedMetrics;
+    }
+
+    // Attach segments
+    if (segExtraction.segments && Array.isArray(segExtraction.segments) && segExtraction.segments.length > 0) {
+      const validVolumeTypes = new Set(["head", "cwt", "lbs", "cases"]);
+      analysis.segments = segExtraction.segments.map((seg) => {
+        const revenue = seg.revenue != null ? Math.round(Number(seg.revenue)) : null;
+        const operatingIncome = seg.operatingIncome != null ? Math.round(Number(seg.operatingIncome)) : null;
+        const opMargin = revenue && operatingIncome ? Math.round((operatingIncome / revenue) * 1000) / 10 : null;
+        const volType = seg.volumeUnitType && validVolumeTypes.has(seg.volumeUnitType) ? seg.volumeUnitType : null;
+        const volUnits = seg.volumeUnits != null ? Number(seg.volumeUnits) : null;
+        const revPerUnit = volUnits && volUnits > 0 && revenue ? Math.round((revenue / volUnits) * 100) / 100 : null;
+        const opPerUnit = volUnits && volUnits > 0 && operatingIncome ? Math.round((operatingIncome / volUnits) * 100) / 100 : null;
+
+        return {
+          segmentName: seg.segmentName || "Unknown Segment",
+          segmentType: (seg.segmentType === "business" || seg.segmentType === "channel" || seg.segmentType === "geography") ? seg.segmentType : "business" as const,
+          revenue,
+          costOfRevenue: null,
+          grossProfit: null,
+          sgaExpense: null,
+          operatingIncome,
+          operatingMargin: opMargin,
+          depreciation: seg.depreciation != null ? Math.round(Number(seg.depreciation)) : null,
+          capitalExpenditures: seg.capitalExpenditures != null ? Math.round(Number(seg.capitalExpenditures)) : null,
+          totalAssets: seg.totalAssets != null ? Math.round(Number(seg.totalAssets)) : null,
+          intercompanyEliminations: null,
+          volumeUnits: volUnits,
+          volumeUnitType: volType as import("@/types/segments").VolumeUnitType | null,
+          revenuePerUnit: revPerUnit,
+          operatingIncomePerUnit: opPerUnit,
+        };
+      });
     }
 
     return NextResponse.json({ analysis });

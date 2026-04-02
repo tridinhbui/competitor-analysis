@@ -23,6 +23,7 @@ const LINE_BLOCK_TYPES = new Set([
   "sga-trend",
   "unit-economics-trend",
   "margin-gap-per-unit",
+  "sga-comparison",
 ]);
 
 // Block types that use BAR with possible LINE overlay
