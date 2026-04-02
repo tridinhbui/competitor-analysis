@@ -907,9 +907,9 @@ function InsightsTab({ result }: { result: FullAnalysis }) {
 
   const ticker = result.meta.ticker;
 
-  // Current ticker's historical rows (sorted chronologically)
+  // Current ticker's historical rows (sorted chronologically, exclude TTM)
   const historyRows = useMemo(() =>
-    allRows.filter(r => r.ticker === ticker).sort((a, b) => a.periodEnd.localeCompare(b.periodEnd)),
+    allRows.filter(r => r.ticker === ticker && r.periodEnd !== "TTM").sort((a, b) => a.periodEnd.localeCompare(b.periodEnd)),
     [allRows, ticker]
   );
 
