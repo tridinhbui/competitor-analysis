@@ -84,16 +84,35 @@ export async function fetchLatestFilingText(
 
 function stripHtml(html: string): string {
   return html
+    // Remove style and script blocks entirely
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ")
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ")
+    // Preserve table structure: add delimiters around cells/rows
+    .replace(/<\/tr\s*>/gi, "\n")
+    .replace(/<\/th\s*>/gi, " | ")
+    .replace(/<\/td\s*>/gi, " | ")
+    .replace(/<tr[^>]*>/gi, "")
+    .replace(/<th[^>]*>/gi, "")
+    .replace(/<td[^>]*>/gi, "")
+    // Preserve line breaks
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<\/div>/gi, "\n")
+    .replace(/<\/li>/gi, "\n")
+    .replace(/<\/h[1-6]>/gi, "\n\n")
+    // Remove all remaining tags
     .replace(/<[^>]+>/g, " ")
+    // Decode HTML entities
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
-    .replace(/&#\d+;/g, " ")
-    .replace(/\s{3,}/g, "\n\n")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    // Clean up whitespace but preserve table pipe delimiters
+    .replace(/[ \t]+/g, " ")
+    .replace(/ *\| */g, " | ")
+    .replace(/\n{4,}/g, "\n\n\n")
     .trim();
 }
 
@@ -341,27 +360,48 @@ Rules:
 // ---------------------------------------------------------------------------
 
 function extractSegmentSection(text: string): string {
-  const patterns = [
+  const sections: string[] = [];
+
+  // Pattern 1: Explicit segment section headers
+  const segPatterns = [
     /(?:segment|operating\s+segments?)\s+(?:results|information|data|reporting)/i,
     /results\s+of\s+operations\s+(?:by|for)\s+(?:each\s+)?segment/i,
     /segment\s+(?:financial\s+)?(?:results|performance)/i,
-    /(?:reportable\s+)?segments/i,
   ];
-
-  for (const re of patterns) {
+  for (const re of segPatterns) {
     const idx = text.search(re);
     if (idx !== -1) {
-      return text.slice(idx, idx + 15_000);
+      sections.push(text.slice(Math.max(0, idx - 200), idx + 20_000));
+      break;
     }
   }
 
-  // Fallback: try MD&A which often contains segment breakdowns
-  const mdaIdx = text.search(/(?:management[^\n]{0,20}discussion|results\s+of\s+operations)/i);
-  if (mdaIdx !== -1) {
-    return text.slice(mdaIdx, mdaIdx + 15_000);
+  // Pattern 2: Note about segments in financial statements
+  const noteIdx = text.search(/note\s+\d+[^\n]*segment/i);
+  if (noteIdx !== -1) {
+    sections.push(text.slice(noteIdx, noteIdx + 15_000));
   }
 
-  return "";
+  // Pattern 3: Tables with segment names (Beef, Pork, Chicken, Prepared)
+  const segTableIdx = text.search(/(?:beef|pork|chicken|prepared\s+foods?|international)[^\n]*\|[^\n]*\d/i);
+  if (segTableIdx !== -1) {
+    // Go back to find the table header
+    const startIdx = Math.max(0, segTableIdx - 500);
+    sections.push(text.slice(startIdx, segTableIdx + 10_000));
+  }
+
+  // Pattern 4: MD&A with segment breakdowns
+  const mdaIdx = text.search(/(?:management[^\n]{0,20}discussion|results\s+of\s+operations)/i);
+  if (mdaIdx !== -1 && sections.length === 0) {
+    sections.push(text.slice(mdaIdx, mdaIdx + 25_000));
+  }
+
+  if (sections.length === 0) return "";
+
+  // Combine all found sections, deduplicated by taking unique chunks
+  const combined = sections.join("\n\n---SECTION BREAK---\n\n");
+  // Limit total length to avoid token limits
+  return combined.slice(0, 40_000);
 }
 
 interface SegmentExtractionResult {
@@ -381,6 +421,12 @@ interface SegmentExtractionResult {
 }
 
 const SEGMENT_EXTRACT_PROMPT = `You are a financial data extraction engine. Extract SEGMENT-LEVEL financial data from this SEC 10-Q/10-K filing text.
+
+The text may contain pipe-delimited tables like:
+  Beef | 5,234 | 123 | 2.3%
+  Pork | 1,456 | (89) | (6.1%)
+
+Or plain text tables with spaces. Read the COLUMN HEADERS to determine which numbers are revenue vs operating income vs other metrics.
 
 Return ONLY valid JSON (no markdown):
 {
@@ -406,18 +452,19 @@ Return ONLY valid JSON (no markdown):
   }
 }
 
-RULES:
-- ALL values in USD millions. If filing uses thousands, divide by 1000.
-- Parenthesized numbers (1,234) = NEGATIVE.
-- segmentType: "business" for product/division segments (Beef, Pork, Chicken, Prepared Foods), "channel" for distribution channels (Retail, Foodservice), "geography" for regions.
-- volumeUnitType: "head" for animals processed/slaughtered, "cwt" for hundredweight, "lbs" for pounds, "cases" for product cases. Set to null if not available.
-- volumeUnits: in thousands. E.g. if filing says "8.1 million head", put 8100.
-- Include intersegment eliminations and corporate/other if shown as separate line items.
-- Extract ALL segments shown in the filing's segment disclosure tables.
-- Look for segment data in: "Segment Results", "Operating Segments", "Results of Operations by Segment", notes to financial statements.
-- Operating income may be called "segment profit", "segment income", "operating profit", or "income from operations".
-- Do NOT invent segments or numbers. Only extract what exists.
-- If no segment data is found, return {"segments": []}.`;
+CRITICAL RULES:
+- ALL values in USD millions. If filing uses "in thousands" or "(in thousands)", divide by 1000. If billions, multiply by 1000.
+- Parenthesized numbers like (1,234) = NEGATIVE values.
+- Remove commas from numbers: "5,234" → 5234.
+- Tables may have multiple periods (columns). Extract the MOST RECENT period only (usually the first data column or the column for "Three Months Ended [most recent date]").
+- segmentType: "business" for product/division segments (Beef, Pork, Chicken, Prepared Foods), "channel" for distribution (Retail, Foodservice), "geography" for regions.
+- volumeUnitType: "head" for animals slaughtered, "cwt" for hundredweight, "lbs" for pounds, "cases" for cases. null if not available.
+- volumeUnits: in thousands. "8.1 million head" → 8100.
+- Look for: "Sales" or "Net Sales" or "Revenue" → revenue field. "Operating Income" or "Segment Profit" or "Income from Operations" → operatingIncome field.
+- Include intersegment eliminations and corporate/other if shown.
+- Do NOT invent segments or numbers. Only extract what exists in the text.
+- If no segment data is found, return {"segments": []}.
+- IMPORTANT: If you see segment names but CANNOT find their financial data, still return {"segments": []} rather than segments with all null values.`;
 
 export async function extractSegments(
   text: string,

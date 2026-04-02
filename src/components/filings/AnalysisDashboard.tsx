@@ -913,6 +913,30 @@ function InsightsTab({ result }: { result: FullAnalysis }) {
     [allRows, ticker]
   );
 
+  // ── Fetch segment history for trend charts
+  interface SegmentQuarter {
+    periodEnd: string;
+    quarterLabel: string;
+    segments: Array<{
+      segmentName: string;
+      revenue: number | null;
+      operatingIncome: number | null;
+      operatingMargin: number | null;
+      revenuePerUnit: number | null;
+      operatingIncomePerUnit: number | null;
+    }>;
+  }
+  const [segmentHistory, setSegmentHistory] = useState<SegmentQuarter[]>([]);
+  useEffect(() => {
+    if (!ticker || ticker === "UNKNOWN") return;
+    fetch(`/api/segment-history?ticker=${encodeURIComponent(ticker)}`)
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { quarters?: SegmentQuarter[] } | null) => {
+        if (d?.quarters) setSegmentHistory(d.quarters);
+      })
+      .catch(() => {});
+  }, [ticker]);
+
   // ── TTM computation: sum last 4 quarters for flow metrics, latest for stock metrics
   const ttm = useMemo(() => {
     if (historyRows.length < 4) return null;
@@ -1144,8 +1168,27 @@ function InsightsTab({ result }: { result: FullAnalysis }) {
   const adjustedMetrics = result.adjustedMetrics ?? [];
   const narrative = result.earningsNarrative;
 
-  // ── Valuation Multiples (needs market cap input)
+  // ── Valuation Multiples (auto-fetch or manual market cap)
   const [marketCapInput, setMarketCapInput] = useState("");
+  const [marketCapLoading, setMarketCapLoading] = useState(false);
+  const [stockPrice, setStockPrice] = useState<number | null>(null);
+
+  // Auto-fetch market cap on mount
+  useEffect(() => {
+    if (!ticker || ticker === "UNKNOWN") return;
+    setMarketCapLoading(true);
+    fetch(`/api/market-cap?ticker=${encodeURIComponent(ticker)}`)
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { marketCapM?: number; price?: number } | null) => {
+        if (d?.marketCapM) {
+          setMarketCapInput(String(d.marketCapM));
+          setStockPrice(d.price ?? null);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setMarketCapLoading(false));
+  }, [ticker]);
+
   const marketCap = useMemo(() => {
     const v = parseFloat(marketCapInput);
     return isNaN(v) || v <= 0 ? null : v;
@@ -1438,6 +1481,103 @@ function InsightsTab({ result }: { result: FullAnalysis }) {
         );
       })()}
 
+      {/* ── Segment Trend Charts (if multi-quarter segment data) ── */}
+      {segmentHistory.length >= 2 && (() => {
+        // Collect all unique segment names across quarters
+        const segNames = [...new Set(segmentHistory.flatMap(q => q.segments.map(s => s.segmentName)))];
+        // Build chart data: { quarter, seg1_rev, seg1_margin, seg2_rev, ... }
+        const revData = segmentHistory.map(q => {
+          const point: Record<string, string | number | null> = { q: q.quarterLabel || q.periodEnd.slice(0, 7) };
+          for (const name of segNames) {
+            const seg = q.segments.find(s => s.segmentName === name);
+            point[name] = seg?.revenue ?? null;
+          }
+          return point;
+        });
+        const marginData = segmentHistory.map(q => {
+          const point: Record<string, string | number | null> = { q: q.quarterLabel || q.periodEnd.slice(0, 7) };
+          for (const name of segNames) {
+            const seg = q.segments.find(s => s.segmentName === name);
+            point[name] = seg?.operatingMargin ?? null;
+          }
+          return point;
+        });
+        const opData = segmentHistory.map(q => {
+          const point: Record<string, string | number | null> = { q: q.quarterLabel || q.periodEnd.slice(0, 7) };
+          for (const name of segNames) {
+            const seg = q.segments.find(s => s.segmentName === name);
+            point[name] = seg?.operatingIncome ?? null;
+          }
+          return point;
+        });
+
+        return (
+          <Section title={`Segment Trends (${segmentHistory.length} quarters × ${segNames.length} segments)`}>
+            <div className="grid gap-4 lg:grid-cols-2">
+              {/* Segment Revenue Trends */}
+              <div>
+                <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Segment Revenue ($M)</p>
+                <div className="h-52">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={revData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                      <XAxis dataKey="q" tick={{ fontSize: 9 }} angle={-30} textAnchor="end" height={40} />
+                      <YAxis tick={{ fontSize: 9 }} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={(v) => `$${Number(v).toLocaleString()}M`} />
+                      {segNames.map((name, i) => (
+                        <Line key={name} type="monotone" dataKey={name} name={name}
+                          stroke={PIE_PALETTE[i % PIE_PALETTE.length]} strokeWidth={2}
+                          dot={{ r: 3 }} connectNulls />
+                      ))}
+                      <Legend wrapperStyle={{ fontSize: 9 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+              {/* Segment OP Margin Trends */}
+              <div>
+                <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Segment OP Margin (%)</p>
+                <div className="h-52">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={marginData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                      <XAxis dataKey="q" tick={{ fontSize: 9 }} angle={-30} textAnchor="end" height={40} />
+                      <YAxis tick={{ fontSize: 9 }} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${Number(v).toFixed(1)}%`} />
+                      {segNames.map((name, i) => (
+                        <Line key={name} type="monotone" dataKey={name} name={name}
+                          stroke={PIE_PALETTE[i % PIE_PALETTE.length]} strokeWidth={2}
+                          dot={{ r: 3 }} connectNulls />
+                      ))}
+                      <Legend wrapperStyle={{ fontSize: 9 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+              {/* Segment OP Income Trends */}
+              <div className="lg:col-span-2">
+                <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Segment Operating Income ($M)</p>
+                <div className="h-52">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={opData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                      <XAxis dataKey="q" tick={{ fontSize: 9 }} angle={-30} textAnchor="end" height={40} />
+                      <YAxis tick={{ fontSize: 9 }} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={(v) => `$${Number(v).toLocaleString()}M`} />
+                      {segNames.map((name, i) => (
+                        <Bar key={name} dataKey={name} name={name}
+                          fill={PIE_PALETTE[i % PIE_PALETTE.length]} radius={[3, 3, 0, 0]} />
+                      ))}
+                      <Legend wrapperStyle={{ fontSize: 9 }} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          </Section>
+        );
+      })()}
+
       {/* ── Historical Trend Charts (if multi-quarter data) ── */}
       {historyRows.length >= 2 && (
         <Section title={`Quarterly Trends (${historyRows.length} quarters)`}>
@@ -1557,6 +1697,107 @@ function InsightsTab({ result }: { result: FullAnalysis }) {
                   </p>
                 </div>
               ))}
+            </div>
+          </Section>
+        );
+      })()}
+
+      {/* ── YoY Comparison (same quarter, prior year) ── */}
+      {historyRows.length >= 5 && (() => {
+        // Match current quarter to same quarter from prior year via quarter label (e.g. Q1 FY2025 → Q1 FY2024)
+        const curr = historyRows[historyRows.length - 1];
+        // Try to find same fiscal quarter from ~4 quarters ago
+        const currQ = curr.quarterLabel?.match(/Q(\d)/)?.[1];
+        let yago: DataSourceRow | null = null;
+        if (currQ) {
+          // Search backwards for matching quarter label with different year
+          for (let i = historyRows.length - 2; i >= 0; i--) {
+            const q = historyRows[i].quarterLabel?.match(/Q(\d)/)?.[1];
+            if (q === currQ && historyRows[i].periodEnd !== curr.periodEnd) {
+              yago = historyRows[i];
+              break;
+            }
+          }
+        }
+        // Fallback: take the row ~4 positions back
+        if (!yago && historyRows.length >= 5) {
+          yago = historyRows[historyRows.length - 5];
+        }
+        if (!yago) return null;
+
+        const yoy = (c: number | null, p: number | null) => {
+          if (c == null || p == null || p === 0) return null;
+          return Math.round(((c - p) / Math.abs(p)) * 1000) / 10;
+        };
+        const delta = (c: number | null, p: number | null) => {
+          if (c == null || p == null) return null;
+          return Math.round((c - p) * 10) / 10;
+        };
+
+        const metrics = [
+          { label: "Revenue", change: yoy(curr.revenue, yago.revenue), curr: curr.revenue, prev: yago.revenue, type: "pct" as const },
+          { label: "Gross Profit", change: yoy(curr.grossProfit, yago.grossProfit), curr: curr.grossProfit, prev: yago.grossProfit, type: "pct" as const },
+          { label: "OP Income", change: yoy(curr.operatingIncome, yago.operatingIncome), curr: curr.operatingIncome, prev: yago.operatingIncome, type: "pct" as const },
+          { label: "Net Income", change: yoy(curr.netIncome, yago.netIncome), curr: curr.netIncome, prev: yago.netIncome, type: "pct" as const },
+          { label: "Gross Margin", change: delta(curr.grossMargin, yago.grossMargin), curr: curr.grossMargin, prev: yago.grossMargin, type: "bps" as const },
+          { label: "OP Margin", change: delta(curr.operatingMargin, yago.operatingMargin), curr: curr.operatingMargin, prev: yago.operatingMargin, type: "bps" as const },
+          { label: "Net Margin", change: delta(curr.netMargin, yago.netMargin), curr: curr.netMargin, prev: yago.netMargin, type: "bps" as const },
+          { label: "D/E Ratio", change: delta(curr.debtToEquity, yago.debtToEquity), curr: curr.debtToEquity, prev: yago.debtToEquity, type: "ratio" as const },
+          { label: "FCF", change: yoy(curr.freeCashFlow, yago.freeCashFlow), curr: curr.freeCashFlow, prev: yago.freeCashFlow, type: "pct" as const },
+          { label: "EPS Diluted", change: yoy(curr.epsDiluted, yago.epsDiluted), curr: curr.epsDiluted, prev: yago.epsDiluted, type: "pct" as const },
+        ].filter(m => m.change != null);
+
+        if (metrics.length === 0) return null;
+
+        return (
+          <Section title={`YoY Comparison: ${yago.quarterLabel ?? yago.periodEnd} → ${curr.quarterLabel ?? curr.periodEnd}`}>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b-2 border-slate-200 text-slate-500">
+                    <th className="px-3 py-2 text-left font-semibold">Metric</th>
+                    <th className="px-3 py-2 text-right font-semibold">{yago.quarterLabel ?? yago.periodEnd}</th>
+                    <th className="px-3 py-2 text-right font-semibold">{curr.quarterLabel ?? curr.periodEnd}</th>
+                    <th className="px-3 py-2 text-right font-semibold">Change</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {metrics.map((m, i) => {
+                    const isPositive = m.type === "ratio"
+                      ? (m.change! < 0) // lower D/E is better
+                      : (m.change! > 0);
+                    const isNegative = m.type === "ratio"
+                      ? (m.change! > 0.2)
+                      : (m.change! < -5);
+                    const changeStr = m.type === "pct"
+                      ? `${m.change! > 0 ? "+" : ""}${m.change}%`
+                      : m.type === "bps"
+                      ? `${m.change! > 0 ? "+" : ""}${(m.change! * 100).toFixed(0)} bps`
+                      : `${m.change! > 0 ? "+" : ""}${m.change!.toFixed(2)}x`;
+                    const fmtVal = (v: number | null) =>
+                      m.type === "pct" ? fmt(v) :
+                      m.type === "bps" ? fmtPct(v) :
+                      fmtX(v);
+                    return (
+                      <tr key={i} className="border-b border-slate-100">
+                        <td className="px-3 py-2 font-medium text-slate-700">{m.label}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-slate-500">{fmtVal(m.prev)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums font-semibold">{fmtVal(m.curr)}</td>
+                        <td className={cn("px-3 py-2 text-right tabular-nums font-bold",
+                          isPositive ? "text-emerald-600" : isNegative ? "text-red-500" : "text-slate-600"
+                        )}>
+                          <span className="inline-flex items-center gap-0.5">
+                            {isPositive ? <ArrowUpRight className="h-3 w-3" /> :
+                             isNegative ? <ArrowDownRight className="h-3 w-3" /> :
+                             <Minus className="h-3 w-3" />}
+                            {changeStr}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </Section>
         );
@@ -1724,7 +1965,7 @@ function InsightsTab({ result }: { result: FullAnalysis }) {
       {/* ── Valuation Multiples ── */}
       <Section title="Valuation Multiples">
         <div className="space-y-3">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <label className="text-xs font-semibold text-slate-600 whitespace-nowrap">Market Cap ($M):</label>
             <input
               type="number"
@@ -1733,7 +1974,14 @@ function InsightsTab({ result }: { result: FullAnalysis }) {
               placeholder="e.g. 25000"
               className="w-40 rounded-lg border border-slate-300 px-3 py-1.5 text-sm tabular-nums focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200 focus:outline-none"
             />
-            {!marketCap && <span className="text-xs text-slate-400">Enter market cap to compute multiples</span>}
+            {marketCapLoading && <span className="text-xs text-blue-500 animate-pulse">Fetching live data...</span>}
+            {!marketCapLoading && stockPrice != null && (
+              <span className="text-xs text-slate-500">
+                Stock: <span className="font-semibold text-slate-700">${stockPrice.toFixed(2)}</span>
+                {marketCap && <> | MCap: <span className="font-semibold text-slate-700">${(marketCap / 1000).toFixed(1)}B</span></>}
+              </span>
+            )}
+            {!marketCapLoading && !marketCap && !stockPrice && <span className="text-xs text-slate-400">Enter market cap or wait for auto-fetch</span>}
           </div>
           {valuation && (
             <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-slate-200 bg-slate-200 sm:grid-cols-4">
