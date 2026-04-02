@@ -3,7 +3,7 @@
  * then uses OpenAI to extract notable footnotes and non-GAAP adjusted metrics.
  */
 
-import type { FootnoteItem, AdjustedMetric, EarningsNarrative } from "@/types/analysis";
+import type { FootnoteItem, AdjustedMetric, EarningsNarrative, NonRecurringItem } from "@/types/analysis";
 import type { SegmentData, VolumeUnitType } from "@/types/segments";
 
 const SEC_UA =
@@ -103,11 +103,18 @@ function stripHtml(html: string): string {
     // Remove all remaining tags
     .replace(/<[^>]+>/g, " ")
     // Decode HTML entities
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&#160;/g, " ")
+    .replace(/&#8212;/g, "—")
+    .replace(/&#8211;/g, "–")
+    .replace(/&#8220;/g, '"')
+    .replace(/&#8221;/g, '"')
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&mdash;/gi, "—")
+    .replace(/&ndash;/gi, "–")
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
     // Clean up whitespace but preserve table pipe delimiters
     .replace(/[ \t]+/g, " ")
@@ -473,11 +480,17 @@ export async function extractSegments(
 ): Promise<SegmentData[]> {
   const segText = extractSegmentSection(text);
 
-  if (!segText || segText.length < 300) {
+  if (!segText || segText.length < 200) {
+    console.log("[extractSegments] No segment section found or too short:", segText.length);
     return [];
   }
 
+  console.log("[extractSegments] Found segment text:", segText.length, "chars. First 500:", segText.slice(0, 500));
+
   try {
+    // Truncate to fit token limits (~4 chars/token, 40k chars ≈ 10k tokens)
+    const truncated = segText.slice(0, 35_000);
+
     const res = await fetch(OPENAI_API, {
       method: "POST",
       headers: {
@@ -488,7 +501,7 @@ export async function extractSegments(
         model,
         messages: [
           { role: "system", content: SEGMENT_EXTRACT_PROMPT },
-          { role: "user", content: `Extract segment data:\n\n${segText}` },
+          { role: "user", content: `Extract segment financial data from this SEC filing text. Pay attention to pipe-delimited tables (|) and column headers.\n\n${truncated}` },
         ],
         temperature: 0.1,
         max_tokens: 3000,
@@ -497,12 +510,16 @@ export async function extractSegments(
       signal: AbortSignal.timeout(45_000),
     });
 
-    if (!res.ok) return [];
+    if (!res.ok) {
+      console.log("[extractSegments] OpenAI call failed:", res.status);
+      return [];
+    }
 
     const data = (await res.json()) as {
       choices?: Array<{ message?: { content?: string } }>;
     };
     const content = data.choices?.[0]?.message?.content ?? "{}";
+    console.log("[extractSegments] AI response:", content.slice(0, 500));
     const parsed = JSON.parse(content) as SegmentExtractionResult;
 
     if (!parsed.segments || !Array.isArray(parsed.segments) || parsed.segments.length === 0) {
@@ -511,44 +528,244 @@ export async function extractSegments(
 
     const validVolumeTypes = new Set<string>(["head", "cwt", "lbs", "cases"]);
 
-    return parsed.segments.map((seg) => {
-      const revenue = seg.revenue != null ? Math.round(Number(seg.revenue)) : null;
-      const operatingIncome = seg.operatingIncome != null ? Math.round(Number(seg.operatingIncome)) : null;
-      const opMargin = revenue && operatingIncome
-        ? Math.round((operatingIncome / revenue) * 1000) / 10
-        : null;
-      const volType = seg.volumeUnitType && validVolumeTypes.has(seg.volumeUnitType)
-        ? seg.volumeUnitType as VolumeUnitType
-        : null;
-      const volUnits = seg.volumeUnits != null ? Number(seg.volumeUnits) : null;
-      const revPerUnit = volUnits && volUnits > 0 && revenue
-        ? Math.round((revenue / volUnits) * 100) / 100
-        : null;
-      const opPerUnit = volUnits && volUnits > 0 && operatingIncome
-        ? Math.round((operatingIncome / volUnits) * 100) / 100
-        : null;
+    const results = parsed.segments
+      .map((seg) => {
+        const revenue = seg.revenue != null ? Math.round(Number(seg.revenue)) : null;
+        const operatingIncome = seg.operatingIncome != null ? Math.round(Number(seg.operatingIncome)) : null;
+        const opMargin = revenue && operatingIncome
+          ? Math.round((operatingIncome / revenue) * 1000) / 10
+          : null;
+        const volType = seg.volumeUnitType && validVolumeTypes.has(seg.volumeUnitType)
+          ? seg.volumeUnitType as VolumeUnitType
+          : null;
+        const volUnits = seg.volumeUnits != null ? Number(seg.volumeUnits) : null;
+        const revPerUnit = volUnits && volUnits > 0 && revenue
+          ? Math.round((revenue / volUnits) * 100) / 100
+          : null;
+        const opPerUnit = volUnits && volUnits > 0 && operatingIncome
+          ? Math.round((operatingIncome / volUnits) * 100) / 100
+          : null;
 
-      return {
-        segmentName: seg.segmentName || "Unknown Segment",
-        segmentType: (seg.segmentType === "business" || seg.segmentType === "channel" || seg.segmentType === "geography")
-          ? seg.segmentType
-          : "business" as const,
-        revenue,
-        costOfRevenue: null,
-        grossProfit: null,
-        sgaExpense: null,
-        operatingIncome,
-        operatingMargin: opMargin,
-        depreciation: seg.depreciation != null ? Math.round(Number(seg.depreciation)) : null,
-        capitalExpenditures: seg.capitalExpenditures != null ? Math.round(Number(seg.capitalExpenditures)) : null,
-        totalAssets: seg.totalAssets != null ? Math.round(Number(seg.totalAssets)) : null,
-        intercompanyEliminations: null,
-        volumeUnits: volUnits,
-        volumeUnitType: volType,
-        revenuePerUnit: revPerUnit,
-        operatingIncomePerUnit: opPerUnit,
-      } satisfies SegmentData;
+        return {
+          segmentName: seg.segmentName || "Unknown Segment",
+          segmentType: (seg.segmentType === "business" || seg.segmentType === "channel" || seg.segmentType === "geography")
+            ? seg.segmentType
+            : "business" as const,
+          revenue,
+          costOfRevenue: null,
+          grossProfit: null,
+          sgaExpense: null,
+          operatingIncome,
+          operatingMargin: opMargin,
+          depreciation: seg.depreciation != null ? Math.round(Number(seg.depreciation)) : null,
+          capitalExpenditures: seg.capitalExpenditures != null ? Math.round(Number(seg.capitalExpenditures)) : null,
+          totalAssets: seg.totalAssets != null ? Math.round(Number(seg.totalAssets)) : null,
+          intercompanyEliminations: null,
+          volumeUnits: volUnits,
+          volumeUnitType: volType,
+          revenuePerUnit: revPerUnit,
+          operatingIncomePerUnit: opPerUnit,
+        } satisfies SegmentData;
+      })
+      // Filter out segments with NO financial data at all (just names with all nulls)
+      .filter(seg => seg.revenue != null || seg.operatingIncome != null);
+
+    console.log("[extractSegments] Extracted", results.length, "segments with data:", results.map(s => `${s.segmentName}: rev=${s.revenue}, op=${s.operatingIncome}`));
+    return results;
+  } catch (e) {
+    console.error("[extractSegments] Error:", e);
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 6. Extract non-recurring / special items for comparability adjustments
+// ---------------------------------------------------------------------------
+
+function extractAdjustmentSections(text: string): string {
+  const sections: string[] = [];
+
+  // Notes to financial statements — all of them (contains legal, restructuring, impairment)
+  const noteRegex = /(?:^|\n)\s*(?:NOTE|Note)\s+\d+[\s\-\u2014]+[^\n]{5,80}/gm;
+  const noteMatches: Array<{ index: number }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = noteRegex.exec(text)) !== null) {
+    noteMatches.push({ index: m.index });
+  }
+  for (let i = 0; i < Math.min(15, noteMatches.length); i++) {
+    const start = noteMatches[i].index;
+    const end = noteMatches[i + 1]?.index ?? start + 3000;
+    sections.push(text.slice(start, Math.min(end, start + 3000)));
+  }
+
+  // Non-GAAP reconciliation tables
+  const nonGaapPatterns = [
+    /non[\s-]?gaap.*reconcil/i,
+    /adjusted\s+(?:ebitda|operating|income|eps|earnings)/i,
+    /reconciliation\s+of\s+(?:gaap|non)/i,
+  ];
+  for (const re of nonGaapPatterns) {
+    const idx = text.search(re);
+    if (idx !== -1) {
+      sections.push(text.slice(Math.max(0, idx - 200), idx + 8_000));
+      break;
+    }
+  }
+
+  // Special charges / restructuring / impairment sections
+  const specialPatterns = [
+    /(?:restructuring|impairment|legal|litigation|settlement|antitrust)/i,
+    /(?:employee\s+retention\s+credit|erc)/i,
+    /(?:gain|loss)\s+on\s+(?:sale|disposal|divestiture)/i,
+    /(?:acquisition|merger)[\s-]related/i,
+    /(?:insurance|recovery|proceeds)/i,
+  ];
+  for (const re of specialPatterns) {
+    const idx = text.search(re);
+    if (idx !== -1) {
+      // Get surrounding context
+      const start = Math.max(0, idx - 300);
+      sections.push(text.slice(start, idx + 3000));
+    }
+  }
+
+  // MD&A section often discusses non-recurring items
+  const mdaIdx = text.search(/management[^\n]{0,20}discussion/i);
+  if (mdaIdx !== -1) {
+    sections.push(text.slice(mdaIdx, mdaIdx + 15_000));
+  }
+
+  return sections.join("\n\n---SECTION---\n\n").slice(0, 50_000);
+}
+
+const NON_RECURRING_PROMPT = `You are a forensic financial analyst. Your job is to identify ALL non-recurring, special, or unusual items in this SEC filing that impact comparability of financial results.
+
+These items should be EXCLUDED or ADJUSTED when doing quarter-over-quarter or peer-to-peer comparison.
+
+Return ONLY valid JSON (no markdown):
+{
+  "items": [
+    {
+      "label": "Short descriptive label (e.g. 'Antitrust settlement charge')",
+      "description": "2-3 sentence description: what happened, which note/section references it, and its P&L impact",
+      "amount": 200,
+      "impactedLine": "operatingIncome",
+      "category": "legal",
+      "companyAdjusts": true,
+      "adjustDirection": "add-back",
+      "confidence": "high",
+      "sourceRef": "Note 15 — Commitments and Contingencies"
+    }
+  ]
+}
+
+CATEGORIES TO LOOK FOR:
+1. "legal" — Antitrust settlements, litigation charges, legal accruals/reversals
+2. "restructuring" — Plant closures, severance, consolidation charges
+3. "impairment" — Goodwill/asset impairments, write-downs
+4. "gain-loss-disposal" — Gains/losses on sale of businesses, plants, assets
+5. "tax-adjustment" — One-time tax benefits/charges (valuation allowance changes, tax reform impacts)
+6. "insurance" — Insurance recoveries, fire/flood losses
+7. "erc" — Employee Retention Credits (COVID-era, often multi-quarter)
+8. "acquisition" — M&A-related costs, integration expenses, purchase accounting adjustments
+9. "other" — Any other non-recurring item
+
+RULES:
+- amount: In USD millions. POSITIVE = expense/charge (reduces income). NEGATIVE = gain/benefit (increases income).
+- impactedLine: Which P&L line is impacted:
+  - "operatingIncome" for charges above the operating line (most common)
+  - "netIncome" for below-the-line items (tax, interest-related)
+  - "revenue" for revenue-related adjustments
+  - "cogs" for cost of goods adjustments
+  - "sga" for SG&A adjustments
+  - "other" if unclear
+- adjustDirection: "add-back" means this charge should be ADDED BACK to get comparable operating income (most charges). "subtract" means it should be SUBTRACTED (gains/benefits that inflate income).
+- companyAdjusts: true if the company already excludes this in their own non-GAAP measures. false if they include it.
+- confidence: "high" if explicit $ amount in filing, "medium" if estimated from context, "low" if inferred.
+- sourceRef: The note number or section where you found this item.
+
+IMPORTANT:
+- Look at EVERY note for potential items, especially: Commitments/Contingencies, Restructuring, Goodwill, Segment info, Income Taxes, Other Income/Expense.
+- Look at the non-GAAP reconciliation table — it lists exactly what the company adjusts.
+- Look at MD&A for discussion of unusual items.
+- Include ALL items with $amount, even small ones ($1M+).
+- Do NOT include recurring items (regular D&A, stock-based comp unless it's unusual).
+- If no non-recurring items found, return {"items": []}.`;
+
+export async function extractNonRecurringItems(
+  text: string,
+  apiKey: string,
+  model: string
+): Promise<NonRecurringItem[]> {
+  const adjustmentText = extractAdjustmentSections(text);
+
+  if (!adjustmentText || adjustmentText.length < 500) {
+    return [];
+  }
+
+  try {
+    const truncated = adjustmentText.slice(0, 45_000);
+
+    const res = await fetch(OPENAI_API, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: NON_RECURRING_PROMPT },
+          { role: "user", content: `Identify all non-recurring and special items in this SEC filing:\n\n${truncated}` },
+        ],
+        temperature: 0.1,
+        max_tokens: 4000,
+        response_format: { type: "json_object" },
+      }),
+      signal: AbortSignal.timeout(60_000),
     });
+
+    if (!res.ok) return [];
+
+    const data = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const content = data.choices?.[0]?.message?.content ?? "{}";
+    const parsed = JSON.parse(content) as {
+      items?: Array<{
+        label: string;
+        description: string;
+        amount: number;
+        impactedLine?: string;
+        category?: string;
+        companyAdjusts?: boolean;
+        adjustDirection?: string;
+        confidence?: string;
+        sourceRef?: string;
+      }>;
+    };
+
+    if (!parsed.items || !Array.isArray(parsed.items)) return [];
+
+    const validLines = new Set(["operatingIncome", "netIncome", "revenue", "cogs", "sga", "other"]);
+    const validCategories = new Set(["legal", "restructuring", "impairment", "gain-loss-disposal", "tax-adjustment", "insurance", "erc", "acquisition", "other"]);
+    const validDirections = new Set(["add-back", "subtract"]);
+    const validConfidence = new Set(["high", "medium", "low"]);
+
+    return parsed.items
+      .filter(item => item.label && item.amount != null && Math.abs(item.amount) >= 1)
+      .map((item, i) => ({
+        id: `nr-${i + 1}-${item.category ?? "other"}`,
+        label: item.label,
+        description: item.description || "",
+        amount: Math.round(Number(item.amount)),
+        impactedLine: (validLines.has(item.impactedLine ?? "") ? item.impactedLine : "operatingIncome") as NonRecurringItem["impactedLine"],
+        category: (validCategories.has(item.category ?? "") ? item.category : "other") as NonRecurringItem["category"],
+        companyAdjusts: item.companyAdjusts ?? false,
+        adjustDirection: (validDirections.has(item.adjustDirection ?? "") ? item.adjustDirection : "add-back") as NonRecurringItem["adjustDirection"],
+        confidence: (validConfidence.has(item.confidence ?? "") ? item.confidence : "medium") as NonRecurringItem["confidence"],
+        sourceRef: item.sourceRef || "",
+      }));
   } catch {
     return [];
   }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { assembleAnalysis } from "@/lib/analysisEngine";
+import { extractNonRecurringItems } from "@/lib/filingTextExtractor";
 import type { BSItem, FootnoteItem, EarningsNarrative } from "@/types/analysis";
 
 export const runtime = "nodejs";
@@ -416,12 +417,13 @@ export async function POST(request: Request) {
   const segInput = segmentText.length > 300 ? segmentText : text.slice(0, 40_000);
 
   try {
-    // Run 4 AI calls in parallel
-    const [bsRaw, isCfRaw, qualRaw, segRaw] = await Promise.all([
+    // Run 5 AI calls in parallel (4 extraction + 1 non-recurring)
+    const [bsRaw, isCfRaw, qualRaw, segRaw, nonRecurringItems] = await Promise.all([
       callOpenAI(apiKey, model, BS_PROMPT, `Extract balance sheet data:\n\n${bsInput}`, 4000),
       callOpenAI(apiKey, model, IS_CF_PROMPT, `Extract income statement and cash flow data:\n\n${isCfInput}`, 4000),
       callOpenAI(apiKey, model, QUALITATIVE_PROMPT, `Extract qualitative insights:\n\n${qualInput}`, 4000),
       callOpenAI(apiKey, model, SEGMENT_PROMPT, `Extract segment data:\n\n${segInput}`, 3000),
+      extractNonRecurringItems(text, apiKey, model),
     ]);
 
     // Parse BS
@@ -510,6 +512,11 @@ export async function POST(request: Request) {
 
     if (qualExtraction.adjustedMetrics && Array.isArray(qualExtraction.adjustedMetrics)) {
       analysis.adjustedMetrics = qualExtraction.adjustedMetrics;
+    }
+
+    // Attach non-recurring items
+    if (nonRecurringItems.length > 0) {
+      analysis.nonRecurringItems = nonRecurringItems;
     }
 
     // Attach segments

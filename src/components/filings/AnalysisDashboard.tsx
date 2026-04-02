@@ -793,9 +793,38 @@ function KpiCell({ label, value, highlight }: { label: string; value: string; hi
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (expanded) {
+    return (
+      <div className="fixed inset-0 z-50 overflow-auto bg-white p-6">
+        <div className="mx-auto max-w-7xl">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-bold uppercase tracking-wide text-slate-700">{title}</h3>
+            <button
+              onClick={() => setExpanded(false)}
+              className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 transition"
+            >
+              <XCircle className="h-3.5 w-3.5" /> Close
+            </button>
+          </div>
+          <div className="text-base">{children}</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="rounded-xl border border-slate-200/80 bg-white p-4">
-      <h4 className="mb-3 text-xs font-bold uppercase tracking-wide text-slate-500">{title}</h4>
+    <div className="rounded-xl border border-slate-200/80 bg-white p-4 group">
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="text-xs font-bold uppercase tracking-wide text-slate-500">{title}</h4>
+        <button
+          onClick={() => setExpanded(true)}
+          className="opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-semibold text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+        >
+          <ArrowUpRight className="h-3 w-3" /> Expand
+        </button>
+      </div>
       {children}
     </div>
   );
@@ -1402,7 +1431,7 @@ function InsightsTab({ result }: { result: FullAnalysis }) {
       </div>
 
       {/* ── Segment Analysis (Insights tab) ── */}
-      {result.segments && result.segments.length > 1 && (() => {
+      {result.segments && result.segments.length > 0 && (() => {
         const segs = result.segments!.filter(s => s.revenue != null && s.revenue > 0);
         const totalRev = segs.reduce((acc, s) => acc + (s.revenue ?? 0), 0);
         const pieData = segs.map((s, i) => ({
@@ -2252,6 +2281,150 @@ function InsightsTab({ result }: { result: FullAnalysis }) {
           </div>
         </div>
       </Section>
+
+      {/* ── Non-Recurring Items & Comparability Adjustments ── */}
+      {result.nonRecurringItems && result.nonRecurringItems.length > 0 && (() => {
+        const items = result.nonRecurringItems!;
+        const totalAddBack = items.filter(i => i.adjustDirection === "add-back").reduce((s, i) => s + Math.abs(i.amount), 0);
+        const totalSubtract = items.filter(i => i.adjustDirection === "subtract").reduce((s, i) => s + Math.abs(i.amount), 0);
+        const netAdjustment = totalAddBack - totalSubtract;
+        const reportedOP = inc.operatingIncome ?? 0;
+        const adjustedOP = reportedOP + netAdjustment;
+
+        const categoryLabels: Record<string, string> = {
+          legal: "Legal / Litigation",
+          restructuring: "Restructuring",
+          impairment: "Impairment / Write-down",
+          "gain-loss-disposal": "Gain/Loss on Disposal",
+          "tax-adjustment": "Tax Adjustment",
+          insurance: "Insurance",
+          erc: "Employee Retention Credit",
+          acquisition: "M&A Related",
+          other: "Other",
+        };
+        const confidenceColor: Record<string, string> = {
+          high: "bg-emerald-100 text-emerald-700",
+          medium: "bg-amber-100 text-amber-700",
+          low: "bg-slate-100 text-slate-500",
+        };
+
+        return (
+          <Section title={`Non-Recurring Adjustments (${items.length} items)`}>
+            <div className="space-y-4">
+              {/* Summary bar */}
+              <div className="grid gap-3 sm:grid-cols-4">
+                <div className="rounded-lg border border-slate-200 bg-white p-3 text-center">
+                  <p className="text-[9px] font-bold uppercase text-slate-400">Reported OP</p>
+                  <p className="text-lg font-black tabular-nums text-slate-900">{fmt(reportedOP)}</p>
+                </div>
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-center">
+                  <p className="text-[9px] font-bold uppercase text-emerald-500">Add-Backs</p>
+                  <p className="text-lg font-black tabular-nums text-emerald-700">+{fmt(totalAddBack)}</p>
+                </div>
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-center">
+                  <p className="text-[9px] font-bold uppercase text-red-400">Subtractions</p>
+                  <p className="text-lg font-black tabular-nums text-red-600">-{fmt(totalSubtract)}</p>
+                </div>
+                <div className="rounded-lg border-2 border-indigo-300 bg-indigo-50 p-3 text-center">
+                  <p className="text-[9px] font-bold uppercase text-indigo-500">Adjusted OP</p>
+                  <p className="text-lg font-black tabular-nums text-indigo-700">{fmt(Math.round(adjustedOP))}</p>
+                  {inc.revenue != null && inc.revenue > 0 && (
+                    <p className="text-[9px] text-indigo-400">{((adjustedOP / inc.revenue) * 100).toFixed(1)}% margin</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Items table */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b-2 border-slate-200 text-slate-500">
+                      <th className="px-2 py-2 text-left font-semibold">Item</th>
+                      <th className="px-2 py-2 text-left font-semibold">Category</th>
+                      <th className="px-2 py-2 text-right font-semibold">Amount</th>
+                      <th className="px-2 py-2 text-center font-semibold">Direction</th>
+                      <th className="px-2 py-2 text-center font-semibold">Co. Adj?</th>
+                      <th className="px-2 py-2 text-center font-semibold">Confidence</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)).map((item, i) => (
+                      <tr key={item.id || i} className="border-b border-slate-100 hover:bg-slate-50/50 group">
+                        <td className="px-2 py-2">
+                          <p className="font-medium text-slate-800">{item.label}</p>
+                          <p className="text-[10px] text-slate-400 max-w-xs truncate group-hover:whitespace-normal">{item.description}</p>
+                          {item.sourceRef && <p className="text-[9px] text-slate-300 italic">{item.sourceRef}</p>}
+                        </td>
+                        <td className="px-2 py-2">
+                          <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-slate-100 text-slate-600">
+                            {categoryLabels[item.category] ?? item.category}
+                          </span>
+                        </td>
+                        <td className={cn("px-2 py-2 text-right tabular-nums font-bold",
+                          item.amount > 0 ? "text-red-500" : "text-emerald-600"
+                        )}>
+                          {item.amount > 0 ? `($${Math.abs(item.amount).toLocaleString()}M)` : `$${Math.abs(item.amount).toLocaleString()}M`}
+                        </td>
+                        <td className="px-2 py-2 text-center">
+                          <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-bold",
+                            item.adjustDirection === "add-back" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"
+                          )}>
+                            {item.adjustDirection === "add-back" ? "Add Back" : "Subtract"}
+                          </span>
+                        </td>
+                        <td className="px-2 py-2 text-center">
+                          {item.companyAdjusts ? (
+                            <CheckCircle2 className="inline h-3.5 w-3.5 text-emerald-500" />
+                          ) : (
+                            <XCircle className="inline h-3.5 w-3.5 text-slate-300" />
+                          )}
+                        </td>
+                        <td className="px-2 py-2 text-center">
+                          <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-semibold", confidenceColor[item.confidence])}>
+                            {item.confidence}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Impact lines breakdown */}
+              {(() => {
+                const byLine = new Map<string, number>();
+                for (const item of items) {
+                  const adj = item.adjustDirection === "add-back" ? Math.abs(item.amount) : -Math.abs(item.amount);
+                  byLine.set(item.impactedLine, (byLine.get(item.impactedLine) ?? 0) + adj);
+                }
+                const lineLabels: Record<string, string> = {
+                  operatingIncome: "Operating Income",
+                  netIncome: "Net Income",
+                  revenue: "Revenue",
+                  cogs: "Cost of Goods Sold",
+                  sga: "SG&A",
+                  other: "Other",
+                };
+                return byLine.size > 1 ? (
+                  <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                    <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Adjustment by P&L Line</p>
+                    <div className="flex flex-wrap gap-3">
+                      {[...byLine.entries()].map(([line, amount]) => (
+                        <div key={line} className="text-xs">
+                          <span className="text-slate-500">{lineLabels[line] ?? line}: </span>
+                          <span className={cn("font-bold tabular-nums", amount > 0 ? "text-emerald-600" : "text-red-500")}>
+                            {amount > 0 ? "+" : ""}{fmt(Math.round(amount))}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null;
+              })()}
+            </div>
+          </Section>
+        );
+      })()}
 
       {/* ── Footnotes & Commentary ── */}
       {footnotes.length > 0 && (

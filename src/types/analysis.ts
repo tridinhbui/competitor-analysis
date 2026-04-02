@@ -17,6 +17,29 @@ export interface AdjustedMetric {
   period: string;
 }
 
+/** A non-recurring or special item that impacts comparability */
+export interface NonRecurringItem {
+  id: string;
+  /** Short label, e.g. "Antitrust settlement charge" */
+  label: string;
+  /** Detailed description from filing */
+  description: string;
+  /** Amount in $M (positive = expense/charge, negative = gain/income) */
+  amount: number;
+  /** Which line item it impacts */
+  impactedLine: "operatingIncome" | "netIncome" | "revenue" | "cogs" | "sga" | "other";
+  /** Type of non-recurring event */
+  category: "legal" | "restructuring" | "impairment" | "gain-loss-disposal" | "tax-adjustment" | "insurance" | "erc" | "acquisition" | "other";
+  /** Whether the company already adjusts this in their non-GAAP */
+  companyAdjusts: boolean;
+  /** Recommended adjustment direction: "add-back" to OP or "subtract" from OP */
+  adjustDirection: "add-back" | "subtract";
+  /** Confidence level */
+  confidence: "high" | "medium" | "low";
+  /** Source reference (note number, page, etc.) */
+  sourceRef: string;
+}
+
 /** A single balance-sheet / cash-flow line with provenance. */
 export interface BSItem {
   tag: string;
@@ -200,6 +223,8 @@ export interface FullAnalysis {
   adjustedMetrics?: AdjustedMetric[];
   /** Earnings narrative: beat/miss, guidance, key themes */
   earningsNarrative?: EarningsNarrative;
+  /** Non-recurring / special items extracted for comparability adjustments */
+  nonRecurringItems?: NonRecurringItem[];
 }
 
 /** The step definitions for the agent workflow UI. */
