@@ -43,6 +43,11 @@ export function TenQDropAnalyzer() {
   const [pdfWidthPct, setPdfWidthPct] = useState(50);
   const inputRef = useRef<HTMLInputElement>(null);
   const resizeContainerRef = useRef<HTMLDivElement>(null);
+  const workflowStatus =
+    phase === "analyzing" ? "running" :
+    phase === "done" ? "done" :
+    phase === "error" ? "error" :
+    "idle";
 
   // Auto-save filing when analysis completes (for competitor workspace)
   useEffect(() => {
@@ -390,7 +395,13 @@ export function TenQDropAnalyzer() {
             </button>
             <span className="text-[11px] text-slate-500">{pdfFile?.name}</span>
           </div>
-          <AgentWorkflow events={events} isRunning={phase === "analyzing"} horizontal />
+          <AgentWorkflow
+            events={events}
+            isRunning={phase === "analyzing"}
+            horizontal
+            status={workflowStatus}
+            errorMessage={error}
+          />
         </div>
 
         {/* Resizable: PDF | Dashboard */}
@@ -471,7 +482,12 @@ export function TenQDropAnalyzer() {
       )}>
         <div className="space-y-4 lg:sticky lg:top-4">
           <div className="rounded-2xl border border-slate-200/80 bg-white p-3 shadow-elevation sm:p-4">
-            <AgentWorkflow events={events} isRunning={phase === "analyzing"} />
+            <AgentWorkflow
+              events={events}
+              isRunning={phase === "analyzing"}
+              status={workflowStatus}
+              errorMessage={error}
+            />
           </div>
           <AnalysisChatPanel analysis={result} inline />
         </div>

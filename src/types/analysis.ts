@@ -81,7 +81,12 @@ export interface CashFlowData {
   capitalExpenditures: number | null;
   freeCashFlow: number | null;
   dividendsPaid: number | null;
+  shareRepurchases: number | null;
+  ltDebtIssuance: number | null;
+  ltDebtRepayments: number | null;
   netIncome: number | null;
+  investingCashFlow: number | null;
+  financingCashFlow: number | null;
 }
 
 /** Income statement summary (derived from cfItems) */
@@ -92,6 +97,9 @@ export interface IncomeStatement {
   grossMargin: number | null;
   sgaExpense: number | null;
   rdExpense: number | null;
+  rdExpenseMethod?: "extracted" | "derived_from_rd_tax_or_capitalization" | "estimated_from_revenue_ratio" | null;
+  rdExpensePercentUsed?: number | null;
+  rAndDPeriodBasis?: "quarterly" | "ytd" | "annual" | null;
   operatingExpenses: number | null;
   operatingIncome: number | null;
   operatingMargin: number | null;
@@ -132,6 +140,7 @@ export interface Ratios {
   // Cash
   fcfYield: number | null;
   fcfConversion: number | null;
+  accrualRatio: number | null;
   // Working capital
   workingCapital: number | null;
   workingCapitalRatio: number | null;
@@ -181,6 +190,8 @@ export interface ReconcileResult {
   status: ReconcileStatus;
   lhs: number;
   rhs: number;
+  /** How the RHS was computed */
+  balanceIdentitySource: "direct_totals" | "component_reconstruction";
 }
 
 export interface FullAnalysis {

@@ -15,6 +15,8 @@ interface Props {
   compact?: boolean;
   /** Horizontal stepper for top-bar layout (PDF mode) */
   horizontal?: boolean;
+  status?: "idle" | "running" | "done" | "error";
+  errorMessage?: string;
 }
 
 const STEP_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -40,7 +42,14 @@ function latestEvent(events: StepEvent[], stepId: string): StepEvent | undefined
   return matches[matches.length - 1];
 }
 
-export function AgentWorkflow({ events, isRunning, compact, horizontal }: Props) {
+export function AgentWorkflow({
+  events,
+  isRunning,
+  compact,
+  horizontal,
+  status,
+  errorMessage,
+}: Props) {
   const [expandedStep, setExpandedStep] = useState<string | null>(null);
 
   const totalDone = PIPELINE_STEPS.filter(
@@ -53,6 +62,43 @@ export function AgentWorkflow({ events, isRunning, compact, horizontal }: Props)
   const totalMs = events
     .filter((e) => e.status === "done" && e.durationMs != null)
     .reduce((acc, e) => acc + (e.durationMs ?? 0), 0);
+
+  const resolvedStatus =
+    status ??
+    (isRunning
+      ? "running"
+      : events.some((e) => e.status === "error")
+        ? "error"
+        : totalDone === PIPELINE_STEPS.length && totalDone > 0
+          ? "done"
+          : "idle");
+
+  const headerCopy = {
+    idle: {
+      title: "Ready to run",
+      subtitle: "Enter a ticker or upload a PDF to start analysis",
+      icon: <CircleDashed className="h-4 w-4 text-slate-400" />,
+      iconWrap: "bg-slate-100",
+    },
+    running: {
+      title: "Analysis in progress",
+      subtitle: "Processing...",
+      icon: <Loader2 className="h-4 w-4 animate-spin text-primary" />,
+      iconWrap: "bg-primary/10",
+    },
+    done: {
+      title: "Analysis complete",
+      subtitle: "Click steps for details",
+      icon: <CheckCircle2 className="h-4 w-4 text-emerald-500" />,
+      iconWrap: "bg-emerald-50",
+    },
+    error: {
+      title: "Analysis failed",
+      subtitle: errorMessage || "Open the failed step details to see what stopped the run",
+      icon: <AlertCircle className="h-4 w-4 text-red-500" />,
+      iconWrap: "bg-red-50",
+    },
+  }[resolvedStatus];
 
   if (horizontal) {
     return (
@@ -108,6 +154,9 @@ export function AgentWorkflow({ events, isRunning, compact, horizontal }: Props)
             {totalMs > 0 && ` · ${(totalMs / 1000).toFixed(1)}s`}
           </span>
         </div>
+        {resolvedStatus === "error" && errorMessage && (
+          <p className="text-[10px] text-red-600">{errorMessage}</p>
+        )}
       </div>
     );
   }
@@ -131,15 +180,13 @@ export function AgentWorkflow({ events, isRunning, compact, horizontal }: Props)
       {/* Header */}
       <div className="space-y-3 border-b border-slate-100 pb-3">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10">
-            {isRunning
-              ? <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              : <CheckCircle2 className="h-4 w-4 text-emerald-500" />}
+          <div className={cn("flex h-8 w-8 items-center justify-center rounded-full", headerCopy.iconWrap)}>
+            {headerCopy.icon}
           </div>
           <div className="min-w-0 flex-1">
             <h3 className="text-xs font-bold text-slate-900 sm:text-sm">Analysis Pipeline</h3>
             <p className="text-[10px] text-slate-500 sm:text-xs">
-              {isRunning ? "Processing…" : "Complete — click steps for details"}
+              {headerCopy.title} - {headerCopy.subtitle}
             </p>
           </div>
         </div>
@@ -163,6 +210,12 @@ export function AgentWorkflow({ events, isRunning, compact, horizontal }: Props)
             />
           </div>
         </div>
+
+        {resolvedStatus === "error" && errorMessage && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+            <p className="text-[11px] font-medium text-red-700">{errorMessage}</p>
+          </div>
+        )}
       </div>
 
       {/* Step list */}

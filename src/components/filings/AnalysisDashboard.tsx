@@ -447,9 +447,16 @@ export function AnalysisDashboard({ result, onExport }: Props) {
             .slice(0, 10)
             .map(i => ({ name: i.label.length > 20 ? `${i.label.slice(0, 20)}...` : i.label, value: Math.abs(i.value) }));
 
-          const ar = cfItems.find(i => i.tag === "AccountsReceivableNetCurrent")?.value ?? bs.items.find(i => i.tag === "AccountsReceivableNetCurrent")?.value ?? null;
-          const inv = cfItems.find(i => i.tag === "InventoryNet")?.value ?? bs.items.find(i => i.tag === "InventoryNet")?.value ?? null;
-          const ap = cfItems.find(i => i.tag === "AccountsPayableCurrent")?.value ?? bs.items.find(i => i.tag === "AccountsPayableCurrent")?.value ?? null;
+          const findItem = (tags: string[]) => {
+            for (const tag of tags) {
+              const v = cfItems.find(i => i.tag === tag)?.value ?? bs.items.find(i => i.tag === tag)?.value;
+              if (v != null) return v;
+            }
+            return null;
+          };
+          const ar = findItem(["AccountsReceivableNetCurrent", "AccountsReceivableNet"]);
+          const inv = findItem(["InventoryNet"]);
+          const ap = findItem(["AccountsPayableCurrent", "AccountsPayable"]);
 
           return (
             <div className="space-y-4">
@@ -545,11 +552,10 @@ export function AnalysisDashboard({ result, onExport }: Props) {
             { name: "Net Income", amt: cf.netIncome ?? 0 },
           ];
 
-          const buyback = cfItems.find(i => i.tag === "PaymentsForRepurchaseOfCommonStock")?.value ?? null;
-          const debtIssuance = cfItems.find(i => i.tag === "ProceedsFromIssuanceOfLongTermDebt")?.value ?? null;
-          const debtRepay = cfItems.find(i => i.tag === "RepaymentsOfLongTermDebt")?.value ?? null;
-          const finCF = cfItems.find(i => i.tag === "NetCashProvidedByFinancingActivities")?.value ?? null;
-          const invCF = cfItems.find(i => i.tag === "NetCashProvidedByInvestingActivities")?.value ?? null;
+          const findCF = (...tags: string[]) => { for (const t of tags) { const v = cfItems.find(i => i.tag === t)?.value; if (v != null) return v; } return null; };
+          const finCF = cf.financingCashFlow ?? findCF("NetCashProvidedByFinancingActivities");
+          const invCF = cf.investingCashFlow ?? findCF("NetCashProvidedByInvestingActivities");
+          console.log("[repurchase:ui-buyback]", cf.shareRepurchases);
 
           return (
             <div className="space-y-4">
@@ -586,10 +592,10 @@ export function AnalysisDashboard({ result, onExport }: Props) {
                     { label: "Capital Expenditures", value: fmt(cf.capitalExpenditures != null ? -Math.abs(cf.capitalExpenditures) : null), dim: true },
                     { label: "Free Cash Flow", value: fmt(cf.freeCashFlow), bold: true },
                     { label: "Dividends Paid", value: fmt(cf.dividendsPaid != null ? -Math.abs(cf.dividendsPaid) : null), dim: true },
-                    { label: "Share Repurchases", value: fmt(buyback != null ? -Math.abs(buyback) : null), dim: true },
+                    { label: "Share Repurchases", value: fmt(cf.shareRepurchases != null ? -Math.abs(cf.shareRepurchases) : null), dim: true },
                     { label: "Investing Cash Flow", value: fmt(invCF) },
-                    { label: "LT Debt Issuance", value: fmt(debtIssuance), dim: true },
-                    { label: "LT Debt Repayments", value: fmt(debtRepay != null ? -Math.abs(debtRepay) : null), dim: true },
+                    { label: "LT Debt Issuance", value: fmt(cf.ltDebtIssuance), dim: true },
+                    { label: "LT Debt Repayments", value: fmt(cf.ltDebtRepayments != null ? -Math.abs(cf.ltDebtRepayments) : null), dim: true },
                     { label: "Financing Cash Flow", value: fmt(finCF) },
                   ]} />
                 </Section>
@@ -634,7 +640,7 @@ export function AnalysisDashboard({ result, onExport }: Props) {
                       {reconcile.status === "ok" ? <CheckCircle2 className="h-5 w-5 text-emerald-500" /> : <ShieldAlert className="h-5 w-5 text-amber-500" />}
                       <div>
                         <p className="text-sm font-bold">A = L+E: {reconcile.status.toUpperCase()}</p>
-                        <p className="text-[11px] text-slate-500">Gap: {reconcile.gapPct}% (${Math.abs(reconcile.gapM).toLocaleString()}M)</p>
+                        <p className="text-[11px] text-slate-500">Gap: {reconcile.gapPct}% (Total: ${reconcile.rhs.toLocaleString()}M)</p>
                       </div>
                     </div>
                   )}
@@ -686,6 +692,7 @@ export function AnalysisDashboard({ result, onExport }: Props) {
                       { label: "Receivables Turnover", value: fmtX(ratios.receivablesTurnover) },
                       { label: "FCF Yield", value: fmtPct(ratios.fcfYield) },
                       { label: "FCF Conversion", value: fmtPct(ratios.fcfConversion) },
+                      { label: "Accrual Ratio", value: fmtPct(ratios.accrualRatio) },
                     ]} />
                   </div>
                 </div>
@@ -1147,9 +1154,16 @@ function InsightsTab({ result }: { result: FullAnalysis }) {
   const ccc = useMemo(() => {
     const rev = inc.revenue;
     const cogs = inc.costOfRevenue;
-    const ar = cfItems.find(i => i.tag === "AccountsReceivableNetCurrent")?.value ?? bs.items.find(i => i.tag === "AccountsReceivableNetCurrent")?.value ?? null;
-    const inv = cfItems.find(i => i.tag === "InventoryNet")?.value ?? bs.items.find(i => i.tag === "InventoryNet")?.value ?? null;
-    const ap = cfItems.find(i => i.tag === "AccountsPayableCurrent")?.value ?? bs.items.find(i => i.tag === "AccountsPayableCurrent")?.value ?? null;
+    const findCccItem = (tags: string[]) => {
+      for (const tag of tags) {
+        const v = cfItems.find(i => i.tag === tag)?.value ?? bs.items.find(i => i.tag === tag)?.value;
+        if (v != null) return v;
+      }
+      return null;
+    };
+    const ar = findCccItem(["AccountsReceivableNetCurrent", "AccountsReceivableNet"]);
+    const inv = findCccItem(["InventoryNet"]);
+    const ap = findCccItem(["AccountsPayableCurrent", "AccountsPayable"]);
 
     const dso = ar != null && rev ? Math.round((ar / rev) * 365) : null;
     const dio = inv != null && cogs ? Math.round((inv / cogs) * 365) : null;
@@ -1160,8 +1174,9 @@ function InsightsTab({ result }: { result: FullAnalysis }) {
 
   // ── Capital Allocation
   const capAlloc = useMemo(() => {
-    const buyback = cfItems.find(i => i.tag === "PaymentsForRepurchaseOfCommonStock")?.value ?? null;
-    const sbc = cfItems.find(i => i.tag === "ShareBasedCompensation")?.value ?? null;
+    const findCapCF = (...tags: string[]) => { for (const t of tags) { const v = cfItems.find(i => i.tag === t)?.value; if (v != null) return v; } return null; };
+    const buyback = findCapCF("PaymentsForRepurchaseOfCommonStock");
+    const sbc = findCapCF("ShareBasedCompensation");
     const capex = cf.capitalExpenditures;
     const ocf = cf.operatingCashFlow;
     const divPaid = cf.dividendsPaid;

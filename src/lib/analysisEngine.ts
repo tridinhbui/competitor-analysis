@@ -30,7 +30,9 @@ function find(items: BSItem[], ...tags: string[]): number {
 
 function findOrNull(items: BSItem[], ...tags: string[]): number | null {
   for (const tag of tags) {
-    const found = items.find((i) => i.tag === tag);
+    const found = items.find(
+      (i) => i.tag === tag && i.value != null && Number.isFinite(i.value)
+    );
     if (found) return found.value;
   }
   return null;
@@ -52,13 +54,66 @@ function pct(a: number | null, b: number | null): number | null {
 
 export function buildBalanceSheet(bs: BSItem[]): BalanceSheet {
   const totalAssets = find(bs, "Assets");
-  const totalLiabilities = find(bs, "Liabilities");
-  const totalEquity = find(
-    bs,
-    "StockholdersEquity"
-  );
-  const cash = find(bs, "CashAndCashEquivalentsAtCarryingValue");
+  const extractedLiabilities = findOrNull(bs, "Liabilities");
+  const directRHS = findOrNull(bs, "LiabilitiesAndStockholdersEquity");
   const retained = find(bs, "RetainedEarningsAccumulatedDeficit");
+  const cash = find(bs, "CashAndCashEquivalentsAtCarryingValue");
+
+  // Equity: prefer the directly extracted total (already net of treasury stock).
+  // If missing, compute from components so treasury stock is correctly subtracted.
+  const equityDirect = findOrNull(bs, "StockholdersEquity");
+  const totalEquity = equityDirect != null && equityDirect !== 0
+    ? equityDirect
+    : (() => {
+        const common   = findOrNull(bs, "CommonStockValue") ?? 0;
+        const apic     = findOrNull(bs, "AdditionalPaidInCapital") ?? 0;
+        const re       = findOrNull(bs, "RetainedEarningsAccumulatedDeficit") ?? 0;
+        const treasury = findOrNull(bs, "TreasuryStockValue") ?? 0; // already negative
+        const aoci     = findOrNull(bs, "AccumulatedOtherComprehensiveIncomeLoss") ?? 0;
+        const nci      = findOrNull(bs, "MinorityInterest") ?? 0;
+        const sum = common + apic + re + treasury + aoci + nci;
+        return sum !== 0 ? sum : 0;
+      })();
+
+  // Total liabilities: prefer the directly extracted tag.
+  // If absent, reconstruct from liabilities components (same philosophy as reconcile):
+  // do NOT derive as A − E (that would make identity checks trivially true).
+  let totalLiabilities = 0;
+  if (extractedLiabilities != null && extractedLiabilities > 0) {
+    totalLiabilities = extractedLiabilities;
+  } else if (directRHS != null && directRHS > 0) {
+    const redeemableNCI =
+      findOrNull(bs, "RedeemableNoncontrollingInterestEquityCarryingAmount") ?? 0;
+    totalLiabilities = Math.max(0, Math.round(directRHS - totalEquity - redeemableNCI));
+  } else {
+    const currentLiab = findOrNull(bs, "LiabilitiesCurrent") ?? 0;
+
+    const noncurrentDirect = findOrNull(bs, "LiabilitiesNoncurrent");
+    let noncurrentLiab = 0;
+    if (noncurrentDirect != null && noncurrentDirect > 0) {
+      noncurrentLiab = noncurrentDirect;
+    } else {
+      const ltDebt =
+        findOrNull(bs, "LongTermDebtNoncurrent") ??
+        findOrNull(bs, "LongTermDebt") ??
+        0;
+      const opLease =
+        findOrNull(bs, "OperatingLeaseLiabilityNoncurrent") ?? 0;
+      const finLease =
+        findOrNull(bs, "FinanceLeaseLiabilityNoncurrent") ?? 0;
+      const pension =
+        findOrNull(bs, "PensionAndOtherPostretirementDefinedBenefitPlansLiabilitiesNoncurrent") ?? 0;
+      const deferredTx =
+        findOrNull(bs, "DeferredIncomeTaxLiabilitiesNet") ??
+        findOrNull(bs, "DeferredTaxLiabilitiesNoncurrent") ??
+        0;
+      const otherLiab =
+        findOrNull(bs, "OtherLiabilitiesNoncurrent") ?? 0;
+      noncurrentLiab = ltDebt + opLease + finLease + pension + deferredTx + otherLiab;
+    }
+
+    totalLiabilities = currentLiab + noncurrentLiab;
+  }
 
   return {
     totalAssets,
@@ -108,6 +163,10 @@ export function buildDebtStructure(bs: BSItem[]): DebtStructure {
 // ---------------------------------------------------------------------------
 
 export function buildCashFlow(cf: BSItem[]): CashFlowData {
+  console.log(
+    "[cashflow:build-input]",
+    cf.map((i) => ({ tag: i.tag, label: i.label, value: i.value, source: i.source }))
+  );
   const operatingCashFlow = findOrNull(
     cf,
     "NetCashProvidedByOperatingActivities"
@@ -120,11 +179,65 @@ export function buildCashFlow(cf: BSItem[]): CashFlowData {
     findOrNull(cf, "PaymentsOfDividendsCommonStock") ??
     findOrNull(cf, "PaymentsOfDividends");
   const netIncome = findOrNull(cf, "NetIncomeLoss");
+  const buyback = findOrNull(cf, "PaymentsForRepurchaseOfCommonStock");
+  const debtIssue = findOrNull(cf, "ProceedsFromIssuanceOfLongTermDebt");
+  const directLtDebtRepay = findOrNull(cf, "RepaymentsOfLongTermDebt");
+  const paymentsOnDebt = findOrNull(cf, "RepaymentsOfDebt");
+  const commercialPaperRepay = findOrNull(cf, "RepaymentsOfCommercialPaper");
+  const shortTermDebtRepay = findOrNull(cf, "RepaymentsOfShortTermDebt");
+  const hasShortTermRepayments =
+    (commercialPaperRepay != null && Math.abs(commercialPaperRepay) > 0) ||
+    (shortTermDebtRepay != null && Math.abs(shortTermDebtRepay) > 0);
+  const hasConflictingDebtBreakdown = hasShortTermRepayments;
+  let ltDebtRepayments: number | null = null;
+  let debtRepayForFinancing: number | null = null;
+  let debtRepayLabel: "direct" | "proxy_from_payments_on_debt" | "mixed_debt_repayment" | "unknown" = "unknown";
+  if (directLtDebtRepay != null) {
+    ltDebtRepayments = Math.abs(directLtDebtRepay);
+    debtRepayForFinancing = Math.abs(directLtDebtRepay);
+    debtRepayLabel = "direct";
+  } else if (paymentsOnDebt != null && !hasShortTermRepayments && !hasConflictingDebtBreakdown) {
+    ltDebtRepayments = Math.abs(paymentsOnDebt);
+    debtRepayForFinancing = Math.abs(paymentsOnDebt);
+    debtRepayLabel = "proxy_from_payments_on_debt";
+  } else if (paymentsOnDebt != null) {
+    // Mixed repayment remains usable for financing CF math, but not shown as LT-specific.
+    ltDebtRepayments = null;
+    debtRepayForFinancing = Math.abs(paymentsOnDebt);
+    debtRepayLabel = "mixed_debt_repayment";
+  }
+  console.log("[cashflow:buyback-lookup]", buyback);
+  console.log("[cashflow:debt-repay-classification]", {
+    label: debtRepayLabel,
+    directLtDebtRepay,
+    paymentsOnDebt,
+    commercialPaperRepay,
+    shortTermDebtRepay,
+    hasShortTermRepayments,
+  });
 
   const freeCashFlow =
     operatingCashFlow != null && capex != null
       ? operatingCashFlow - Math.abs(capex)
       : null;
+
+  // Investing CF: direct or capex-only floor
+  let investingCashFlow = findOrNull(cf, "NetCashProvidedByInvestingActivities");
+  if (investingCashFlow == null && capex != null) {
+    investingCashFlow = -Math.abs(capex);
+  }
+
+  // Financing CF: direct or sum of known components
+  let financingCashFlow = findOrNull(cf, "NetCashProvidedByFinancingActivities");
+  if (financingCashFlow == null) {
+    if (buyback != null || debtIssue != null || debtRepayForFinancing != null || dividendsPaid != null) {
+      financingCashFlow =
+        (debtIssue ?? 0)
+        - Math.abs(buyback ?? 0)
+        - Math.abs(debtRepayForFinancing ?? 0)
+        - Math.abs(dividendsPaid ?? 0);
+    }
+  }
 
   return {
     operatingCashFlow,
@@ -132,6 +245,11 @@ export function buildCashFlow(cf: BSItem[]): CashFlowData {
     freeCashFlow,
     dividendsPaid: dividendsPaid != null ? Math.abs(dividendsPaid) : null,
     netIncome,
+    investingCashFlow,
+    financingCashFlow,
+    shareRepurchases: buyback != null ? Math.abs(buyback) : null,
+    ltDebtIssuance: debtIssue,
+    ltDebtRepayments,
   };
 }
 
@@ -155,12 +273,42 @@ export function buildRatios(
 export function buildIncomeStatement(cf: BSItem[], bs: BSItem[]): IncomeStatement {
   const allItems = [...cf, ...bs];
 
-  const revenue = findOrNull(cf, "Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet");
+  const revenue = findOrNull(cf, "Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet", "SalesRevenueGoodsNet");
   const cogs = findOrNull(cf, "CostOfGoodsAndServicesSold", "CostOfRevenue", "CostOfGoodsSold");
   const grossProfitRaw = findOrNull(cf, "GrossProfit");
   const grossProfit = grossProfitRaw ?? (revenue != null && cogs != null ? revenue - Math.abs(cogs) : null);
   const sga = findOrNull(cf, "SellingGeneralAndAdministrativeExpense");
-  const rd = findOrNull(cf, "ResearchAndDevelopmentExpense");
+  const rdItem = cf.find(
+    (i) =>
+      i.tag === "ResearchAndDevelopmentExpense" &&
+      i.value != null &&
+      Number.isFinite(i.value)
+  );
+  const rd = rdItem != null ? rdItem.value : null;
+  const rdSource = rdItem?.source?.toLowerCase() ?? "";
+  let rdExpenseMethod: IncomeStatement["rdExpenseMethod"] = null;
+  let rdExpensePercentUsed: number | null = null;
+  let rAndDPeriodBasis: IncomeStatement["rAndDPeriodBasis"] = null;
+  if (rdItem != null) {
+    if (rdSource.includes("estimated_from_revenue_ratio")) {
+      rdExpenseMethod = "estimated_from_revenue_ratio";
+      const m = rdSource.match(/pct=([\d.]+)/);
+      if (m) {
+        const pct = parseFloat(m[1]);
+        rdExpensePercentUsed = Number.isFinite(pct) ? pct : null;
+      }
+      const basis = rdSource.match(/basis=(quarterly|ytd|annual)/);
+      if (basis) rAndDPeriodBasis = basis[1] as IncomeStatement["rAndDPeriodBasis"];
+    } else if (rdSource.includes("derived_from_rd_tax_or_capitalization")) {
+      rdExpenseMethod = "derived_from_rd_tax_or_capitalization";
+      const basis = rdSource.match(/basis=(quarterly|ytd|annual)/);
+      if (basis) rAndDPeriodBasis = basis[1] as IncomeStatement["rAndDPeriodBasis"];
+    } else {
+      rdExpenseMethod = "extracted";
+      const basis = rdSource.match(/basis=(quarterly|ytd|annual)/);
+      if (basis) rAndDPeriodBasis = basis[1] as IncomeStatement["rAndDPeriodBasis"];
+    }
+  }
   const opExpenses = findOrNull(cf, "OperatingExpenses");
   const operatingIncome = findOrNull(cf, "OperatingIncomeLoss");
   const interestExpense = findOrNull(cf, "InterestExpense", "InterestExpenseNet");
@@ -169,12 +317,49 @@ export function buildIncomeStatement(cf: BSItem[], bs: BSItem[]): IncomeStatemen
   const epsBasic = findOrNull(cf, "EarningsPerShareBasic");
   const epsDiluted = findOrNull(cf, "EarningsPerShareDiluted");
 
-  const dep = findOrNull(cf, "DepreciationDepletionAndAmortization", "DepreciationAndAmortization", "Depreciation");
-  const amort = findOrNull(cf, "AmortizationOfIntangibleAssets");
+  // Identify D&A items by checking specific tags
+  const combinedDAItem = cf.find(i =>
+    i.tag === "DepreciationDepletionAndAmortization" || i.tag === "DepreciationAndAmortization"
+  );
+  const deprecOnlyItem = cf.find(i => i.tag === "Depreciation");
+  const amortItem = cf.find(i => i.tag === "AmortizationOfIntangibleAssets");
+
+  let depOut: number | null = null;
+  let amortOut: number | null = null;
+  let totalDAOut: number | null = null;
+
+  if (combinedDAItem != null && amortItem != null) {
+    // Combined D&A total is found AND amortization is separately disclosed
+    // amort is a sub-component → don't add, instead split
+    totalDAOut = Math.abs(combinedDAItem.value);
+    amortOut = Math.abs(amortItem.value);
+    depOut = Math.max(0, Math.round((totalDAOut - amortOut) * 10) / 10);
+  } else if (combinedDAItem != null) {
+    // Only combined D&A — try to estimate split via intangibles
+    totalDAOut = Math.abs(combinedDAItem.value);
+    const intangibles = findOrNull(bs, "IntangibleAssetsNet", "FiniteLivedIntangibleAssetsNet");
+    if (intangibles != null && intangibles > 0) {
+      // Has intangible assets → amortization is non-trivial; estimate at 15% of D&A
+      amortOut = Math.round(totalDAOut * 0.15 * 10) / 10;
+      depOut = Math.round((totalDAOut - amortOut) * 10) / 10;
+    } else {
+      // No intangibles → depreciation ≈ all of D&A
+      depOut = totalDAOut;
+      amortOut = null;
+    }
+  } else if (deprecOnlyItem != null) {
+    // Separate depreciation line
+    depOut = Math.abs(deprecOnlyItem.value);
+    amortOut = amortItem != null ? Math.abs(amortItem.value) : null;
+    totalDAOut = depOut + (amortOut ?? 0);
+  } else if (amortItem != null) {
+    // Only amortization
+    amortOut = Math.abs(amortItem.value);
+    totalDAOut = amortOut;
+  }
 
   const ebit = operatingIncome;
-  const totalDA = dep != null ? Math.abs(dep) + (amort != null ? Math.abs(amort) : 0) : (amort != null ? Math.abs(amort) : null);
-  const ebitda = ebit != null && totalDA != null ? ebit + totalDA
+  const ebitda = ebit != null && totalDAOut != null ? ebit + totalDAOut
     : ebit != null && interestExpense != null ? ebit + Math.abs(interestExpense)
     : null;
 
@@ -191,13 +376,16 @@ export function buildIncomeStatement(cf: BSItem[], bs: BSItem[]): IncomeStatemen
     grossMargin: margin(grossProfit, revenue),
     sgaExpense: sga != null ? Math.abs(sga) : null,
     rdExpense: rd != null ? Math.abs(rd) : null,
+    rdExpenseMethod,
+    rdExpensePercentUsed,
+    rAndDPeriodBasis,
     operatingExpenses: opExpenses != null ? Math.abs(opExpenses) : null,
     operatingIncome,
     operatingMargin: margin(operatingIncome, revenue),
     ebit,
     ebitMargin: margin(ebit, revenue),
-    depreciation: dep != null ? Math.abs(dep) : null,
-    amortization: amort != null ? Math.abs(amort) : null,
+    depreciation: depOut,
+    amortization: amortOut,
     ebitda,
     ebitdaMargin: margin(ebitda, revenue),
     interestExpense: interestExpense != null ? Math.abs(interestExpense) : null,
@@ -263,7 +451,8 @@ export function buildRatiosFull(
   const inventory = findOrNull(allItems, "InventoryNet");
   const cogs = income?.costOfRevenue ?? null;
   const inventoryTurnover = ratio(cogs, inventory);
-  const receivables = findOrNull(allItems, "AccountsReceivableNetCurrent");
+  // AccountsReceivableNet is the non-current-specific tag many filers use
+  const receivables = findOrNull(allItems, "AccountsReceivableNetCurrent", "AccountsReceivableNet");
   const receivablesTurnover = ratio(revenue, receivables);
 
   // Cash
@@ -274,6 +463,13 @@ export function buildRatiosFull(
   // Working capital
   const wc = currentAssets != null && currentLiab != null ? currentAssets - currentLiab : null;
   const wcRatio = ratio(wc, revenue);
+
+  // Accrual ratio: (netIncome - operatingCashFlow) / totalAssets
+  // Positive = income exceeds cash flow (accrual-heavy); negative = cash exceeds income (high quality)
+  const accrualNum = netIncome != null && cf.operatingCashFlow != null
+    ? netIncome - cf.operatingCashFlow : null;
+  const accrualRatio = accrualNum != null && bs.totalAssets > 0
+    ? Math.round((accrualNum / bs.totalAssets) * 1000) / 10 : null;
 
   const r1 = (v: number | null) => v != null ? Math.round(v * 100) / 100 : null;
   const r10 = (v: number | null) => v != null ? Math.round(v * 10) / 10 : null;
@@ -296,6 +492,7 @@ export function buildRatiosFull(
     receivablesTurnover: r10(receivablesTurnover),
     fcfYield: fcfYield != null ? Math.round(fcfYield * 1000) / 10 : null,
     fcfConversion: fcfConversion != null ? Math.round(fcfConversion * 1000) / 10 : null,
+    accrualRatio,
     workingCapital: wc,
     workingCapitalRatio: wcRatio != null ? Math.round(wcRatio * 1000) / 10 : null,
   };
@@ -435,12 +632,52 @@ export function buildDividendAnalysis(
 // Reconcile (A ≈ L + E)
 // ---------------------------------------------------------------------------
 
-export function buildReconcile(bs: BalanceSheet): ReconcileResult {
+export function buildReconcile(bs: BalanceSheet, bsItems: BSItem[]): ReconcileResult {
   const lhs = bs.totalAssets;
-  const rhs = bs.totalLiabilities + bs.totalEquity;
+  let rhs: number;
+  let balanceIdentitySource: ReconcileResult["balanceIdentitySource"];
+
+  // Primary: use the directly extracted total-RHS line if available.
+  // This covers labels like "Total liabilities and shareholders' equity",
+  // "Total liabilities and stockholders' equity", "Total liabilities and equity".
+  const directRHS = bsItems.find(i => i.tag === "LiabilitiesAndStockholdersEquity")?.value;
+  if (directRHS != null && directRHS > 0) {
+    rhs = directRHS;
+    balanceIdentitySource = "direct_totals";
+  } else {
+    // Fallback: reconstruct RHS from components.
+    // Prefer the directly extracted Liabilities tag; only sum sub-components
+    // if that tag is absent — never derive liabilities as totalAssets - totalEquity.
+    const directLiab = bsItems.find(i => i.tag === "Liabilities")?.value;
+    let totalLiabilitiesComputed: number;
+    if (directLiab != null && directLiab > 0) {
+      totalLiabilitiesComputed = directLiab;
+    } else {
+      const currentLiab = bsItems.find(i => i.tag === "LiabilitiesCurrent")?.value ?? 0;
+      const noncurrentDirect = bsItems.find(i => i.tag === "LiabilitiesNoncurrent")?.value;
+      let noncurrentLiab: number;
+      if (noncurrentDirect != null && noncurrentDirect > 0) {
+        noncurrentLiab = noncurrentDirect;
+      } else {
+        const ltDebt     = bsItems.find(i => i.tag === "LongTermDebtNoncurrent" || i.tag === "LongTermDebt")?.value ?? 0;
+        const opLease    = bsItems.find(i => i.tag === "OperatingLeaseLiabilityNoncurrent")?.value ?? 0;
+        const finLease   = bsItems.find(i => i.tag === "FinanceLeaseLiabilityNoncurrent")?.value ?? 0;
+        const pension    = bsItems.find(i => i.tag === "PensionAndOtherPostretirementDefinedBenefitPlansLiabilitiesNoncurrent")?.value ?? 0;
+        const deferredTx = bsItems.find(i => i.tag === "DeferredIncomeTaxLiabilitiesNet" || i.tag === "DeferredTaxLiabilitiesNoncurrent")?.value ?? 0;
+        const otherLiab  = bsItems.find(i => i.tag === "OtherLiabilitiesNoncurrent")?.value ?? 0;
+        noncurrentLiab = ltDebt + opLease + finLease + pension + deferredTx + otherLiab;
+      }
+      totalLiabilitiesComputed = currentLiab + noncurrentLiab;
+    }
+    // Redeemable NCI: mezzanine item between Liabilities and Equity.
+    const redeemableNCI = bsItems.find(i => i.tag === "RedeemableNoncontrollingInterestEquityCarryingAmount")?.value ?? 0;
+    rhs = totalLiabilitiesComputed + redeemableNCI + bs.totalEquity;
+    balanceIdentitySource = "component_reconstruction";
+  }
+
   const gapM = lhs - rhs;
   const gapPct = lhs > 0 ? Math.abs(gapM) / lhs : 0;
-  const withinTolerance = gapPct < 0.01; // 1% = strict
+  const withinTolerance = gapPct < 0.01;
   let status: ReconcileResult["status"] = "ok";
   if (gapPct >= 0.05) status = "fail";
   else if (gapPct >= 0.01) status = "warning";
@@ -452,6 +689,7 @@ export function buildReconcile(bs: BalanceSheet): ReconcileResult {
     status,
     lhs,
     rhs,
+    balanceIdentitySource,
   };
 }
 
@@ -467,19 +705,51 @@ export function buildValidation(
 ): { passed: boolean; checks: ValidationCheck[] } {
   const checks: ValidationCheck[] = [];
 
-  // 1. A ≈ L + E
+  // 1. A ≈ Total Liabilities and Equity
+  // Prefer the directly extracted RHS total; fall back to component reconstruction
+  // only when that tag is absent. Never derive liabilities as A − E.
+  const directRHSV = allItems.find(i => i.tag === "LiabilitiesAndStockholdersEquity")?.value;
+  let rhsForCheck: number;
+  let identitySource: string;
+  if (directRHSV != null && directRHSV > 0) {
+    rhsForCheck = directRHSV;
+    identitySource = "direct totals";
+  } else {
+    const directLiabV = allItems.find(i => i.tag === "Liabilities")?.value;
+    let liabForCheck: number;
+    if (directLiabV != null && directLiabV > 0) {
+      liabForCheck = directLiabV;
+    } else {
+      const cl = allItems.find(i => i.tag === "LiabilitiesCurrent")?.value ?? 0;
+      const noncurrentDirect2 = allItems.find(i => i.tag === "LiabilitiesNoncurrent")?.value;
+      let ncl: number;
+      if (noncurrentDirect2 != null && noncurrentDirect2 > 0) {
+        ncl = noncurrentDirect2;
+      } else {
+        const ltd = allItems.find(i => i.tag === "LongTermDebtNoncurrent" || i.tag === "LongTermDebt")?.value ?? 0;
+        const ope = allItems.find(i => i.tag === "OperatingLeaseLiabilityNoncurrent")?.value ?? 0;
+        const fin = allItems.find(i => i.tag === "FinanceLeaseLiabilityNoncurrent")?.value ?? 0;
+        const pen = allItems.find(i => i.tag === "PensionAndOtherPostretirementDefinedBenefitPlansLiabilitiesNoncurrent")?.value ?? 0;
+        const dt  = allItems.find(i => i.tag === "DeferredIncomeTaxLiabilitiesNet" || i.tag === "DeferredTaxLiabilitiesNoncurrent")?.value ?? 0;
+        const ol  = allItems.find(i => i.tag === "OtherLiabilitiesNoncurrent")?.value ?? 0;
+        ncl = ltd + ope + fin + pen + dt + ol;
+      }
+      liabForCheck = cl + ncl;
+    }
+    const redeemableNCICheck = allItems.find(i => i.tag === "RedeemableNoncontrollingInterestEquityCarryingAmount")?.value ?? 0;
+    rhsForCheck = liabForCheck + redeemableNCICheck + bs.totalEquity;
+    identitySource = "components";
+  }
   const aLe = bs.totalAssets > 0
-    ? Math.abs(
-        bs.totalAssets - (bs.totalLiabilities + bs.totalEquity)
-      ) / bs.totalAssets
+    ? Math.abs(bs.totalAssets - rhsForCheck) / bs.totalAssets
     : 1;
   checks.push({
     name: "A ≈ L + E",
     passed: aLe < 0.05,
     note:
       aLe < 0.05
-        ? `Balance sheet identity gap ${(aLe * 100).toFixed(1)}% — OK`
-        : `Gap ${(aLe * 100).toFixed(1)}% — extraction may be incomplete`,
+        ? `Balance sheet identity gap ${(aLe * 100).toFixed(1)}% — OK (${identitySource})`
+        : `Gap ${(aLe * 100).toFixed(1)}% — extraction may be incomplete (${identitySource})`,
   });
 
   // 2. Total assets found
@@ -572,7 +842,7 @@ export function assembleAnalysis(
     allItems
   );
   const validation = buildValidation(balanceSheet, debtStructure, cashFlow, allItems);
-  const reconcile = buildReconcile(balanceSheet);
+  const reconcile = buildReconcile(balanceSheet, bs);
 
   return {
     meta,
