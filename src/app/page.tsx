@@ -1,9 +1,5 @@
-import { TenQDropAnalyzer } from "@/components/filings/TenQDropAnalyzer";
+import { HomeLanding } from "@/components/landing/HomeLanding";
 
 export default function HomePage() {
-  return (
-    <div className="flex min-h-dvh flex-col">
-      <TenQDropAnalyzer />
-    </div>
-  );
+  return <HomeLanding />;
 }
