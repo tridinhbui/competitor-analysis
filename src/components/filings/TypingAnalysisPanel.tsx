@@ -25,10 +25,14 @@ export function TypingAnalysisPanel({ analysis, isAnalyzing }: Props) {
     if (!analysis || analysis === prevAnalysisRef.current) return;
     prevAnalysisRef.current = analysis;
 
-    setDisplayedText("");
-    setFullText("");
-    setError("");
-    setIsTyping(true);
+    let cancelled = false;
+    Promise.resolve().then(() => {
+      if (cancelled) return;
+      setDisplayedText("");
+      setFullText("");
+      setError("");
+      setIsTyping(true);
+    });
 
     const context = compactAnalysisForLLM(analysis);
 
@@ -52,6 +56,10 @@ export function TypingAnalysisPanel({ analysis, isAnalyzing }: Props) {
         setIsTyping(false);
       }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [analysis]);
 
   // Typing effect

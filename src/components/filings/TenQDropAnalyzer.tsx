@@ -15,6 +15,7 @@ import {
   isStepEventPayload,
 } from "@/lib/sseClient";
 import { RotateCcw, FileText } from "lucide-react";
+import { fetchWithAuth } from "@/lib/fetchWithAuth";
 
 type Phase = "idle" | "analyzing" | "done" | "error";
 
@@ -54,7 +55,7 @@ export function TenQDropAnalyzer() {
     const title = result.meta.source === "pdf"
       ? `PDF Analysis — ${companyName} ${quarter}`
       : `${companyName} ${quarter} Analysis`;
-    fetch("/api/history", {
+    fetchWithAuth("/api/history", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
