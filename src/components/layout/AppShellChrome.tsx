@@ -3,9 +3,11 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, X } from "lucide-react";
+import { Menu, X, LogIn, LogOut, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { GlobalChat } from "@/components/chat/GlobalChat";
+import { useAuth } from "@/lib/authContext";
+import { AuthModal } from "@/components/auth/AuthModal";
 
 const NAV_ITEMS = [
   { href: "/analyze", label: "Analyze" },
@@ -24,6 +26,8 @@ function isItemActive(pathname: string, href: string): boolean {
 export function AppShellChrome() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
+  const { user, signOut, loading: authLoading } = useAuth();
 
   const showGlobalChat = useMemo(() => pathname !== "/", [pathname]);
 
@@ -62,6 +66,40 @@ export function AppShellChrome() {
             >
               Analyze now
             </Link>
+
+            {/* Auth button */}
+            {!authLoading && (
+              user ? (
+                <div className="hidden items-center gap-1.5 sm:flex">
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700"
+                    title={user.email ?? ""}
+                  >
+                    <User className="h-3 w-3" aria-hidden />
+                    {user.email?.split("@")[0]}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => signOut()}
+                    className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-500 transition hover:text-red-500"
+                    title="Sign out"
+                  >
+                    <LogOut className="h-3 w-3" aria-hidden />
+                    Sign out
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setAuthOpen(true)}
+                  className="hidden items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 transition hover:text-primary sm:inline-flex"
+                >
+                  <LogIn className="h-3 w-3" aria-hidden />
+                  Sign in
+                </button>
+              )
+            )}
+
             <button
               type="button"
               onClick={() => setMobileOpen((v) => !v)}
@@ -106,6 +144,7 @@ export function AppShellChrome() {
       </nav>
 
       {showGlobalChat && <GlobalChat />}
+      {authOpen && <AuthModal onClose={() => setAuthOpen(false)} />}
     </>
   );
 }
