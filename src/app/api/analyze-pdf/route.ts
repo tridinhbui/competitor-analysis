@@ -260,16 +260,37 @@ interface SegmentExtraction {
 // Section detection — find the right text for each AI call
 // ---------------------------------------------------------------------------
 
+/**
+ * Find ALL occurrences of section patterns and combine them.
+ * This ensures we don't miss segment data that appears in multiple places
+ * (e.g., segment note + MD&A segment discussion).
+ */
 function findSection(text: string, patterns: RegExp[], maxLen: number): string {
+  const chunks: string[] = [];
+  let totalLen = 0;
+  const usedOffsets = new Set<number>(); // avoid overlapping slices
+
   for (const re of patterns) {
-    const idx = text.search(re);
-    if (idx !== -1) {
-      // Find a reasonable end — next major section header or maxLen
-      const slice = text.slice(idx, idx + maxLen);
-      return slice;
+    // Use a global version of the regex to find ALL matches
+    const globalRe = new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
+    let match: RegExpExecArray | null;
+    while ((match = globalRe.exec(text)) !== null) {
+      const idx = match.index;
+      // Skip if this offset is within an already-captured range
+      const rounded = Math.floor(idx / 1000) * 1000;
+      if (usedOffsets.has(rounded)) continue;
+      usedOffsets.add(rounded);
+
+      const chunkLen = Math.min(maxLen, Math.max(maxLen, 15_000));
+      const slice = text.slice(idx, idx + chunkLen);
+      chunks.push(slice);
+      totalLen += slice.length;
+      if (totalLen >= maxLen * 2) break; // cap total to avoid massive payloads
     }
+    if (totalLen >= maxLen * 2) break;
   }
-  return "";
+
+  return chunks.join("\n\n---\n\n");
 }
 
 function extractSections(text: string): {
@@ -281,33 +302,35 @@ function extractSections(text: string): {
   const bsText = findSection(text, [
     /(?:condensed\s+)?(?:consolidated\s+)?balance\s+sheet/i,
     /(?:condensed\s+)?(?:consolidated\s+)?(?:statements?\s+of\s+)?financial\s+position/i,
-  ], 15_000);
+  ], 20_000);
 
   const isText = findSection(text, [
     /(?:condensed\s+)?(?:consolidated\s+)?statements?\s+of\s+(?:operations?|income|earnings)/i,
     /(?:condensed\s+)?(?:consolidated\s+)?(?:statements?\s+of\s+)?(?:income|earnings)/i,
-  ], 12_000);
+  ], 15_000);
 
   const cfText = findSection(text, [
     /(?:condensed\s+)?(?:consolidated\s+)?statements?\s+of\s+cash\s+flow/i,
     /(?:condensed\s+)?(?:consolidated\s+)?cash\s+flow/i,
-  ], 12_000);
+  ], 15_000);
 
   const mdaText = findSection(text, [
     /management.?s?\s+discussion\s+and\s+analysis/i,
     /results\s+of\s+operations/i,
-  ], 20_000);
+  ], 30_000);
 
   const notesText = findSection(text, [
     /notes\s+to\s+(?:the\s+)?(?:condensed\s+)?(?:consolidated\s+)?financial\s+statements/i,
-  ], 20_000);
+  ], 30_000);
 
   const segText = findSection(text, [
     /(?:segment|operating\s+segments?)\s+(?:results|information|data|reporting)/i,
     /results\s+of\s+operations\s+(?:by|for)\s+(?:each\s+)?segment/i,
     /segment\s+(?:financial\s+)?(?:results|performance)/i,
     /(?:reportable\s+)?segments/i,
-  ], 15_000);
+    /(?:beef|pork|chicken|prepared\s+foods?|packaged\s+meats?|international)\s+segment/i,
+    /note\s+\d+[\.\:\-\s]+(?:segment|business\s+segment|operating\s+segment)/i,
+  ], 25_000);
 
   // Combine IS + CF for the income/cashflow call
   const isCfText = [isText, cfText].filter(Boolean).join("\n\n---\n\n");
@@ -411,10 +434,10 @@ export async function POST(request: Request) {
   const { bsText, isCfText, qualText, segmentText } = extractSections(text);
 
   // Fallback: if section detection found nothing, use the full text (truncated)
-  const bsInput = bsText.length > 500 ? bsText : text.slice(0, 60_000);
-  const isCfInput = isCfText.length > 500 ? isCfText : text.slice(0, 60_000);
-  const qualInput = qualText.length > 500 ? qualText : text.slice(0, 40_000);
-  const segInput = segmentText.length > 300 ? segmentText : text.slice(0, 40_000);
+  const bsInput = bsText.length > 500 ? bsText : text.slice(0, 80_000);
+  const isCfInput = isCfText.length > 500 ? isCfText : text.slice(0, 80_000);
+  const qualInput = qualText.length > 500 ? qualText : text.slice(0, 60_000);
+  const segInput = segmentText.length > 300 ? segmentText : text.slice(0, 60_000);
 
   try {
     // Run 5 AI calls in parallel (4 extraction + 1 non-recurring)

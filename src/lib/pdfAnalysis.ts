@@ -2,10 +2,12 @@
  * PDF → FullAnalysis pipeline (client-side).
  *
  * 1. Extract text from PDF using pdf.js
- * 2. Send to /api/analyze-pdf which runs 3 parallel AI calls:
+ * 2. Send to /api/analyze-pdf which runs 5 parallel AI calls:
  *    - Balance Sheet extraction (exact XBRL tags)
  *    - Income Statement + Cash Flow extraction (exact XBRL tags)
  *    - Qualitative: footnotes, earnings narrative, adjusted metrics
+ *    - Segments: business/channel/geography segment breakdown
+ *    - Non-recurring items: legal, restructuring, impairment, etc.
  * 3. Fallback to heuristic regex extraction if AI unavailable
  */
 
@@ -328,8 +330,8 @@ export async function analyzePdf(
     detail: { pages, lines: lines.length, chars: rawChars },
   });
 
-  // Step 3: AI extraction (3 parallel calls) or heuristic fallback
-  onStep({ step: "fetch_xbrl", label: pipeLabel("fetch_xbrl"), status: "running", message: "Running 3 parallel AI extractions (BS, IS/CF, qualitative)…" });
+  // Step 3: AI extraction (5 parallel calls) or heuristic fallback
+  onStep({ step: "fetch_xbrl", label: pipeLabel("fetch_xbrl"), status: "running", message: "Running 5 parallel AI extractions (BS, IS/CF, qualitative, segments, non-recurring)…" });
 
   const tAi = performance.now();
   let analysis: FullAnalysis;
@@ -342,11 +344,15 @@ export async function analyzePdf(
     const bsCount = analysis.balanceSheet.items.length;
     const cfCount = analysis.cfItems?.length ?? 0;
 
+    const segCount = analysis.segments?.length ?? 0;
+    const fnCount = analysis.footnotes?.length ?? 0;
+    const nrCount = analysis.nonRecurringItems?.length ?? 0;
+
     onStep({
       step: "fetch_xbrl", label: pipeLabel("fetch_xbrl"), status: "done",
-      message: `AI extracted ${bsCount} BS + ${cfCount} IS/CF items (3 parallel calls)`,
+      message: `AI extracted ${bsCount} BS + ${cfCount} IS/CF + ${segCount} segments + ${fnCount} footnotes + ${nrCount} adjustments`,
       durationMs: elapsed(tAi),
-      detail: { method: "3-call-parallel", balanceSheetItems: bsCount, cashFlowItems: cfCount },
+      detail: { method: "5-call-parallel", balanceSheetItems: bsCount, cashFlowItems: cfCount, segments: segCount, footnotes: fnCount, nonRecurring: nrCount },
     });
   } catch (aiErr) {
     onStep({
@@ -473,29 +479,50 @@ export async function analyzePdf(
     onStep({ step: s.id, label: pipeLabel(s.id), status: "done", message: s.msg(), durationMs: 120, detail: s.detailFn() });
   }
 
-  // Footnotes step
-  if (analysis.footnotes?.length || analysis.earningsNarrative) {
-    onStep({
-      step: "extract_footnotes", label: pipeLabel("extract_footnotes"), status: "done",
-      message: `${analysis.footnotes?.length ?? 0} footnotes · ${analysis.earningsNarrative ? "Earnings narrative" : "No narrative"}`,
-      durationMs: 0,
-    });
-  } else {
-    onStep({
-      step: "extract_footnotes", label: pipeLabel("extract_footnotes"), status: "skipped",
-      message: "Qualitative data not available",
-    });
+  // Footnotes + qualitative step
+  {
+    const fnLen = analysis.footnotes?.length ?? 0;
+    const segLen = analysis.segments?.length ?? 0;
+    const nrLen = analysis.nonRecurringItems?.length ?? 0;
+    const hasNarrative = !!analysis.earningsNarrative;
+    const adjLen = analysis.adjustedMetrics?.length ?? 0;
+
+    if (fnLen || hasNarrative || segLen || nrLen || adjLen) {
+      const parts: string[] = [];
+      if (fnLen) parts.push(`${fnLen} footnotes`);
+      if (segLen) parts.push(`${segLen} segments`);
+      if (nrLen) parts.push(`${nrLen} non-recurring items`);
+      if (adjLen) parts.push(`${adjLen} adjusted metrics`);
+      if (hasNarrative) parts.push("Earnings narrative");
+      onStep({
+        step: "extract_footnotes", label: pipeLabel("extract_footnotes"), status: "done",
+        message: parts.join(" · "),
+        durationMs: 0,
+        detail: { footnotes: fnLen, segments: segLen, nonRecurring: nrLen, adjustedMetrics: adjLen, narrative: hasNarrative },
+      });
+    } else {
+      onStep({
+        step: "extract_footnotes", label: pipeLabel("extract_footnotes"), status: "skipped",
+        message: "Qualitative data not available",
+      });
+    }
   }
 
   // Complete
   const totalItems = analysis.balanceSheet.items.length + (analysis.cfItems?.length ?? 0);
+  const totalSegments = analysis.segments?.length ?? 0;
+  const totalFootnotes = analysis.footnotes?.length ?? 0;
+  const totalNonRecurring = analysis.nonRecurringItems?.length ?? 0;
   onStep({
     step: "complete", label: pipeLabel("complete"), status: "done",
-    message: `${usedAI ? "AI (3-call)" : "Heuristic"} — ${totalItems} items in ${((performance.now() - t0) / 1000).toFixed(1)}s`,
+    message: `${usedAI ? "AI (5-call)" : "Heuristic"} — ${totalItems} financials + ${totalSegments} segments + ${totalFootnotes} notes + ${totalNonRecurring} adjustments in ${((performance.now() - t0) / 1000).toFixed(1)}s`,
     durationMs: elapsed(t0),
     detail: {
-      method: usedAI ? "3-call parallel AI" : "Heuristic",
+      method: usedAI ? "5-call parallel AI" : "Heuristic",
       totalItems,
+      segments: totalSegments,
+      footnotes: totalFootnotes,
+      nonRecurring: totalNonRecurring,
       company: analysis.meta.companyName ?? "Unknown",
       period: analysis.meta.periodEnd ?? "Unknown",
     },
