@@ -1,19 +1,14 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Tell Next.js/webpack to transpile pdfjs-dist so it can handle the ESM build
-  transpilePackages: ["pdfjs-dist"],
+  // pdfjs-dist is loaded from /public via /* webpackIgnore: true */
+  // so it never goes through the bundler — no special config needed.
 
-  webpack: (config, { isServer }) => {
-    if (!isServer) {
-      // pdfjs-dist canvas API not available in browser context via Next.js bundling
-      config.resolve.alias = {
-        ...config.resolve.alias,
-        canvas: false,
-      };
-    }
-
-    return config;
+  // Turbopack (used by Vercel + Next.js 15+): stub out canvas for browser
+  turbopack: {
+    resolveAlias: {
+      canvas: "./src/lib/emptyModule.ts",
+    },
   },
 };
 
