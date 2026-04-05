@@ -15,6 +15,42 @@ import type { BSItem, FullAnalysis, StepEvent } from "@/types/analysis";
 import { PIPELINE_STEPS } from "@/types/analysis";
 import { assembleAnalysis } from "./analysisEngine";
 
+// ---------------------------------------------------------------------------
+// Load pdfjs from /public via native browser ESM import (bypasses webpack).
+// /* webpackIgnore: true */ tells webpack to skip bundling this import —
+// the browser loads /pdf.min.mjs directly as a native ESM module.
+// ---------------------------------------------------------------------------
+
+interface PdfjsMinimal {
+  GlobalWorkerOptions: { workerSrc: string };
+  getDocument: (opts: { data: ArrayBuffer }) => {
+    promise: Promise<{
+      numPages: number;
+      getPage: (n: number) => Promise<{
+        getTextContent: () => Promise<{
+          items: Array<{ str?: string; transform?: number[] }>;
+        }>;
+      }>;
+    }>;
+  };
+}
+
+let _pdfjsBrowserPromise: Promise<PdfjsMinimal> | null = null;
+
+async function loadPdfjsBrowser(): Promise<PdfjsMinimal> {
+  if (_pdfjsBrowserPromise) return _pdfjsBrowserPromise;
+  _pdfjsBrowserPromise = (async () => {
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore
+    const mod = await import(/* webpackIgnore: true */ "/pdf.min.mjs");
+    const lib: PdfjsMinimal = mod.default ?? mod;
+    lib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+    return lib;
+  })();
+  _pdfjsBrowserPromise.catch(() => { _pdfjsBrowserPromise = null; });
+  return _pdfjsBrowserPromise;
+}
+
 function pipeLabel(stepId: string): string {
   return PIPELINE_STEPS.find((s) => s.id === stepId)?.label ?? stepId;
 }
@@ -32,8 +68,7 @@ interface PdfLine {
 export async function extractPdfLines(
   file: File
 ): Promise<{ lines: PdfLine[]; pages: number; rawChars: number; fullText: string }> {
-  const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+  const pdfjsLib = await loadPdfjsBrowser();
 
   const buffer = await file.arrayBuffer();
   const doc = await pdfjsLib.getDocument({ data: buffer }).promise;
@@ -50,13 +85,14 @@ export async function extractPdfLines(
     const lineTexts: string[] = [];
 
     for (const item of content.items) {
-      if (!("str" in item) || !item.str.trim()) continue;
-      rawChars += item.str.length;
+      const str = ("str" in item ? item.str : undefined) ?? "";
+      if (!str.trim()) continue;
+      rawChars += str.length;
       const yKey = Math.round(
         "transform" in item ? (item.transform as number[])[5] : 0
       );
       if (!buckets.has(yKey)) buckets.set(yKey, []);
-      buckets.get(yKey)!.push(item.str);
+      buckets.get(yKey)!.push(str);
     }
 
     const sortedYs = [...buckets.keys()].sort((a, b) => b - a);
