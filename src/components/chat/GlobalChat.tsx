@@ -1,11 +1,27 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MessageCircle, X, Send, Trash2 } from "lucide-react";
+import { MessageCircle, X, Send, Trash2, CloudOff, Cloud } from "lucide-react";
+import { useAuth } from "@/lib/authContext";
+import { fetchWithAuth } from "@/lib/fetchWithAuth";
 
 interface ChatMsg {
   role: "user" | "assistant";
   content: string;
+}
+
+const LS_KEY = "dividend-iq-chat";
+
+function loadLocalChat(): ChatMsg[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveLocalChat(msgs: ChatMsg[]) {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(msgs)); } catch { /* noop */ }
 }
 
 const QUICK_ACTIONS = [
@@ -15,33 +31,70 @@ const QUICK_ACTIONS = [
   "How to compare peers?",
 ];
 
-const LS_KEY = "dividend-iq-chat";
-
-function loadChat(): ChatMsg[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
-}
-
-function saveChat(msgs: ChatMsg[]) {
-  try { localStorage.setItem(LS_KEY, JSON.stringify(msgs)); } catch { /* noop */ }
-}
-
 export function GlobalChat() {
+  const { user } = useAuth();
+  const isLoggedIn = !!user;
+
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [threadId, setThreadId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { setMessages(loadChat()); }, []);
-  useEffect(() => { saveChat(messages); }, [messages]);
+  // Scroll to bottom when messages change
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, open]);
+
+  // Load messages based on auth state
+  useEffect(() => {
+    if (isLoggedIn) {
+      loadDbChat();
+    } else {
+      setMessages(loadLocalChat());
+      setThreadId(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoggedIn]);
+
+  const loadDbChat = useCallback(async () => {
+    try {
+      const res = await fetchWithAuth("/api/chat/threads");
+      if (res.status === 401) return;
+      const data = await res.json();
+      const threads: Array<{ id: string }> = data.threads ?? [];
+
+      if (threads.length === 0) {
+        // Create a default thread for the user
+        const created = await fetchWithAuth("/api/chat/threads", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: "My chat" }),
+        });
+        if (created.ok) {
+          const { thread } = await created.json();
+          setThreadId(thread.id);
+          setMessages([]);
+        }
+        return;
+      }
+
+      const latest = threads[0];
+      setThreadId(latest.id);
+
+      const msgRes = await fetchWithAuth(`/api/chat/threads/${latest.id}/messages`);
+      if (!msgRes.ok) return;
+      const msgData = await msgRes.json();
+      const dbMsgs: Array<{ role: string; content: string }> = msgData.messages ?? [];
+      setMessages(
+        dbMsgs
+          .filter((m) => m.role === "user" || m.role === "assistant")
+          .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }))
+      );
+    } catch { /* noop */ }
+  }, []);
 
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim() || loading) return;
@@ -60,35 +113,87 @@ export function GlobalChat() {
       });
       const data = await res.json();
       const reply = data.message ?? data.error ?? "Sorry, something went wrong.";
-      setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+      const assistantMsg: ChatMsg = { role: "assistant", content: reply };
+      const withReply = [...updated, assistantMsg];
+      setMessages(withReply);
+
+      if (isLoggedIn && threadId) {
+        // Persist both messages to DB (fire-and-forget)
+        fetchWithAuth(`/api/chat/threads/${threadId}/messages`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messages: [userMsg, assistantMsg],
+          }),
+        }).catch(() => {});
+      } else {
+        // Guest mode: save to localStorage
+        saveLocalChat(withReply);
+      }
     } catch {
-      setMessages((prev) => [...prev, { role: "assistant", content: "Failed to reach the assistant. Check your connection." }]);
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: "Failed to reach the assistant. Check your connection." },
+      ]);
     } finally {
       setLoading(false);
     }
-  }, [messages, loading]);
+  }, [messages, loading, isLoggedIn, threadId]);
 
-  const clearChat = () => {
+  const clearChat = async () => {
     setMessages([]);
-    localStorage.removeItem(LS_KEY);
+    if (isLoggedIn && threadId) {
+      // Create a fresh thread so old messages are archived
+      try {
+        const res = await fetchWithAuth("/api/chat/threads", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: "My chat" }),
+        });
+        if (res.ok) {
+          const { thread } = await res.json();
+          setThreadId(thread.id);
+        }
+      } catch { /* noop */ }
+    } else {
+      localStorage.removeItem(LS_KEY);
+    }
   };
 
   return (
     <>
-      {/* Floating chat panel */}
       {open && (
         <div className="fixed bottom-20 right-6 z-50 flex h-[500px] w-[380px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white/95 shadow-2xl backdrop-blur-xl">
           {/* Header */}
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
             <div>
               <h3 className="text-sm font-bold text-slate-900">Dividend IQ Assistant</h3>
-              <p className="text-[10px] text-slate-400">Ask about financials, navigation, or analysis</p>
+              <p className="flex items-center gap-1 text-[10px] text-slate-400">
+                {isLoggedIn ? (
+                  <>
+                    <Cloud className="h-3 w-3 text-emerald-500" aria-hidden />
+                    Signed in — chat saved to your account
+                  </>
+                ) : (
+                  <>
+                    <CloudOff className="h-3 w-3 text-amber-400" aria-hidden />
+                    Guest mode — chat is local only
+                  </>
+                )}
+              </p>
             </div>
             <div className="flex items-center gap-1">
-              <button onClick={clearChat} className="rounded-md p-1 text-slate-300 transition hover:bg-slate-100 hover:text-slate-500" title="Clear chat">
+              <button
+                onClick={clearChat}
+                className="rounded-md p-1 text-slate-300 transition hover:bg-slate-100 hover:text-slate-500"
+                title="Clear chat"
+              >
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
-              <button onClick={() => setOpen(false)} className="rounded-md p-1 text-slate-300 transition hover:bg-slate-100 hover:text-slate-500">
+              <button
+                onClick={() => setOpen(false)}
+                className="rounded-md p-1 text-slate-300 transition hover:bg-slate-100 hover:text-slate-500"
+              >
                 <X className="h-4 w-4" />
               </button>
             </div>
@@ -96,7 +201,6 @@ export function GlobalChat() {
 
           {/* Messages */}
           <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-            {/* Welcome message */}
             {messages.length === 0 && (
               <div className="space-y-3">
                 <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
@@ -106,7 +210,7 @@ export function GlobalChat() {
                   {QUICK_ACTIONS.map((q) => (
                     <button
                       key={q}
-                      onClick={() => { sendMessage(q); }}
+                      onClick={() => sendMessage(q)}
                       className="block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-600 transition hover:border-primary/30 hover:bg-primary/5"
                     >
                       {q}
@@ -120,9 +224,7 @@ export function GlobalChat() {
               <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                 <div
                   className={`max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed ${
-                    msg.role === "user"
-                      ? "bg-primary text-white"
-                      : "bg-slate-100 text-slate-700"
+                    msg.role === "user" ? "bg-primary text-white" : "bg-slate-100 text-slate-700"
                   }`}
                 >
                   <div className="whitespace-pre-wrap">{msg.content}</div>
@@ -152,7 +254,12 @@ export function GlobalChat() {
                 placeholder="Ask anything..."
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(input); } }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage(input);
+                  }
+                }}
                 disabled={loading}
               />
               <button
@@ -174,6 +281,7 @@ export function GlobalChat() {
           open ? "bg-slate-700 text-white" : "bg-primary text-white animate-pulse"
         }`}
         style={{ animationIterationCount: 3 }}
+        aria-label={open ? "Close chat" : "Open chat"}
       >
         {open ? <X className="h-5 w-5" /> : <MessageCircle className="h-5 w-5" />}
       </button>

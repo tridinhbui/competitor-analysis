@@ -177,8 +177,9 @@ describe("checkModuleReadiness", () => {
   });
 
   it("unknown module is not ready", () => {
+    const unknownModule = "nonexistent" as unknown as Parameters<typeof checkModuleReadiness>[0];
     const r = checkModuleReadiness(
-      "nonexistent" as any,
+      unknownModule,
       10,
       10,
       filing

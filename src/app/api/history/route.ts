@@ -3,19 +3,42 @@ import { supabase } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
-/** GET /api/history — list all analysis threads */
-export async function GET() {
-  // Note: analysis_history table must be created in Supabase dashboard.
-  // See supabase-schema.sql for the CREATE TABLE statement.
+/** Phase 2 strict: require a valid Bearer token. Returns user id or 401 response. */
+async function requireUserId(
+  req: NextRequest
+): Promise<{ userId: string } | NextResponse> {
+  const authHeader = req.headers.get("authorization")?.trim();
+  if (!authHeader?.toLowerCase().startsWith("bearer ")) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const token = authHeader.slice(7).trim();
+  if (!token) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  return { userId: data.user.id };
+}
+
+/** GET /api/history — list analysis threads for the signed-in user only */
+export async function GET(req: NextRequest) {
+  const result = await requireUserId(req);
+  if (result instanceof NextResponse) return result;
+  const { userId } = result;
 
   const { data, error } = await supabase
     .from("analysis_history")
     .select("id, ticker, company_name, source, period_end, quarter_label, title, created_at")
+    .eq("user_id", userId)
     .order("created_at", { ascending: false })
     .limit(100);
 
   if (error) {
-    // Table might not exist yet
     if (error.message.includes("does not exist")) {
       return NextResponse.json({ threads: [] });
     }
@@ -36,11 +59,16 @@ export async function GET() {
   return NextResponse.json({ threads });
 }
 
-/** POST /api/history — save a new analysis thread */
+/** POST /api/history — save a new analysis thread for the signed-in user */
 export async function POST(req: NextRequest) {
+  const result = await requireUserId(req);
+  if (result instanceof NextResponse) return result;
+  const { userId } = result;
+
   const body = await req.json();
 
   const { error } = await supabase.from("analysis_history").insert({
+    user_id: userId,
     ticker: body.ticker ?? null,
     company_name: body.companyName ?? null,
     source: body.source ?? "sec",

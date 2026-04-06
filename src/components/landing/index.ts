@@ -1,0 +1,15 @@
+export { MarketStrip, DEMO_TICKERS } from "./MarketStrip";
+export type { MockTicker } from "./MarketStrip";
+export { LandingHero } from "./LandingHero";
+export { ExtractionTimeline, EXTRACTION_STEPS } from "./ExtractionTimeline";
+export { MockResultPreview } from "./MockResultPreview";
+export { DemoDropZone } from "./DemoDropZone";
+export type { DemoRunState } from "./DemoDropZone";
+export { FeatureGrid } from "./FeatureGrid";
+export { ProjectIntroCards } from "./ProjectIntroCards";
+export { ProblemSolutionSection } from "./ProblemSolutionSection";
+export { HowItWorksSection } from "./HowItWorksSection";
+export { HomeLanding } from "./HomeLanding";
+export { PricingSection } from "./PricingSection";
+export { PaymentSection } from "./PaymentSection";
+export { DisclaimerSection } from "./DisclaimerSection";

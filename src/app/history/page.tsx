@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import type { HistoryThread } from "@/types/history";
 import type { FullAnalysis } from "@/types/analysis";
 import { AnalysisDashboard } from "@/components/filings/AnalysisDashboard";
-import { ArrowLeft, Clock, FileText, Globe, Loader2, Search, Trash2 } from "lucide-react";
+import { ArrowLeft, Clock, FileText, Globe, Loader2, LogIn, Search, Trash2 } from "lucide-react";
+import { fetchWithAuth } from "@/lib/fetchWithAuth";
 
 export default function HistoryPage() {
   const [threads, setThreads] = useState<HistoryThread[]>([]);
@@ -13,11 +14,18 @@ export default function HistoryPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<{ analysis: FullAnalysis; title: string } | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [unauthorized, setUnauthorized] = useState(false);
 
   const fetchThreads = useCallback(async () => {
     setLoading(true);
+    setUnauthorized(false);
     try {
-      const res = await fetch("/api/history");
+      const res = await fetchWithAuth("/api/history");
+      if (res.status === 401) {
+        setUnauthorized(true);
+        setThreads([]);
+        return;
+      }
       const data = await res.json();
       setThreads(data.threads ?? []);
     } finally {
@@ -31,7 +39,7 @@ export default function HistoryPage() {
     setSelectedId(id);
     setLoadingDetail(true);
     try {
-      const res = await fetch(`/api/history/${id}`);
+      const res = await fetchWithAuth(`/api/history/${id}`);
       const data = await res.json();
       setDetail({ analysis: data.analysis, title: data.title });
     } finally {
@@ -40,7 +48,7 @@ export default function HistoryPage() {
   };
 
   const handleDelete = async (id: string) => {
-    await fetch(`/api/history/${id}`, { method: "DELETE" });
+    await fetchWithAuth(`/api/history/${id}`, { method: "DELETE" });
     setThreads((prev) => prev.filter((t) => t.id !== id));
     if (selectedId === id) {
       setSelectedId(null);
@@ -108,6 +116,12 @@ export default function HistoryPage() {
       {loading ? (
         <div className="flex items-center justify-center py-20">
           <Loader2 className="h-5 w-5 animate-spin text-primary" />
+        </div>
+      ) : unauthorized ? (
+        <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-amber-200 bg-amber-50/70 p-10 text-center">
+          <LogIn className="h-6 w-6 text-amber-500" />
+          <p className="text-sm font-semibold text-slate-800">Please sign in to view your history.</p>
+          <p className="text-xs text-slate-500">Your analyses are saved per account. Sign in to access them.</p>
         </div>
       ) : filtered.length === 0 ? (
         <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-400">
