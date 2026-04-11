@@ -96,6 +96,25 @@ export function GlobalChat() {
     } catch { /* noop */ }
   }, []);
 
+  const ensureThreadId = useCallback(async (): Promise<string | null> => {
+    if (!isLoggedIn) return null;
+    if (threadId) return threadId;
+    try {
+      const created = await fetchWithAuth("/api/chat/threads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: "My chat" }),
+      });
+      if (!created.ok) return null;
+      const { thread } = await created.json();
+      if (!thread?.id) return null;
+      setThreadId(thread.id);
+      return thread.id as string;
+    } catch {
+      return null;
+    }
+  }, [isLoggedIn, threadId]);
+
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim() || loading) return;
 
@@ -117,15 +136,21 @@ export function GlobalChat() {
       const withReply = [...updated, assistantMsg];
       setMessages(withReply);
 
-      if (isLoggedIn && threadId) {
-        // Persist both messages to DB (fire-and-forget)
-        fetchWithAuth(`/api/chat/threads/${threadId}/messages`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            messages: [userMsg, assistantMsg],
-          }),
-        }).catch(() => {});
+      if (isLoggedIn) {
+        // Ensure thread exists before persisting, avoids first-message race.
+        const resolvedThreadId = await ensureThreadId();
+        if (resolvedThreadId) {
+          await fetchWithAuth(`/api/chat/threads/${resolvedThreadId}/messages`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              messages: [userMsg, assistantMsg],
+            }),
+          });
+        } else {
+          // Fallback so message isn't lost if DB persistence fails.
+          saveLocalChat(withReply);
+        }
       } else {
         // Guest mode: save to localStorage
         saveLocalChat(withReply);
@@ -138,7 +163,7 @@ export function GlobalChat() {
     } finally {
       setLoading(false);
     }
-  }, [messages, loading, isLoggedIn, threadId]);
+  }, [messages, loading, isLoggedIn, ensureThreadId]);
 
   const clearChat = async () => {
     setMessages([]);

@@ -15,6 +15,7 @@ interface AuthContextValue {
   session: Session | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<string | null>;
+  signInWithGoogle: () => Promise<string | null>;
   signUp: (email: string, password: string) => Promise<string | null>;
   signOut: () => Promise<void>;
   /** Always returns the current access_token or null */
@@ -48,6 +49,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return error?.message ?? null;
   }, []);
 
+  const signInWithGoogle = useCallback(async () => {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: `${window.location.origin}/analyze`,
+      },
+    });
+    return error?.message ?? null;
+  }, []);
+
   const signUp = useCallback(async (email: string, password: string) => {
     const { error } = await supabase.auth.signUp({ email, password });
     return error?.message ?? null;
@@ -60,7 +71,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const getAccessToken = useCallback(() => session?.access_token ?? null, [session]);
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, signIn, signUp, signOut, getAccessToken }}>
+    <AuthContext.Provider value={{ user, session, loading, signIn, signInWithGoogle, signUp, signOut, getAccessToken }}>
       {children}
     </AuthContext.Provider>
   );
