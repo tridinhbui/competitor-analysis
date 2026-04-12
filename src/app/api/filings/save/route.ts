@@ -6,6 +6,11 @@
  */
 
 import { saveFiling } from "@/lib/filingStorage";
+import {
+  extractFiscalQuarterHint,
+  normalizeCompanyName,
+  resolveTicker,
+} from "@/lib/filingIdentity";
 import type { FullAnalysis } from "@/types/analysis";
 
 export const runtime = "nodejs";
@@ -24,21 +29,31 @@ export async function POST(request: Request) {
       return Response.json({ error: "Missing analysis" }, { status: 400 });
     }
 
-    const rawTicker = ticker || analysis.meta.ticker || "";
-    if (!rawTicker.trim()) {
-      return Response.json(
-        { error: "A valid ticker is required. Please provide ticker in the request body or ensure analysis.meta.ticker is set." },
-        { status: 400 }
-      );
-    }
-    const resolvedTicker = rawTicker.toUpperCase();
-    // Reject placeholder tickers
-    if (resolvedTicker === "UNKNOWN" || resolvedTicker === "N/A" || resolvedTicker === "UNDEFINED") {
-      return Response.json(
-        { error: `Invalid ticker "${resolvedTicker}". Please provide a real stock ticker before saving.` },
-        { status: 400 }
-      );
-    }
+    const resolvedTicker = resolveTicker({
+      inputTicker: ticker,
+      metaTicker: analysis.meta.ticker,
+      fileName: analysis.meta.fileName,
+      companyName: analysis.meta.companyName,
+    });
+    const resolvedCompanyName = normalizeCompanyName({
+      candidate: analysis.meta.companyName,
+      fileName: analysis.meta.fileName,
+      ticker: resolvedTicker,
+    });
+    const quarterHint = extractFiscalQuarterHint(
+      analysis.meta.fileName,
+      analysis.meta.companyName
+    );
+
+    const normalizedAnalysis: FullAnalysis = {
+      ...analysis,
+      meta: {
+        ...analysis.meta,
+        ticker: resolvedTicker,
+        companyName: resolvedCompanyName,
+      },
+    };
+
     const resolvedPeriod =
       periodEnd ||
       analysis.meta.periodEnd ||
@@ -49,7 +64,8 @@ export async function POST(request: Request) {
       resolvedTicker,
       resolvedPeriod,
       resolvedSource,
-      analysis
+      normalizedAnalysis,
+      quarterHint
     );
 
     return Response.json({

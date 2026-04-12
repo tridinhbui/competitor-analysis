@@ -10,9 +10,10 @@ interface Props {
 }
 
 export function QuarterTimeline({ slots, onSelectSlot, activeSlotLabel }: Props) {
-  if (slots.length === 0) return null;
-
   const years = [...new Set(slots.map((slot) => slot.fiscalYear))].sort((a, b) => b - a);
+  const visibleYears = years;
+
+  if (slots.length === 0) return null;
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-subtle">
@@ -37,7 +38,7 @@ export function QuarterTimeline({ slots, onSelectSlot, activeSlotLabel }: Props)
         </div>
       </div>
       <div className="space-y-3">
-        {years.map((year) => {
+        {visibleYears.map((year) => {
           const yearSlots = slots
             .filter((slot) => slot.fiscalYear === year)
             .sort((a, b) => a.fiscalQuarter - b.fiscalQuarter);
@@ -55,7 +56,7 @@ export function QuarterTimeline({ slots, onSelectSlot, activeSlotLabel }: Props)
                   </p>
                 </div>
                 <div className="text-[10px] text-slate-400">
-                  {yearSlots.filter((slot) => slot.present).length}/4 complete
+                  {yearSlots.filter((slot) => slot.present).length}/{yearSlots.length} complete
                 </div>
               </div>
 

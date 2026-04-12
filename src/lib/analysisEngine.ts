@@ -52,11 +52,33 @@ function pct(a: number | null, b: number | null): number | null {
 
 export function buildBalanceSheet(bs: BSItem[]): BalanceSheet {
   const totalAssets = find(bs, "Assets");
-  const totalLiabilities = find(bs, "Liabilities");
-  const totalEquity = find(
+  const liabilitiesAndEquity = find(bs, "LiabilitiesAndStockholdersEquity");
+  let totalLiabilities = find(bs, "Liabilities");
+  let totalEquity = find(
     bs,
     "StockholdersEquity"
   );
+
+  // SEC filings sometimes omit explicit "Total Liabilities" but provide:
+  // - Total liabilities and equity
+  // - Total assets
+  // - Total equity
+  // Derive missing counterpart to avoid false reconciliation gaps.
+  if (totalLiabilities === 0 && totalEquity !== 0) {
+    if (liabilitiesAndEquity !== 0) {
+      totalLiabilities = Math.round(liabilitiesAndEquity - totalEquity);
+    } else if (totalAssets !== 0) {
+      totalLiabilities = Math.round(totalAssets - totalEquity);
+    }
+  }
+  if (totalEquity === 0 && totalLiabilities !== 0) {
+    if (liabilitiesAndEquity !== 0) {
+      totalEquity = Math.round(liabilitiesAndEquity - totalLiabilities);
+    } else if (totalAssets !== 0) {
+      totalEquity = Math.round(totalAssets - totalLiabilities);
+    }
+  }
+
   const cash = find(bs, "CashAndCashEquivalentsAtCarryingValue");
   const retained = find(bs, "RetainedEarningsAccumulatedDeficit");
 
@@ -120,11 +142,58 @@ export function buildCashFlow(cf: BSItem[]): CashFlowData {
     findOrNull(cf, "PaymentsOfDividendsCommonStock") ??
     findOrNull(cf, "PaymentsOfDividends");
   const netIncome = findOrNull(cf, "NetIncomeLoss");
+  const shareRepurchases = findOrNull(cf, "PaymentsForRepurchaseOfCommonStock");
+  const investingCashFlow = findOrNull(cf, "NetCashProvidedByInvestingActivities");
+  const financingCashFlowDirect = findOrNull(cf, "NetCashProvidedByFinancingActivities");
+
+  const debtIssuance = findOrNull(
+    cf,
+    "ProceedsFromIssuanceOfLongTermDebt",
+    "ProceedsFromDebt"
+  );
+  const ltDebtRepayments = findOrNull(cf, "RepaymentsOfLongTermDebt");
+  const debtRepaymentsMixed = findOrNull(cf, "RepaymentsOfDebt");
+  const stDebtRepayments =
+    findOrNull(cf, "RepaymentsOfShortTermDebt") ??
+    findOrNull(cf, "RepaymentsOfCommercialPaper");
 
   const freeCashFlow =
     operatingCashFlow != null && capex != null
       ? operatingCashFlow - Math.abs(capex)
       : null;
+
+  let financingCashFlow = financingCashFlowDirect;
+  if (financingCashFlow == null) {
+    let derived = 0;
+    let hasAnyFinComponent = false;
+
+    if (debtIssuance != null) {
+      derived += Math.abs(debtIssuance);
+      hasAnyFinComponent = true;
+    }
+    if (ltDebtRepayments != null) {
+      derived -= Math.abs(ltDebtRepayments);
+      hasAnyFinComponent = true;
+    }
+    if (debtRepaymentsMixed != null) {
+      derived -= Math.abs(debtRepaymentsMixed);
+      hasAnyFinComponent = true;
+    }
+    if (stDebtRepayments != null) {
+      derived -= Math.abs(stDebtRepayments);
+      hasAnyFinComponent = true;
+    }
+    if (dividendsPaid != null) {
+      derived -= Math.abs(dividendsPaid);
+      hasAnyFinComponent = true;
+    }
+    if (shareRepurchases != null) {
+      derived -= Math.abs(shareRepurchases);
+      hasAnyFinComponent = true;
+    }
+
+    financingCashFlow = hasAnyFinComponent ? Math.round(derived) : null;
+  }
 
   return {
     operatingCashFlow,
@@ -132,6 +201,9 @@ export function buildCashFlow(cf: BSItem[]): CashFlowData {
     freeCashFlow,
     dividendsPaid: dividendsPaid != null ? Math.abs(dividendsPaid) : null,
     netIncome,
+    shareRepurchases: shareRepurchases != null ? Math.abs(shareRepurchases) : null,
+    investingCashFlow,
+    financingCashFlow,
   };
 }
 
@@ -228,7 +300,9 @@ export function buildRatiosFull(
 
   const ebitda = income?.ebitda ?? null;
   const operatingIncome = income?.operatingIncome ?? findOrNull(allItems, "OperatingIncomeLoss");
-  const interestExpense = income?.interestExpense ?? null;
+  const interestExpense =
+    income?.interestExpense ??
+    findOrNull(allItems, "InterestExpense", "InterestExpenseNet");
 
   // Fallback EBITDA if income statement couldn't derive it
   const ebitdaFinal = ebitda ?? (cf.netIncome != null ? cf.netIncome * 1.35 : null);

@@ -545,11 +545,37 @@ export function AnalysisDashboard({ result, onExport }: Props) {
             { name: "Net Income", amt: cf.netIncome ?? 0 },
           ];
 
-          const buyback = cfItems.find(i => i.tag === "PaymentsForRepurchaseOfCommonStock")?.value ?? null;
+          const buyback = cf.shareRepurchases ?? cfItems.find(i => i.tag === "PaymentsForRepurchaseOfCommonStock")?.value ?? null;
           const debtIssuance = cfItems.find(i => i.tag === "ProceedsFromIssuanceOfLongTermDebt")?.value ?? null;
-          const debtRepay = cfItems.find(i => i.tag === "RepaymentsOfLongTermDebt")?.value ?? null;
-          const finCF = cfItems.find(i => i.tag === "NetCashProvidedByFinancingActivities")?.value ?? null;
-          const invCF = cfItems.find(i => i.tag === "NetCashProvidedByInvestingActivities")?.value ?? null;
+          const debtRepay =
+            cfItems.find(i => i.tag === "RepaymentsOfLongTermDebt")?.value ??
+            cfItems.find(i => i.tag === "RepaymentsOfDebt")?.value ??
+            cfItems.find(i => i.tag === "RepaymentsOfShortTermDebt")?.value ??
+            cfItems.find(i => i.tag === "RepaymentsOfCommercialPaper")?.value ??
+            null;
+          let finCF = cf.financingCashFlow ?? cfItems.find(i => i.tag === "NetCashProvidedByFinancingActivities")?.value ?? null;
+          if (finCF == null) {
+            let derivedFin = 0;
+            let hasDerivedFinPart = false;
+            if (debtIssuance != null) {
+              derivedFin += Math.abs(debtIssuance);
+              hasDerivedFinPart = true;
+            }
+            if (debtRepay != null) {
+              derivedFin -= Math.abs(debtRepay);
+              hasDerivedFinPart = true;
+            }
+            if (cf.dividendsPaid != null) {
+              derivedFin -= Math.abs(cf.dividendsPaid);
+              hasDerivedFinPart = true;
+            }
+            if (buyback != null) {
+              derivedFin -= Math.abs(buyback);
+              hasDerivedFinPart = true;
+            }
+            finCF = hasDerivedFinPart ? Math.round(derivedFin) : null;
+          }
+          const invCF = cf.investingCashFlow ?? cfItems.find(i => i.tag === "NetCashProvidedByInvestingActivities")?.value ?? null;
 
           return (
             <div className="space-y-4">

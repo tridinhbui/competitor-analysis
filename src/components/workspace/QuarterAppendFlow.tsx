@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import type { FullAnalysis, StepEvent } from "@/types/analysis";
 import type { AppendReview, TimelineSlot } from "@/types/competitor";
 import { QuarterReviewPanel } from "./QuarterReviewPanel";
@@ -29,6 +29,8 @@ interface Props {
   onAppended?: (timeline: TimelineSlot[], quarterCount: number) => void;
   /** Called to close the flow */
   onClose?: () => void;
+  /** Auto-open file picker when flow is opened from timeline slot */
+  autoOpenPicker?: boolean;
 }
 
 export function QuarterAppendFlow({
@@ -36,6 +38,7 @@ export function QuarterAppendFlow({
   slot,
   onAppended,
   onClose,
+  autoOpenPicker = false,
 }: Props) {
   const [phase, setPhase] = useState<Phase>("input");
   const [events, setEvents] = useState<StepEvent[]>([]);
@@ -47,7 +50,20 @@ export function QuarterAppendFlow({
     quarterCount: number;
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const autoOpenedRef = useRef(false);
   const [dragActive, setDragActive] = useState(false);
+
+  useEffect(() => {
+    if (!autoOpenPicker || phase !== "input" || autoOpenedRef.current) return;
+    autoOpenedRef.current = true;
+    const timer = window.setTimeout(() => {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+        fileInputRef.current.click();
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [autoOpenPicker, phase]);
 
   const applyPeriodOverride = useCallback(
     (base: FullAnalysis): FullAnalysis => ({
@@ -176,6 +192,7 @@ export function QuarterAppendFlow({
     setError("");
     setAppendResult(null);
     setDragActive(false);
+    autoOpenedRef.current = false;
   };
 
   // ------ Render ------
@@ -294,7 +311,11 @@ export function QuarterAppendFlow({
       {/* PDF upload */}
       <button
         type="button"
-        onClick={() => fileInputRef.current?.click()}
+        onClick={() => {
+          if (!fileInputRef.current) return;
+          fileInputRef.current.value = "";
+          fileInputRef.current.click();
+        }}
         onDragEnter={handleDragEnter}
         onDragLeave={handleDragLeave}
         onDragOver={handleDragOver}
@@ -319,6 +340,7 @@ export function QuarterAppendFlow({
         onChange={(e) => {
           const file = e.target.files?.[0];
           if (file) analyzePdfFile(file);
+          if (fileInputRef.current) fileInputRef.current.value = "";
         }}
       />
     </div>

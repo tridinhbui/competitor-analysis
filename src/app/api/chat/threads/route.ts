@@ -1,9 +1,20 @@
+import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
-async function requireUserId(req: NextRequest): Promise<{ userId: string } | NextResponse> {
+function createAuthedClient(token: string) {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { global: { headers: { Authorization: `Bearer ${token}` } } }
+  );
+}
+
+async function requireUserId(
+  req: NextRequest
+): Promise<{ userId: string; token: string } | NextResponse> {
   const authHeader = req.headers.get("authorization")?.trim();
   if (!authHeader?.toLowerCase().startsWith("bearer ")) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -15,16 +26,17 @@ async function requireUserId(req: NextRequest): Promise<{ userId: string } | Nex
   if (error || !data.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  return { userId: data.user.id };
+  return { userId: data.user.id, token };
 }
 
-/** GET /api/chat/threads — list threads for the signed-in user */
+/** GET /api/chat/threads - list threads for the signed-in user */
 export async function GET(req: NextRequest) {
   const result = await requireUserId(req);
   if (result instanceof NextResponse) return result;
-  const { userId } = result;
+  const { userId, token } = result;
+  const db = createAuthedClient(token);
 
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from("chat_threads")
     .select("id, title, created_at, updated_at")
     .eq("user_id", userId)
@@ -35,16 +47,17 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ threads: data ?? [] });
 }
 
-/** POST /api/chat/threads — create a new thread */
+/** POST /api/chat/threads - create a new thread */
 export async function POST(req: NextRequest) {
   const result = await requireUserId(req);
   if (result instanceof NextResponse) return result;
-  const { userId } = result;
+  const { userId, token } = result;
+  const db = createAuthedClient(token);
 
   const body = await req.json().catch(() => ({}));
   const title: string = body.title?.trim() || "New chat";
 
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from("chat_threads")
     .insert({ user_id: userId, title })
     .select("id, title, created_at, updated_at")

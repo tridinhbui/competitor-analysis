@@ -9,6 +9,7 @@
 import type { FullAnalysis, BSItem } from "@/types/analysis";
 import type { Filing, PeerType, AnalysisModuleId } from "@/types/competitor";
 import { deriveQuarter } from "./competitorService";
+import { extractFiscalQuarterHint } from "./filingIdentity";
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -104,7 +105,15 @@ export function extractMetrics(
   peerType: PeerType = "diversified-protein"
 ): QuarterMetrics {
   const a = filing.analysis;
-  const q = deriveQuarter(filing.periodEnd);
+  const hint = extractFiscalQuarterHint(a.meta.fileName, a.meta.companyName);
+  const q = filing.quarter ?? (hint
+    ? {
+        periodEnd: filing.periodEnd,
+        fiscalYear: hint.fiscalYear,
+        fiscalQuarter: hint.fiscalQuarter,
+        label: hint.label,
+      }
+    : deriveQuarter(filing.periodEnd));
   const cf = a.cfItems ?? [];
 
   const revenue = findCfItem(cf, "Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet");

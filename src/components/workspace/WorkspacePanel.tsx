@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import type {
   WorkspaceReadiness,
   PeerType,
@@ -22,6 +22,7 @@ import {
   AlertTriangle,
   Boxes,
   RefreshCw,
+  RotateCcw,
   Plus,
 } from "lucide-react";
 
@@ -182,6 +183,10 @@ export function WorkspacePanel({ ticker }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [peerUpdating, setPeerUpdating] = useState(false);
   const [activeSlot, setActiveSlot] = useState<TimelineSlot | null>(null);
+  const [autoOpenPicker, setAutoOpenPicker] = useState(false);
+  const [resettingUploads, setResettingUploads] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const appendFlowRef = useRef<HTMLDivElement | null>(null);
 
   const fetchReadiness = useCallback(async (t: string) => {
     setLoading(true);
@@ -193,6 +198,7 @@ export function WorkspacePanel({ ticker }: Props) {
         setError(data.error || `HTTP ${resp.status}`);
         setReadiness(null);
       } else {
+        setActionError(null);
         setReadiness(await resp.json());
       }
     } catch (e) {
@@ -205,6 +211,20 @@ export function WorkspacePanel({ ticker }: Props) {
   useEffect(() => {
     if (ticker) fetchReadiness(ticker);
   }, [ticker, fetchReadiness]);
+
+  useEffect(() => {
+    setActiveSlot(null);
+    setAutoOpenPicker(false);
+    setActionError(null);
+  }, [ticker]);
+
+  useEffect(() => {
+    if (!activeSlot || !autoOpenPicker) return;
+    appendFlowRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+  }, [activeSlot, autoOpenPicker]);
 
   const handlePeerTypeChange = async (newType: PeerType) => {
     if (!ticker || peerUpdating) return;
@@ -221,6 +241,38 @@ export function WorkspacePanel({ ticker }: Props) {
       setPeerUpdating(false);
     }
   };
+
+  const handleResetUploads = useCallback(async () => {
+    if (!ticker || resettingUploads) return;
+
+    const confirmed = window.confirm(
+      `Clear all uploaded workspace quarters for ${ticker}? Data Source rows will stay unchanged.`
+    );
+    if (!confirmed) return;
+
+    setResettingUploads(true);
+    setActionError(null);
+    try {
+      const resp = await fetch("/api/workspace/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker }),
+      });
+
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+        throw new Error(data.error || `HTTP ${resp.status}`);
+      }
+
+      setActiveSlot(null);
+      setAutoOpenPicker(false);
+      await fetchReadiness(ticker);
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Failed to reset workspace uploads");
+    } finally {
+      setResettingUploads(false);
+    }
+  }, [ticker, resettingUploads, fetchReadiness]);
 
   // No ticker selected
   if (!ticker) {
@@ -281,11 +333,26 @@ export function WorkspacePanel({ ticker }: Props) {
               onClick={() => {
                 const firstMissing = readiness.timeline?.find((slot) => !slot.present) ?? readiness.timeline?.[0] ?? null;
                 setActiveSlot(firstMissing);
+                setAutoOpenPicker(false);
               }}
               className="inline-flex items-center gap-1 rounded-md bg-primary px-2.5 py-1.5 text-[11px] font-semibold text-white shadow-subtle transition hover:opacity-90"
             >
               <Plus className="h-3.5 w-3.5" />
               Upload Quarter
+            </button>
+            <button
+              type="button"
+              onClick={handleResetUploads}
+              disabled={resettingUploads}
+              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              title="Clear workspace upload history for this company only"
+            >
+              {resettingUploads ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RotateCcw className="h-3.5 w-3.5" />
+              )}
+              Reset uploads
             </button>
             <button
               onClick={() => fetchReadiness(company.ticker)}
@@ -296,6 +363,11 @@ export function WorkspacePanel({ ticker }: Props) {
             </button>
           </div>
         </div>
+        {actionError ? (
+          <div className="border-t border-slate-100 px-4 py-2 text-[11px] text-red-600">
+            {actionError}
+          </div>
+        ) : null}
 
         <div className="grid grid-cols-3 divide-x divide-slate-100 px-1 py-3">
           {/* Latest quarter */}
@@ -348,17 +420,25 @@ export function WorkspacePanel({ ticker }: Props) {
 
       {/* Append flow */}
       {activeSlot && (
-        <div className="rounded-xl border border-primary/20 bg-primary/[0.02] p-4">
+        <div
+          ref={appendFlowRef}
+          className="rounded-xl border border-primary/20 bg-primary/[0.02] p-4"
+        >
           <QuarterAppendFlow
             key={`${company.ticker}-${activeSlot.label}`}
             prefilledTicker={company.ticker}
             slot={activeSlot}
+            autoOpenPicker={autoOpenPicker}
             onAppended={() => {
               setActiveSlot(null);
+              setAutoOpenPicker(false);
               // Refresh workspace readiness
               if (ticker) fetchReadiness(ticker);
             }}
-            onClose={() => setActiveSlot(null)}
+            onClose={() => {
+              setActiveSlot(null);
+              setAutoOpenPicker(false);
+            }}
           />
         </div>
       )}
@@ -366,8 +446,12 @@ export function WorkspacePanel({ ticker }: Props) {
       {/* Quarter coverage timeline */}
       {readiness.timeline && readiness.timeline.length > 0 && (
         <QuarterTimeline
+          key={company.ticker}
           slots={readiness.timeline}
-          onSelectSlot={setActiveSlot}
+          onSelectSlot={(slot) => {
+            setActiveSlot(slot);
+            setAutoOpenPicker(true);
+          }}
           activeSlotLabel={activeSlot?.label ?? null}
         />
       )}
