@@ -10,10 +10,13 @@
 import {
   loadRegistry,
   loadAllFilings,
-  listQuarters,
 } from "@/lib/filingStorage";
 import { computeWorkspaceReadiness } from "@/lib/competitorService";
 import { buildCoverageTimeline } from "@/lib/appendService";
+import {
+  filterFilingsForWorkspace,
+  getWorkspaceResetAt,
+} from "@/lib/workspaceReset";
 
 export const runtime = "nodejs";
 
@@ -40,15 +43,19 @@ export async function GET(request: Request) {
     }
 
     // Load all filings for the subject company
-    const filings = await loadAllFilings(ticker);
+    const resetAt = await getWorkspaceResetAt(ticker);
+    const allFilings = await loadAllFilings(ticker);
+    const filings = filterFilingsForWorkspace(allFilings, resetAt);
 
     // Find all peer companies (everything that isn't this company)
     const peers = await Promise.all(
       registry.companies
         .filter((c) => c.ticker !== ticker)
         .map(async (c) => {
-          const quarters = await listQuarters(c.ticker);
-          return { company: c, quarterCount: quarters.length };
+          const peerResetAt = await getWorkspaceResetAt(c.ticker);
+          const peerFilings = await loadAllFilings(c.ticker);
+          const peerVisibleFilings = filterFilingsForWorkspace(peerFilings, peerResetAt);
+          return { company: c, quarterCount: peerVisibleFilings.length };
         })
     );
 

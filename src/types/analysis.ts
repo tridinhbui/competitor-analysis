@@ -47,6 +47,10 @@ export interface BSItem {
   value: number; // USD millions
   period: string; // "2024-09-30"
   source: string; // "XBRL:us-gaap:Assets" or "PDF:page12"
+  /** Whether this value covers a quarter, year-to-date period, full year, or is a point-in-time balance */
+  period_type?: "quarter" | "ytd" | "annual" | "balance_sheet";
+  /** Extraction confidence: high = from table, medium = from MD&A, low = estimated */
+  confidence?: "high" | "medium" | "low";
 }
 
 /** SSE event streamed from the analysis pipeline. */
@@ -82,6 +86,9 @@ export interface CashFlowData {
   freeCashFlow: number | null;
   dividendsPaid: number | null;
   netIncome: number | null;
+  shareRepurchases: number | null;
+  investingCashFlow: number | null;
+  financingCashFlow: number | null;
 }
 
 /** Income statement summary (derived from cfItems) */
@@ -197,7 +204,7 @@ export interface FullAnalysis {
     /** Data quality: SEC=high, PDF+AI=medium, PDF+heuristic=low */
     confidence?: DataConfidence;
     /** How extraction was done (for transparency) */
-    extractionMethod?: "sec" | "pdf-ai" | "pdf-ai-section-split" | "pdf-vision" | "pdf-heuristic";
+    extractionMethod?: "sec" | "pdf-ai" | "pdf-ai+heuristic" | "pdf-ai-section-split" | "pdf-vision" | "pdf-heuristic";
   };
   balanceSheet: BalanceSheet;
   debtStructure: DebtStructure;

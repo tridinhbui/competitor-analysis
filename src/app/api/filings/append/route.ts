@@ -11,6 +11,11 @@
 import { loadAllFilings, saveFiling } from "@/lib/filingStorage";
 import { buildAppendReview, buildCoverageTimeline } from "@/lib/appendService";
 import { deriveQuarter } from "@/lib/competitorService";
+import { normalizeCompanyName, resolveTicker } from "@/lib/filingIdentity";
+import {
+  filterFilingsForWorkspace,
+  getWorkspaceResetAt,
+} from "@/lib/workspaceReset";
 import type { FullAnalysis } from "@/types/analysis";
 
 export const runtime = "nodejs";
@@ -45,37 +50,58 @@ export async function POST(request: Request) {
     );
   }
 
-  const upper = ticker.toUpperCase();
+  const upper = resolveTicker({
+    inputTicker: ticker,
+    metaTicker: analysis.meta.ticker,
+    fileName: analysis.meta.fileName,
+    companyName: analysis.meta.companyName,
+  });
+  const normalizedAnalysis: FullAnalysis = {
+    ...analysis,
+    meta: {
+      ...analysis.meta,
+      ticker: upper,
+      companyName: normalizeCompanyName({
+        candidate: analysis.meta.companyName,
+        fileName: analysis.meta.fileName,
+        ticker: upper,
+      }),
+    },
+  };
 
   try {
-    const existingFilings = await loadAllFilings(upper);
+    const resetAt = await getWorkspaceResetAt(upper);
+    const allExistingFilings = await loadAllFilings(upper);
+    const existingFilings = filterFilingsForWorkspace(allExistingFilings, resetAt);
 
     if (action === "review") {
-      const review = buildAppendReview(upper, analysis, existingFilings);
+      const review = buildAppendReview(upper, normalizedAnalysis, existingFilings);
       return Response.json(review);
     }
 
     // action === "confirm"
     const periodEnd =
-      analysis.meta.periodEnd ?? new Date().toISOString().split("T")[0];
+      normalizedAnalysis.meta.periodEnd ?? new Date().toISOString().split("T")[0];
     const quarter = deriveQuarter(periodEnd);
 
     const filing = await saveFiling(
       upper,
       periodEnd,
-      analysis.meta.source,
-      analysis
+      normalizedAnalysis.meta.source,
+      normalizedAnalysis,
+      null
     );
 
     // Enrich the saved filing with quarter metadata
     // (saveFiling writes the base filing; we update it here)
     filing.filingType = "10-Q";
     filing.filingDate =
-      analysis.meta.filingDate ?? new Date().toISOString().split("T")[0];
+      normalizedAnalysis.meta.filingDate ?? new Date().toISOString().split("T")[0];
     filing.quarter = quarter;
 
     // Rebuild timeline
-    const updatedFilings = await loadAllFilings(upper);
+    const updatedAllFilings = await loadAllFilings(upper);
+    const updatedFilings = filterFilingsForWorkspace(updatedAllFilings, resetAt);
     const timeline = buildCoverageTimeline(updatedFilings);
 
     return Response.json({

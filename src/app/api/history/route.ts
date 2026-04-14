@@ -1,12 +1,21 @@
+import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
-/** Phase 2 strict: require a valid Bearer token. Returns user id or 401 response. */
+function createAuthedClient(token: string) {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { global: { headers: { Authorization: `Bearer ${token}` } } }
+  );
+}
+
+/** Phase 2 strict: require a valid Bearer token. Returns user id + token or 401 response. */
 async function requireUserId(
   req: NextRequest
-): Promise<{ userId: string } | NextResponse> {
+): Promise<{ userId: string; token: string } | NextResponse> {
   const authHeader = req.headers.get("authorization")?.trim();
   if (!authHeader?.toLowerCase().startsWith("bearer ")) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -22,16 +31,17 @@ async function requireUserId(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  return { userId: data.user.id };
+  return { userId: data.user.id, token };
 }
 
-/** GET /api/history — list analysis threads for the signed-in user only */
+/** GET /api/history - list analysis threads for the signed-in user only */
 export async function GET(req: NextRequest) {
   const result = await requireUserId(req);
   if (result instanceof NextResponse) return result;
-  const { userId } = result;
+  const { userId, token } = result;
+  const db = createAuthedClient(token);
 
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from("analysis_history")
     .select("id, ticker, company_name, source, period_end, quarter_label, title, created_at")
     .eq("user_id", userId)
@@ -59,15 +69,16 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ threads });
 }
 
-/** POST /api/history — save a new analysis thread for the signed-in user */
+/** POST /api/history - save a new analysis thread for the signed-in user */
 export async function POST(req: NextRequest) {
   const result = await requireUserId(req);
   if (result instanceof NextResponse) return result;
-  const { userId } = result;
+  const { userId, token } = result;
+  const db = createAuthedClient(token);
 
   const body = await req.json();
 
-  const { error } = await supabase.from("analysis_history").insert({
+  const { error } = await db.from("analysis_history").insert({
     user_id: userId,
     ticker: body.ticker ?? null,
     company_name: body.companyName ?? null,

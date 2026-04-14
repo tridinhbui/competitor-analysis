@@ -16,6 +16,7 @@ import {
 } from "@/lib/sseClient";
 import { RotateCcw, FileText } from "lucide-react";
 import { fetchWithAuth } from "@/lib/fetchWithAuth";
+import { normalizeCompanyName, resolveTicker } from "@/lib/filingIdentity";
 
 type Phase = "idle" | "analyzing" | "done" | "error";
 
@@ -47,7 +48,9 @@ export function TenQDropAnalyzer() {
           source: "pdf",
           analysis: result,
         }),
-      }).catch(() => {});
+      }).catch((saveErr) => {
+        console.warn("[filings/save] failed to persist PDF analysis", saveErr);
+      });
     }
     // Save to analysis history
     const companyName = result.meta.companyName ?? result.meta.ticker ?? "Unknown";
@@ -165,13 +168,35 @@ export function TenQDropAnalyzer() {
     setError("");
     try {
       const analysis = await analyzePdf(file, (evt) => setEvents((prev) => [...prev, evt]));
-      setResult(analysis);
+      const resolvedTicker = resolveTicker({
+        inputTicker: ticker,
+        metaTicker: analysis.meta.ticker,
+        fileName: file.name,
+        companyName: analysis.meta.companyName,
+      });
+      const resolvedCompanyName = normalizeCompanyName({
+        candidate: analysis.meta.companyName,
+        fileName: file.name,
+        ticker: resolvedTicker,
+      });
+
+      const resolvedAnalysis: FullAnalysis = {
+        ...analysis,
+        meta: {
+          ...analysis.meta,
+          ticker: resolvedTicker,
+          fileName: analysis.meta.fileName ?? file.name,
+          companyName: resolvedCompanyName,
+        },
+      };
+
+      setResult(resolvedAnalysis);
       setPhase("done");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setPhase("error");
     }
-  }, []);
+  }, [ticker]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();

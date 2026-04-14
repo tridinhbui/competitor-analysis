@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { extractMetrics } from "@/lib/analysisModules";
+import { normalizeCompanyName } from "@/lib/filingIdentity";
 import type { DataSourceRow } from "@/types/dataSource";
 import type { Filing } from "@/types/competitor";
 import type { FullAnalysis } from "@/types/analysis";
@@ -11,7 +12,7 @@ export const runtime = "nodejs";
 export async function GET() {
   const { data: filings, error } = await supabase
     .from("filings")
-    .select("id, ticker, period_end, source, analysis")
+    .select("id, ticker, period_end, fiscal_year, fiscal_quarter, quarter_label, source, analysis")
     .order("ticker")
     .order("period_end", { ascending: false });
 
@@ -49,6 +50,11 @@ export async function GET() {
     if (!analysis) continue;
 
     const company = companyMap.get(f.ticker);
+    const displayName = normalizeCompanyName({
+      candidate: analysis.meta.companyName ?? company?.name ?? f.ticker,
+      fileName: analysis.meta.fileName,
+      ticker: f.ticker,
+    });
     const peerType = (company?.peerType ?? "diversified-protein") as import("@/types/competitor").PeerType;
 
     const filing: Filing = {
@@ -59,6 +65,18 @@ export async function GET() {
       filingDate: "",
       savedAt: "",
       analysis,
+      quarter:
+        typeof f.fiscal_year === "number" && typeof f.fiscal_quarter === "number"
+          ? {
+              periodEnd: f.period_end,
+              fiscalYear: f.fiscal_year,
+              fiscalQuarter: f.fiscal_quarter,
+              label:
+                typeof f.quarter_label === "string" && f.quarter_label.trim()
+                  ? f.quarter_label
+                  : `Q${f.fiscal_quarter} ${f.fiscal_year}`,
+            }
+          : undefined,
     };
 
     const m = extractMetrics(filing, peerType);
@@ -123,7 +141,7 @@ export async function GET() {
     const row: DataSourceRow = {
       id: f.id,
       ticker: f.ticker,
-      companyName: company?.name ?? f.ticker,
+      companyName: displayName,
       periodEnd: f.period_end,
       quarterLabel: m.quarterLabel,
       revenue: rawRevenue,

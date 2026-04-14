@@ -10,6 +10,7 @@
 
 import { supabase } from "./supabase";
 import { deriveQuarter } from "./competitorService";
+import { normalizeCompanyName, type FiscalQuarterHint } from "./filingIdentity";
 import type { FullAnalysis } from "@/types/analysis";
 import type {
   Company,
@@ -35,7 +36,10 @@ export async function loadRegistry(): Promise<CompanyRegistry> {
 
   const companies: Company[] = (data ?? []).map((row) => ({
     ticker: row.ticker,
-    name: row.name,
+    name: normalizeCompanyName({
+      candidate: row.name,
+      ticker: row.ticker,
+    }),
     industry: row.industry ?? undefined,
     peerType: row.peer_type as PeerType,
     createdAt: row.created_at,
@@ -63,24 +67,38 @@ export async function upsertCompany(
   peerType?: PeerType
 ): Promise<Company> {
   const upper = ticker.toUpperCase();
+  const safeName = normalizeCompanyName({
+    candidate: name,
+    ticker: upper,
+  });
   const now = new Date().toISOString();
 
-  const { data: existing } = await supabase
+  const { data: existing, error: existingError } = await supabase
     .from("companies")
     .select("*")
     .eq("ticker", upper)
-    .single();
+    .maybeSingle();
+
+  if (existingError) {
+    throw new Error(`[filingStorage] upsertCompany lookup failed: ${existingError.message}`);
+  }
 
   if (existing) {
     const updates: Record<string, unknown> = { updated_at: now };
-    if (name && name !== upper) updates.name = name;
+    if (safeName && safeName !== existing.name) updates.name = safeName;
     if (peerType) updates.peer_type = peerType;
 
-    await supabase.from("companies").update(updates).eq("ticker", upper);
+    const { error: updateError } = await supabase
+      .from("companies")
+      .update(updates)
+      .eq("ticker", upper);
+    if (updateError) {
+      throw new Error(`[filingStorage] upsertCompany update failed: ${updateError.message}`);
+    }
 
     return {
       ticker: upper,
-      name: name && name !== upper ? name : existing.name,
+      name: safeName || existing.name,
       industry: existing.industry ?? undefined,
       peerType: peerType ?? existing.peer_type,
       createdAt: existing.created_at,
@@ -90,13 +108,16 @@ export async function upsertCompany(
 
   const newCompany = {
     ticker: upper,
-    name: name || upper,
+    name: safeName || upper,
     peer_type: peerType ?? "diversified-protein",
     created_at: now,
     updated_at: now,
   };
 
-  await supabase.from("companies").insert(newCompany);
+  const { error: insertError } = await supabase.from("companies").insert(newCompany);
+  if (insertError) {
+    throw new Error(`[filingStorage] upsertCompany insert failed: ${insertError.message}`);
+  }
 
   return {
     ticker: upper,
@@ -117,18 +138,25 @@ export async function setCompanyPeerType(
   const upper = ticker.toUpperCase();
   const now = new Date().toISOString();
 
-  const { data: existing } = await supabase
+  const { data: existing, error: existingError } = await supabase
     .from("companies")
     .select("*")
     .eq("ticker", upper)
-    .single();
+    .maybeSingle();
+
+  if (existingError) {
+    throw new Error(`[filingStorage] setCompanyPeerType lookup failed: ${existingError.message}`);
+  }
 
   if (!existing) return null;
 
-  await supabase
+  const { error: updateError } = await supabase
     .from("companies")
     .update({ peer_type: peerType, updated_at: now })
     .eq("ticker", upper);
+  if (updateError) {
+    throw new Error(`[filingStorage] setCompanyPeerType update failed: ${updateError.message}`);
+  }
 
   return {
     ticker: upper,
@@ -151,14 +179,29 @@ export async function saveFiling(
   ticker: string,
   periodEnd: string,
   source: "sec" | "pdf",
-  analysis: FullAnalysis
+  analysis: FullAnalysis,
+  quarterHint?: FiscalQuarterHint | null
 ): Promise<Filing> {
   const upper = ticker.toUpperCase();
-  const quarter = deriveQuarter(periodEnd);
+  const quarter = quarterHint
+    ? {
+        periodEnd,
+        fiscalYear: quarterHint.fiscalYear,
+        fiscalQuarter: quarterHint.fiscalQuarter,
+        label: quarterHint.label,
+      }
+    : deriveQuarter(periodEnd);
   const now = new Date().toISOString();
 
   // Ensure company exists
-  await upsertCompany(upper, analysis.meta.companyName ?? upper);
+  await upsertCompany(
+    upper,
+    normalizeCompanyName({
+      candidate: analysis.meta.companyName,
+      fileName: analysis.meta.fileName,
+      ticker: upper,
+    })
+  );
 
   // Upsert filing
   const row = {
@@ -174,7 +217,12 @@ export async function saveFiling(
     saved_at: now,
   };
 
-  await supabase.from("filings").upsert(row, { onConflict: "ticker,period_end" });
+  const { error: upsertError } = await supabase
+    .from("filings")
+    .upsert(row, { onConflict: "ticker,period_end" });
+  if (upsertError) {
+    throw new Error(`[filingStorage] saveFiling upsert failed: ${upsertError.message}`);
+  }
 
   return {
     ticker: upper,
@@ -200,7 +248,7 @@ export async function loadFiling(
     .select("*")
     .eq("ticker", ticker.toUpperCase())
     .eq("period_end", periodEnd)
-    .single();
+    .maybeSingle();
 
   if (error || !data) return null;
 

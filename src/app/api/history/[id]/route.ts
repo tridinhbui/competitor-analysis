@@ -1,12 +1,21 @@
+import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
-/** Phase 2 strict: require a valid Bearer token. Returns user id or 401 response. */
+function createAuthedClient(token: string) {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { global: { headers: { Authorization: `Bearer ${token}` } } }
+  );
+}
+
+/** Phase 2 strict: require a valid Bearer token. Returns user id + token or 401 response. */
 async function requireUserId(
   req: NextRequest
-): Promise<{ userId: string } | NextResponse> {
+): Promise<{ userId: string; token: string } | NextResponse> {
   const authHeader = req.headers.get("authorization")?.trim();
   if (!authHeader?.toLowerCase().startsWith("bearer ")) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -22,21 +31,22 @@ async function requireUserId(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  return { userId: data.user.id };
+  return { userId: data.user.id, token };
 }
 
-/** GET /api/history/[id] — load a specific thread (owner only) */
+/** GET /api/history/[id] - load a specific thread (owner only) */
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const result = await requireUserId(req);
   if (result instanceof NextResponse) return result;
-  const { userId } = result;
+  const { userId, token } = result;
+  const db = createAuthedClient(token);
 
   const { id } = await params;
 
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from("analysis_history")
     .select("*")
     .eq("id", id)
@@ -64,18 +74,19 @@ export async function GET(
   });
 }
 
-/** DELETE /api/history/[id] — remove a thread (owner only) */
+/** DELETE /api/history/[id] - remove a thread (owner only) */
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const result = await requireUserId(req);
   if (result instanceof NextResponse) return result;
-  const { userId } = result;
+  const { userId, token } = result;
+  const db = createAuthedClient(token);
 
   const { id } = await params;
 
-  const { error } = await supabase
+  const { error } = await db
     .from("analysis_history")
     .delete()
     .eq("id", id)
