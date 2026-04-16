@@ -1428,27 +1428,28 @@ export async function POST(request: Request) {
     });
     console.log("[rd:resolution]", rdResolution);
 
-    const shouldBackfillRd =
+    // Inline guards (not a precomputed boolean) so TS narrows rAndDExpense to number.
+    if (
       !hasValidRd &&
       rdResolution.rAndDExpense != null &&
       rdResolution.rAndDExpense > 0 &&
-      rdResolution.method === "extracted";
-
-    if (shouldBackfillRd) {
+      rdResolution.method === "extracted"
+    ) {
+      const rdExpense = rdResolution.rAndDExpense;
       const basisPart = rdResolution.rAndDPeriodBasis
         ? `:basis=${rdResolution.rAndDPeriodBasis}`
         : "";
       const source = `heuristic:rd:extracted${basisPart}`;
 
       if (existingRdItem) {
-        existingRdItem.value = rdResolution.rAndDExpense;
+        existingRdItem.value = rdExpense;
         existingRdItem.label = "R&D expense";
         existingRdItem.source = source;
       } else {
         cfItems.push({
           tag: "ResearchAndDevelopmentExpense",
           label: "R&D expense",
-          value: rdResolution.rAndDExpense,
+          value: rdExpense,
           period,
           source,
         });

@@ -128,6 +128,7 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                   meta.extractionMethod === "pdf-ai-section-split" ? "Section-based AI" :
                   meta.extractionMethod === "pdf-vision" ? "Vision API" :
                   meta.extractionMethod === "pdf-ai" ? "AI extraction" :
+                  meta.extractionMethod === "pdf-ai-partial" ? "AI (partial)" :
                   meta.extractionMethod === "pdf-heuristic" ? "Pattern matching" :
                   "Extraction"
                 }</span>
@@ -231,6 +232,8 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                     ? "OpenAI Vision API for table extraction"
                     : meta.extractionMethod === "pdf-ai"
                     ? "AI-powered text analysis"
+                    : meta.extractionMethod === "pdf-ai-partial"
+                    ? "AI extraction returned partial coverage; results may be incomplete"
                     : "Pattern matching heuristics"}
                 </div>
               </div>

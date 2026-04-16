@@ -204,7 +204,14 @@ export interface FullAnalysis {
     /** Data quality: SEC=high, PDF+AI=medium, PDF+heuristic=low */
     confidence?: DataConfidence;
     /** How extraction was done (for transparency) */
-    extractionMethod?: "sec" | "pdf-ai" | "pdf-ai+heuristic" | "pdf-ai-section-split" | "pdf-vision" | "pdf-heuristic";
+    extractionMethod?:
+      | "sec"
+      | "pdf-ai"
+      | "pdf-ai-partial"
+      | "pdf-ai+heuristic"
+      | "pdf-ai-section-split"
+      | "pdf-vision"
+      | "pdf-heuristic";
   };
   balanceSheet: BalanceSheet;
   debtStructure: DebtStructure;

@@ -113,10 +113,12 @@ export async function extractPdfLines(
     // Collect all items with (x, y, str)
     const items: Array<{ x: number; y: number; str: string }> = [];
     for (const item of content.items) {
-      if (!("str" in item) || !item.str.trim()) continue;
-      rawChars += item.str.length;
+      if (!("str" in item)) continue;
+      const s = item.str;
+      if (typeof s !== "string" || !s.trim()) continue;
+      rawChars += s.length;
       const t = "transform" in item ? (item.transform as number[]) : null;
-      items.push({ x: t ? t[4] : 0, y: t ? t[5] : 0, str: item.str });
+      items.push({ x: t ? t[4] : 0, y: t ? t[5] : 0, str: s });
     }
 
     // Bucket by Y with tolerance: merge items whose Y is within Y_TOLERANCE of
