@@ -911,8 +911,13 @@ export async function analyzePdf(
     detail: { pages, lines: lines.length, chars: rawChars },
   });
 
-  // Step 3: AI extraction (5 parallel calls) or heuristic fallback
-  onStep({ step: "fetch_xbrl", label: pipeLabel("fetch_xbrl"), status: "running", message: "Running 5 parallel AI extractions (BS, IS/CF, qualitative, segments, non-recurring)…" });
+  // Step 3: AI extraction (5 parallel calls) or heuristic fallback — surfaced as extract_bs
+  onStep({
+    step: "extract_bs",
+    label: pipeLabel("extract_bs"),
+    status: "running",
+    message: "Running 5 parallel AI extractions (BS, IS/CF, qualitative, segments, non-recurring)…",
+  });
 
   const tAi = performance.now();
   let analysis: FullAnalysis;
@@ -930,14 +935,18 @@ export async function analyzePdf(
     const nrCount = analysis.nonRecurringItems?.length ?? 0;
 
     onStep({
-      step: "fetch_xbrl", label: pipeLabel("fetch_xbrl"), status: "done",
+      step: "extract_bs",
+      label: pipeLabel("extract_bs"),
+      status: "done",
       message: `AI extracted ${bsCount} BS + ${cfCount} IS/CF + ${segCount} segments + ${fnCount} footnotes + ${nrCount} adjustments`,
       durationMs: elapsed(tAi),
       detail: { method: "5-call-parallel", balanceSheetItems: bsCount, cashFlowItems: cfCount, segments: segCount, footnotes: fnCount, nonRecurring: nrCount },
     });
   } catch (aiErr) {
     onStep({
-      step: "fetch_xbrl", label: pipeLabel("fetch_xbrl"), status: "error",
+      step: "extract_bs",
+      label: pipeLabel("extract_bs"),
+      status: "error",
       message: `AI unavailable: ${aiErr instanceof Error ? aiErr.message : "error"} — falling back to heuristic`,
       durationMs: elapsed(tAi),
     });
@@ -969,22 +978,15 @@ export async function analyzePdf(
     });
   }
 
-  // Report extraction details
   if (usedAI) {
-    const bsCount = analysis.balanceSheet.items.length;
     const cfCount = analysis.cfItems?.length ?? 0;
-
     onStep({
-      step: "extract_bs", label: pipeLabel("extract_bs"), status: "done",
-      message: `${bsCount} balance sheet items`,
-      durationMs: 0,
-      detail: { items: bsCount, tags: analysis.balanceSheet.items.map(i => i.tag) },
-    });
-    onStep({
-      step: "extract_cf", label: pipeLabel("extract_cf"), status: "done",
+      step: "extract_cf",
+      label: pipeLabel("extract_cf"),
+      status: "done",
       message: `${cfCount} income / cash flow items`,
       durationMs: 0,
-      detail: { items: cfCount, tags: (analysis.cfItems ?? []).map(i => i.tag) },
+      detail: { items: cfCount, tags: (analysis.cfItems ?? []).map((i) => i.tag) },
     });
   }
 

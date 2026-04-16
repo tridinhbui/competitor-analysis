@@ -97,37 +97,21 @@ export async function GET(request: Request) {
         });
 
         const t3 = Date.now();
-        send({
-          step: "fetch_xbrl",
-          label: labelFor("fetch_xbrl"),
-          status: "running",
-          message: `Downloading company facts for CIK ${cik}…`,
-        });
-
         let facts: CompanyFacts;
         try {
           facts = await fetchCompanyFacts(cik);
         } catch (err) {
           send({
-            step: "fetch_xbrl",
-            label: labelFor("fetch_xbrl"),
+            step: "extract_bs",
+            label: labelFor("extract_bs"),
             status: "error",
-            message: `XBRL fetch error: ${err instanceof Error ? err.message : String(err)}`,
+            message: `Company facts error: ${err instanceof Error ? err.message : String(err)}`,
             durationMs: Date.now() - t3,
             detail: { error: err instanceof Error ? err.message : String(err) },
           });
           controller.close();
           return;
         }
-
-        send({
-          step: "fetch_xbrl",
-          label: labelFor("fetch_xbrl"),
-          status: "done",
-          message: `XBRL loaded: ${facts.entityName}`,
-          durationMs: Date.now() - t3,
-          detail: { entity: facts.entityName, cik },
-        });
 
         const t4 = Date.now();
         send({
