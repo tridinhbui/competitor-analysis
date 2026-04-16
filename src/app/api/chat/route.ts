@@ -4,6 +4,51 @@ export const runtime = "nodejs";
 
 type ChatMessage = { role: "user" | "assistant" | "system"; content: string };
 
+interface PageContext {
+  title?: string;
+  cfoGoal?: string;
+  keyQuestions?: string[];
+  expectedOutputs?: string[];
+}
+
+const CFO_PAGE_FRAMING: Record<string, string> = {
+  "/analyze": `You are acting as a strategic CFO copilot reviewing a financial filing analysis. Prioritize:
+- Debt and leverage risk (flag anything outside safe sector range)
+- Free cash flow vs. dividend sustainability
+- Anomalies or red flags worth escalating to the board
+- Output: a clear green/yellow/red signal with a concise decision memo`,
+
+  "/workspace": `You are acting as a strategic CFO copilot in the analysis workspace. Prioritize:
+- Peer comparison and how this company ranks on key metrics
+- Narrative consistency across quarters (is the investment thesis holding?)
+- Top 3 investment implications for capital allocation decisions
+- Output: board-ready investment implications and items to verify`,
+
+  "/data-source": `You are acting as a strategic CFO copilot reviewing data quality. Prioritize:
+- Recency and reliability of the extracted financial data
+- Missing critical fields that could skew analysis conclusions
+- Confidence level of extraction (high/medium/low)
+- Output: data quality verdict and gap-fill checklist before proceeding`,
+
+  "/history": `You are acting as a strategic CFO copilot reviewing historical analysis runs. Prioritize:
+- What changed materially between the most recent and prior runs
+- Whether the investment thesis is drifting, stable, or reversing
+- Directional trends on key metrics (margins, leverage, FCF)
+- Output: delta summary and thesis stability rating`,
+
+  "/overview": `You are acting as a strategic CFO copilot reviewing the financial overview. Prioritize:
+- Overall financial health signal (green/yellow/red)
+- Outlier metrics that deviate from sector norms
+- The single most urgent area requiring deeper investigation
+- Output: executive snapshot with prioritized next steps`,
+
+  "/profile": `You are acting as a strategic CFO copilot advising on tool preferences. Prioritize:
+- Analysis depth and output style settings appropriate for board-level decisions
+- Modules most relevant for CFO strategic workflow
+- Recommended configuration for fast, reliable, exec-quality outputs
+- Output: specific preference recommendations for a CFO power-user`,
+};
+
 export async function POST(request: Request) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey?.trim()) {
@@ -13,7 +58,13 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: { messages?: ChatMessage[]; context?: string; autoSummary?: boolean };
+  let body: {
+    messages?: ChatMessage[];
+    context?: string;
+    autoSummary?: boolean;
+    pathname?: string;
+    pageContext?: PageContext;
+  };
   try {
     body = await request.json();
   } catch {
@@ -31,22 +82,37 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Missing messages[]" }, { status: 400 });
   }
 
-  const systemContent = `You are a senior equity research analyst assistant. The user is viewing a structured financial analysis (balance sheet, cash flow, dividend sustainability, leverage ratios) extracted from SEC XBRL filings or 10-Q PDF uploads.
+  const pathname = body.pathname ?? "";
+  const pageContext = body.pageContext;
+  const cfoFraming = CFO_PAGE_FRAMING[pathname] ?? null;
+
+  const cfoSection = cfoFraming
+    ? `\n\nCFO COPILOT FRAMING FOR THIS PAGE (${pageContext?.title ?? pathname}):\n${cfoFraming}${
+        pageContext?.cfoGoal ? `\n\nPage CFO goal: ${pageContext.cfoGoal}` : ""
+      }${
+        pageContext?.keyQuestions?.length
+          ? `\nKey questions the user wants answered:\n${pageContext.keyQuestions.map((q) => `- ${q}`).join("\n")}`
+          : ""
+      }${
+        pageContext?.expectedOutputs?.length
+          ? `\nExpected outputs for this page:\n${pageContext.expectedOutputs.map((o) => `- ${o}`).join("\n")}`
+          : ""
+      }\n\nAlways frame answers in terms of actionable insight, risk, or next decision. Be concise and board-ready.`
+    : "";
+
+  const systemContent = `You are a senior strategic CFO copilot and equity research analyst. The user is viewing a Smithfield Strategy Hub page that provides structured financial analysis.${cfoSection}
 
 CITATION RULES (critical):
-- When stating a number, cite its source using inline format [Source]. Examples: "$352,583M [XBRL:Assets]", "D/E 0.8x [computed]", "Net income $12B [AI:NetIncomeLoss]".
-- The context includes a "sources" object: for each metric it shows { value, source }. Use that source string in your citation.
-- Line items have "_src" or "source" field — use it when referring to that line.
+- When stating a number, cite its source using inline format [Source]. Examples: "$352,583M [XBRL:Assets]", "D/E 0.8x [computed]".
 - If data is missing or estimated, say "Not found in extract" or "Estimated".
 
 ANALYSIS DEPTH:
-- Provide detailed, thorough analysis — 2–4 sentences per insight when relevant. Avoid one-line answers.
+- Provide thorough, actionable analysis — 2–4 sentences per insight. Avoid one-line answers.
 - Include industry benchmarks: D/E (tech 0.3–1, utilities 1–1.5, financials 2–4); payout (<60% NI conservative, >80% stretched); interest coverage (>8x strong, <2x concern); net debt/EBITDA (<1x low, >4x stressed).
-- For market/peer comparison: Suggest that the user run the same analysis on competitor tickers (e.g., MSFT, GOOGL for AAPL) to compare ratios side-by-side. If sector is inferrable, mention typical peer ranges. Note that full sector aggregates require external data (e.g., Bloomberg, S&P).
 - Structure answers with headers (##) and bullet points for readability.
-- If asked about risks or opportunities, cover: leverage, refinancing, FCF sustainability, payout trajectory, capital allocation, working capital, and sector-specific factors.
+- Always close with a recommended next action or decision.
 
-${body.context ? `Current analysis (JSON, values in USD millions; "sources" has provenance for each metric):\n${body.context.slice(0, 28000)}` : "No structured analysis attached yet (user may ask general questions)."}`;
+${body.context ? `Current analysis (JSON, values in USD millions):\n${body.context.slice(0, 28000)}` : "No structured analysis attached yet (user may ask general questions)."}`;
 
   const openaiMessages: ChatMessage[] = [
     { role: "system", content: systemContent },

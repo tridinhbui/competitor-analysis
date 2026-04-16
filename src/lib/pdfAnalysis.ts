@@ -172,9 +172,19 @@ async function analyzeWithAI(
     throw new Error((err as { error?: string }).error ?? `API returned ${resp.status}`);
   }
 
-  const data = (await resp.json()) as { analysis?: FullAnalysis; error?: string };
+  const data = (await resp.json()) as {
+    analysis?: FullAnalysis;
+    error?: string;
+    degraded?: boolean;
+  };
   if (!data.analysis) {
     throw new Error(data.error ?? "No analysis result from API");
+  }
+  // Server returns 200 with partial AI data; client must not treat that as success or UI shows $0M.
+  if (data.degraded) {
+    throw new Error(
+      "AI extraction coverage was too low; using deterministic PDF heuristics instead."
+    );
   }
   return data.analysis;
 }
@@ -187,7 +197,8 @@ type Scale = 1 | 1_000 | 1_000_000 | 1_000_000_000;
 
 function detectScale(lines: PdfLine[]): Scale {
   const BILLIONS = /in\s+billions/i;
-  const MILLIONS = /in\s+millions|\(millions\)|amounts?\s+in\s+millions/i;
+  const MILLIONS =
+    /in\s+millions|\(millions\)|amounts?\s+in\s+millions|millions\s+of\s+dollars|dollars?\s+in\s+millions|presented\s+in\s+millions|except\s+per\s+share/i;
   const THOUSANDS = /in\s+thousands|\(thousands\)|amounts?\s+in\s+thousands/i;
 
   // First pass: find scale indicators near financial section headers (most accurate).
@@ -209,6 +220,31 @@ function detectScale(lines: PdfLine[]): Scale {
   if (BILLIONS.test(fullSample)) return 1_000_000_000;
   if (MILLIONS.test(fullSample)) return 1_000_000;
   if (THOUSANDS.test(fullSample)) return 1_000;
+
+  // Third pass: SEC large-cap 10-Q/K tables are almost always stated in millions even when
+  // the "(in millions)" line is split across PDF text runs and missed by pdf.js row join.
+  const head = lines.slice(0, Math.min(lines.length, 200)).map((l) => l.text).join(" ");
+  if (MILLIONS.test(head)) return 1_000_000;
+
+  return 1;
+}
+
+/** When explicit scale text is missing, infer "already in millions" from typical row magnitudes. */
+function inferScaleFromMagnitude(lines: PdfLine[]): Scale {
+  const scan = lines.slice(0, Math.min(lines.length, 1200));
+  for (let i = 0; i < scan.length; i++) {
+    const pl = parseLine(scan[i], i);
+    const hit =
+      /^total\s+assets\b/i.test(pl.label) ||
+      /^total\s+liabilities\b/i.test(pl.label) ||
+      /^net\s+sales\b/i.test(pl.label) ||
+      /^sales$/i.test(pl.label) ||
+      /^(total\s+)?(net\s+)?revenues?\b/i.test(pl.label);
+    if (!hit || pl.numbers.length === 0) continue;
+    const n = Math.abs(pl.numbers[0]);
+    // Raw values in the thousands–low hundreds of millions range match "millions" units for major filers.
+    if (n >= 100 && n < 500_000_000) return 1_000_000;
+  }
   return 1;
 }
 
@@ -244,14 +280,23 @@ function detectSections(lines: PdfLine[]): SectionSpan[] {
   let cur: Section = "unknown";
   let startIdx = 0;
   for (let i = 0; i < lines.length; i++) {
+    // pdf.js often splits a single statement title across adjacent short lines — stitch a window.
+    const from = Math.max(0, i - 5);
+    const to = Math.min(lines.length - 1, i + 2);
+    const stitched = lines.slice(from, to + 1).map((l) => l.text).join(" ");
     const t = lines[i].text;
+
+    let matched: Section | null = null;
     for (const [re, sec] of SECTION_PATTERNS) {
-      if (re.test(t)) {
-        if (cur !== "unknown") spans.push({ section: cur, startIdx, endIdx: i });
-        cur = sec;
-        startIdx = i;
+      if (re.test(t) || re.test(stitched)) {
+        matched = sec;
         break;
       }
+    }
+    if (matched != null && matched !== cur) {
+      if (cur !== "unknown") spans.push({ section: cur, startIdx, endIdx: i });
+      cur = matched;
+      startIdx = i;
     }
   }
   if (cur !== "unknown") spans.push({ section: cur, startIdx, endIdx: lines.length });
@@ -349,7 +394,13 @@ const CF_DEFS: ItemDef[] = [
     tag: "Revenues", label: "Revenue",
     // "Sales" alone (top line in meat/food filings like Smithfield, Tyson), "Net revenues", "Net sales", "Total revenue"
     // No section restriction — label patterns are specific enough
-    keywords: [/^sales$/i, /^(total\s+)?(net\s+)?revenues?$/i, /^net\s+sales$/i, /^(total\s+)?revenues?$/i],
+    keywords: [
+      /^sales$/i,
+      /^total\s+sales\b/i,
+      /^net\s+sales\b/i,
+      /^(total\s+)?(net\s+)?revenues?\b/i,
+      /^(total\s+)?revenues?\b/i,
+    ],
   },
   {
     tag: "CostOfGoodsSold", label: "Cost of goods sold",
@@ -370,8 +421,8 @@ const CF_DEFS: ItemDef[] = [
   { tag: "IncomeTaxExpenseBenefit", label: "Income tax", keywords: [/^(income\s+tax|provision\s+for\s+income\s+tax)/i] },
   {
     tag: "NetIncomeLoss", label: "Net income",
+    // Do not restrict to "income" section: pdf.js row ordering can leave statement rows under the wrong span.
     keywords: [/^net\s+(income|loss|earnings)/i, /^net\s+(income|earnings)\s+attributable/i],
-    section: ["income"],
   },
   { tag: "EarningsPerShareBasic", label: "EPS (basic)", keywords: [/^(basic\s+)?earnings?\s+per\s+share.*basic/i, /^basic\s+(net\s+)?(income|earnings)\s+per/i] },
   { tag: "EarningsPerShareDiluted", label: "EPS (diluted)", keywords: [/^(diluted\s+)?earnings?\s+per\s+share.*diluted/i, /^diluted\s+(net\s+)?(income|earnings)\s+per/i] },
@@ -468,7 +519,8 @@ const CF_DEFS: ItemDef[] = [
 ];
 
 function heuristicExtract(lines: PdfLine[]): { bs: BSItem[]; cf: BSItem[] } {
-  const scale = detectScale(lines);
+  let scale = detectScale(lines);
+  if (scale === 1) scale = inferScaleFromMagnitude(lines);
   const sections = detectSections(lines);
   const periodLabel = detectPeriod(lines);
   const parsed = lines.map((l, i) => parseLine(l, i));

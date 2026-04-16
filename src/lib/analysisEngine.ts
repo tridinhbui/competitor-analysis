@@ -227,7 +227,13 @@ export function buildRatios(
 export function buildIncomeStatement(cf: BSItem[], bs: BSItem[]): IncomeStatement {
   const allItems = [...cf, ...bs];
 
-  const revenue = findOrNull(cf, "Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet");
+  const revenue = findOrNull(
+    cf,
+    "Revenues",
+    "RevenueFromContractWithCustomerExcludingAssessedTax",
+    "SalesRevenueNet",
+    "SalesRevenueGoodsNet"
+  );
   const cogs = findOrNull(cf, "CostOfGoodsAndServicesSold", "CostOfRevenue", "CostOfGoodsSold");
   const grossProfitRaw = findOrNull(cf, "GrossProfit");
   const grossProfit = grossProfitRaw ?? (revenue != null && cogs != null ? revenue - Math.abs(cogs) : null);

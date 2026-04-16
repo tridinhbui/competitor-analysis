@@ -11,19 +11,19 @@ export function ProblemSolutionSection() {
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, margin: "-60px" }}
         transition={{ duration: 0.45 }}
-        className="rounded-3xl border border-rose-200/70 bg-gradient-to-b from-rose-50/70 to-white p-6 shadow-subtle"
+        className="rounded-3xl border border-border bg-gradient-to-b from-[#fff6f1] to-white p-6 shadow-subtle"
       >
-        <p className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-rose-700">
+        <p className="inline-flex items-center gap-1 rounded-full bg-accent px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-accent-foreground">
           <FileSearch className="h-3 w-3" aria-hidden />
-          Problem
+          Challenge
         </p>
-        <h2 id="problem-solution-heading" className="mt-3 text-xl font-bold text-slate-900 sm:text-2xl">
-          Reading 10-Q manually kills momentum
+        <h2 id="problem-solution-heading" className="mt-3 text-xl font-bold text-foreground sm:text-2xl">
+          Enterprise teams lose speed when insight is fragmented
         </h2>
-        <ul className="mt-4 space-y-2 text-sm text-slate-600">
-          <li>- Hundreds of pages per filing slow every decision loop.</li>
-          <li>- Debt and cash flow details are hidden across notes and tables.</li>
-          <li>- Teams lose hours rebuilding the same summary deck every quarter.</li>
+        <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
+          <li>- Product and channel data sits in disconnected systems.</li>
+          <li>- Leadership reviews spend too long on assembly, not decisions.</li>
+          <li>- Brand performance signals are hard to compare quarter to quarter.</li>
         </ul>
       </motion.article>
 
@@ -32,21 +32,21 @@ export function ProblemSolutionSection() {
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, margin: "-60px" }}
         transition={{ delay: 0.05, duration: 0.45 }}
-        className="rounded-3xl border border-emerald-200/70 bg-gradient-to-b from-emerald-50/65 to-white p-6 shadow-subtle"
+        className="rounded-3xl border border-border bg-gradient-to-b from-[#fff1e9] to-white p-6 shadow-subtle"
       >
-        <p className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-700">
+        <p className="inline-flex items-center gap-1 rounded-full bg-primary/12 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-primary">
           <ScanSearch className="h-3 w-3" aria-hidden />
           Solution
         </p>
-        <h3 className="mt-3 text-xl font-bold text-slate-900 sm:text-2xl">Dividend IQ turns filings into decisions</h3>
-        <div className="mt-4 grid gap-2 text-sm text-slate-600">
+        <h3 className="mt-3 text-xl font-bold text-foreground sm:text-2xl">Smithfield-style dashboard turns signal into action</h3>
+        <div className="mt-4 grid gap-2 text-sm text-muted-foreground">
           <p className="inline-flex items-start gap-2">
             <BarChart3 className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
-            Convert SEC / PDF 10-Q into a structured dashboard instantly.
+            Present category, channel, and brand KPI views in one clean workspace.
           </p>
           <p className="inline-flex items-start gap-2">
             <MessageSquareText className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
-            Chat directly with extracted financial context, then export in one click.
+            Keep decisions aligned with clear narrative copy and executive-ready exports.
           </p>
         </div>
       </motion.article>

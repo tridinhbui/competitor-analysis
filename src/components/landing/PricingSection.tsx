@@ -64,29 +64,29 @@ export function PricingSection() {
   const plans = yearly ? yearlyPlans : monthlyPlans;
 
   return (
-    <section id="pricing" className="scroll-mt-20 border-t border-slate-200/80 bg-white/60 py-16 sm:py-20" aria-labelledby="pricing-heading">
+    <section id="pricing" className="scroll-mt-20 border-t border-border bg-white/70 py-16 sm:py-20" aria-labelledby="pricing-heading">
       <div className="mx-auto max-w-6xl px-4">
         <div className="text-center">
           <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-primary">Pricing</p>
-          <h2 id="pricing-heading" className="mt-3 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
+          <h2 id="pricing-heading" className="mt-3 text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
             Plans for filing-heavy workflows
           </h2>
-          <p className="mx-auto mt-3 max-w-xl text-sm text-slate-600 sm:text-base">
+          <p className="mx-auto mt-3 max-w-xl text-sm text-muted-foreground sm:text-base">
             Transparent tiers for analysts and desks. Toggle billing—numbers are illustrative until checkout goes live.
           </p>
-          <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-[11px] text-slate-600">
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-[11px] text-muted-foreground">
             <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-700">
               <Users className="h-3 w-3" aria-hidden />
               Used by analysts & finance teams
             </span>
-            <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 font-semibold text-slate-600">
+            <span className="inline-flex items-center gap-1 rounded-full border border-border bg-secondary px-2.5 py-1 font-semibold text-muted-foreground">
               <BadgeCheck className="h-3 w-3 text-primary" aria-hidden />
               Cancel anytime (subscription tiers)
             </span>
           </div>
 
           <div
-            className="mx-auto mt-8 inline-flex rounded-full border border-slate-200/90 bg-slate-50/90 p-1 shadow-subtle"
+            className="mx-auto mt-8 inline-flex rounded-full border border-border bg-secondary p-1 shadow-subtle"
             role="group"
             aria-label="Billing period"
           >
@@ -95,7 +95,7 @@ export function PricingSection() {
               onClick={() => setYearly(false)}
               className={cn(
                 "rounded-full px-5 py-2 text-xs font-semibold transition",
-                !yearly ? "bg-white text-slate-900 shadow-subtle" : "text-slate-500 hover:text-slate-800"
+                !yearly ? "bg-white text-foreground shadow-subtle" : "text-muted-foreground hover:text-foreground"
               )}
             >
               Monthly
@@ -105,7 +105,7 @@ export function PricingSection() {
               onClick={() => setYearly(true)}
               className={cn(
                 "rounded-full px-5 py-2 text-xs font-semibold transition",
-                yearly ? "bg-white text-slate-900 shadow-subtle" : "text-slate-500 hover:text-slate-800"
+                yearly ? "bg-white text-foreground shadow-subtle" : "text-muted-foreground hover:text-foreground"
               )}
             >
               Yearly
@@ -128,7 +128,7 @@ export function PricingSection() {
                 "relative flex flex-col rounded-3xl border bg-white/95 p-6 shadow-subtle transition-all hover:-translate-y-1 hover:shadow-elevation sm:p-7",
                 plan.highlight
                   ? "border-primary/35 ring-2 ring-primary/15 lg:scale-[1.02]"
-                  : "border-slate-200/90",
+                  : "border-border",
                 activePlan === plan.id && "ring-2 ring-primary/20 border-primary/35"
               )}
             >
@@ -136,7 +136,7 @@ export function PricingSection() {
                 <div
                   className={cn(
                     "absolute -top-3 left-1/2 -translate-x-1/2 rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-white shadow-subtle",
-                    plan.highlight ? "bg-primary" : "bg-slate-800"
+                    plan.highlight ? "bg-primary" : "bg-foreground"
                   )}
                 >
                   {plan.badge}
@@ -144,21 +144,21 @@ export function PricingSection() {
               )}
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <h3 className="text-lg font-bold text-slate-900">{plan.name}</h3>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-500">{plan.blurb}</p>
+                  <h3 className="text-lg font-bold text-foreground">{plan.name}</h3>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{plan.blurb}</p>
                 </div>
                 {plan.highlight && <Sparkles className="h-5 w-5 shrink-0 text-primary" aria-hidden />}
               </div>
               <div className="mt-6 flex items-baseline gap-1">
-                <span className="text-4xl font-bold tabular-nums tracking-tight text-slate-900">${plan.price}</span>
-                <span className="text-sm font-medium text-slate-500">
+                <span className="text-4xl font-bold tabular-nums tracking-tight text-foreground">${plan.price}</span>
+                <span className="text-sm font-medium text-muted-foreground">
                   {plan.period === "once" ? " once" : plan.period === "yr" ? " / yr" : " / mo"}
                 </span>
               </div>
               {plan.period !== "once" && (
-                <p className="mt-2 text-[11px] font-medium text-slate-500">Cancel anytime. No lock-in contract.</p>
+                <p className="mt-2 text-[11px] font-medium text-muted-foreground">Cancel anytime. No lock-in contract.</p>
               )}
-              <ul className="mt-6 flex flex-1 flex-col gap-2.5 text-sm text-slate-600">
+              <ul className="mt-6 flex flex-1 flex-col gap-2.5 text-sm text-muted-foreground">
                 {plan.features.map((f) => (
                   <li key={f} className="flex gap-2">
                     <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
@@ -171,8 +171,8 @@ export function PricingSection() {
                 className={cn(
                   "mt-8 inline-flex h-11 w-full items-center justify-center rounded-2xl text-sm font-semibold transition focus-visible:ring-4 focus-visible:outline-none",
                   plan.highlight
-                    ? "bg-gradient-to-r from-primary to-[oklch(0.48_0.16_290)] text-white shadow-elevation hover:opacity-95 focus-visible:ring-primary/30"
-                    : "border border-slate-200 bg-slate-50/80 text-slate-800 hover:bg-white focus-visible:ring-slate-200"
+                    ? "bg-primary text-white shadow-elevation hover:bg-[#b7491a] focus-visible:ring-primary/30"
+                    : "border border-border bg-secondary text-foreground hover:bg-white focus-visible:ring-border"
                 )}
               >
                 {plan.cta}
@@ -181,22 +181,22 @@ export function PricingSection() {
           ))}
         </div>
 
-        <div className="mx-auto mt-8 grid max-w-4xl gap-3 rounded-2xl border border-slate-200/90 bg-white/85 p-4 shadow-subtle sm:grid-cols-3 sm:p-5">
+        <div className="mx-auto mt-8 grid max-w-4xl gap-3 rounded-2xl border border-border bg-white/90 p-4 shadow-subtle sm:grid-cols-3 sm:p-5">
           <div>
-            <p className="text-xs font-semibold text-slate-900">FAQ: Can I switch plans later?</p>
-            <p className="mt-1 text-[11px] leading-relaxed text-slate-500">Yes. You can upgrade or downgrade at renewal.</p>
+            <p className="text-xs font-semibold text-foreground">FAQ: Can I switch plans later?</p>
+            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">Yes. You can upgrade or downgrade at renewal.</p>
           </div>
           <div>
-            <p className="text-xs font-semibold text-slate-900">FAQ: Do you support team seats?</p>
-            <p className="mt-1 text-[11px] leading-relaxed text-slate-500">Pro includes shared workspace seats. Enterprise is custom.</p>
+            <p className="text-xs font-semibold text-foreground">FAQ: Do you support team seats?</p>
+            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">Pro includes shared workspace seats. Enterprise is custom.</p>
           </div>
           <div>
-            <p className="text-xs font-semibold text-slate-900">FAQ: Is my data isolated?</p>
-            <p className="mt-1 text-[11px] leading-relaxed text-slate-500">Yes, billing and workspace controls are scoped per account.</p>
+            <p className="text-xs font-semibold text-foreground">FAQ: Is my data isolated?</p>
+            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">Yes, billing and workspace controls are scoped per account.</p>
           </div>
         </div>
 
-        <p className="mt-10 text-center text-xs text-slate-500">
+        <p className="mt-10 text-center text-xs text-muted-foreground">
           Need SOC2, SSO, or a custom data retention policy?{" "}
           <a href="mailto:sales@example.com" className="font-semibold text-primary hover:underline">
             Contact sales

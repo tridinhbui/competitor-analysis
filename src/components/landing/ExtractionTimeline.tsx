@@ -26,15 +26,15 @@ export function ExtractionTimeline({ activeIndex }: { activeIndex: number }) {
               "relative flex gap-3 border-l-2 py-2 pl-4 transition-all duration-300 ease-out",
               done && "border-emerald-400/70",
               current && "border-primary",
-              pending && "border-slate-200"
+              pending && "border-border"
             )}
           >
             <span
               className={cn(
                 "absolute -left-[9px] top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full border-2 bg-white text-[9px] font-bold transition-all duration-300",
                 done && "border-emerald-500 bg-emerald-500 text-white",
-                current && "border-primary bg-primary text-white shadow-[0_0_0_4px_oklch(0.52_0.19_264_/_0.2)]",
-                pending && "border-slate-200 text-slate-300"
+                current && "border-primary bg-primary text-white shadow-[0_0_0_4px_rgb(204_82_29_/_0.2)]",
+                pending && "border-border text-muted-foreground"
               )}
               aria-hidden
             >
@@ -44,8 +44,8 @@ export function ExtractionTimeline({ activeIndex }: { activeIndex: number }) {
               className={cn(
                 "text-xs font-medium transition-colors duration-300",
                 done && "text-emerald-800",
-                current && "text-slate-900",
-                pending && "text-slate-400"
+                current && "text-foreground",
+                pending && "text-muted-foreground"
               )}
             >
               {step.label}
