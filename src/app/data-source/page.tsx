@@ -5,6 +5,7 @@ import type { DataSourceRow } from "@/types/dataSource";
 import { METRIC_COLUMNS } from "@/types/dataSource";
 import { Download, Save, Loader2, RotateCcw, Search } from "lucide-react";
 import { HistoricalBackfillPanel } from "@/components/data-source/HistoricalBackfillPanel";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 
 // ---------------------------------------------------------------------------
 // Formatting
@@ -162,6 +163,7 @@ export default function DataSourcePage() {
   };
 
   return (
+    <RequireAuth>
     <div className="mx-auto max-w-[98vw] px-4 py-6">
       <HistoricalBackfillPanel />
 
@@ -267,5 +269,6 @@ export default function DataSourcePage() {
         </div>
       )}
     </div>
+    </RequireAuth>
   );
 }

@@ -1,4 +1,5 @@
 import { ComparisonPrintPage } from "@/components/workspace/ComparisonPrintPage";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 import {
   buildCompanyComparisonPayload,
   CompanyComparisonRequestError,
@@ -36,17 +37,23 @@ export default async function CompanyComparisonExportPage({
   }
 
   if (result) {
-    return <ComparisonPrintPage result={result} />;
+    return (
+      <RequireAuth>
+        <ComparisonPrintPage result={result} />
+      </RequireAuth>
+    );
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 px-4 py-8">
-      <div className="mx-auto max-w-2xl rounded-2xl border border-red-200 bg-white p-6 shadow-subtle">
-        <p className="text-sm font-semibold uppercase tracking-wide text-red-600">
-          {isExpected ? "Export unavailable" : "Unexpected export error"}
-        </p>
-        <p className="mt-2 text-sm text-slate-700">{message}</p>
+    <RequireAuth>
+      <div className="min-h-screen bg-slate-100 px-4 py-8">
+        <div className="mx-auto max-w-2xl rounded-2xl border border-red-200 bg-white p-6 shadow-subtle">
+          <p className="text-sm font-semibold uppercase tracking-wide text-red-600">
+            {isExpected ? "Export unavailable" : "Unexpected export error"}
+          </p>
+          <p className="mt-2 text-sm text-slate-700">{message}</p>
+        </div>
       </div>
-    </div>
+    </RequireAuth>
   );
 }

@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/lib/authContext";
 import { useProfile } from "@/lib/profileContext";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 import type { UserProfile } from "@/lib/profileContext";
 import { cn } from "@/lib/utils";
 
@@ -141,6 +142,14 @@ function Section({
 // ── page ─────────────────────────────────────────────────────────────────────
 
 export default function ProfilePage() {
+  return (
+    <RequireAuth>
+      <ProfilePageContent />
+    </RequireAuth>
+  );
+}
+
+function ProfilePageContent() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
   const { profile, loading: profileLoading, upsertProfile } = useProfile();
@@ -186,13 +195,6 @@ export default function ProfilePage() {
       }));
     }
   }, [profile, profileLoading, user]);
-
-  // Redirect if not signed in
-  useEffect(() => {
-    if (!authLoading && !user) {
-      router.replace("/");
-    }
-  }, [authLoading, user, router]);
 
   const toggleModule = (m: string) => {
     setForm((f) => ({
