@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FullAnalysis, BSItem, IncomeStatement } from "@/types/analysis";
 import type { DataSourceRow } from "@/types/dataSource";
 import { cn } from "@/lib/utils";
@@ -13,10 +13,21 @@ import {
 import {
   CheckCircle2, XCircle, Download, AlertCircle,
   TrendingUp, TrendingDown, ShieldCheck, ShieldAlert,
-  ArrowRight, ArrowUpRight, ArrowDownRight, Minus, Info,
+  ArrowRight, ArrowUpRight, ArrowDownRight, Minus, Info, Search,
 } from "lucide-react";
 
-interface Props { result: FullAnalysis; onExport?: () => void; }
+export interface TraceMetric {
+  key: string;
+  label: string;
+  value?: number | null;
+  sourceHint?: string;
+}
+
+interface Props {
+  result: FullAnalysis;
+  onExport?: () => void;
+  onTraceMetric?: (target: TraceMetric) => void;
+}
 
 const COLORS = {
   primary: "#4f46e5", blue: "#3b82f6", emerald: "#10b981",
@@ -51,10 +62,24 @@ const TABS: { id: TabId; label: string }[] = [
 
 /* ──────────────────── Main Component ──────────────────── */
 
-export function AnalysisDashboard({ result, onExport }: Props) {
+export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
   const [activeTab, setActiveTab] = useState<TabId>("summary");
   const { balanceSheet: bs, debtStructure: debt, cashFlow: cf, ratios, dividendAnalysis: div, incomeStatement: inc, validation, meta, reconcile } = result;
   const cfItems = result.cfItems ?? [];
+
+  const findSource = useCallback((tags: string[]): string | undefined => {
+    const allItems = [...(result.balanceSheet.items ?? []), ...(result.cfItems ?? []), ...(result.debtStructure.items ?? [])];
+    for (const tag of tags) {
+      const item = allItems.find(i => i.tag.toLowerCase().includes(tag.toLowerCase()));
+      if (item?.source) return item.source;
+    }
+    return undefined;
+  }, [result]);
+
+  const trace = useCallback((label: string, value: number | null | undefined, tags: string[]) => {
+    if (!onTraceMetric) return;
+    onTraceMetric({ key: label, label, value: value ?? null, sourceHint: findSource(tags) });
+  }, [onTraceMetric, findSource]);
 
   const verdictColor = {
     strong: "text-emerald-700 bg-emerald-50 border-emerald-200",
@@ -103,6 +128,7 @@ export function AnalysisDashboard({ result, onExport }: Props) {
                   meta.extractionMethod === "pdf-ai-section-split" ? "Section-based AI" :
                   meta.extractionMethod === "pdf-vision" ? "Vision API" :
                   meta.extractionMethod === "pdf-ai" ? "AI extraction" :
+                  meta.extractionMethod === "pdf-ai-partial" ? "AI (partial)" :
                   meta.extractionMethod === "pdf-heuristic" ? "Pattern matching" :
                   "Extraction"
                 }</span>
@@ -206,6 +232,8 @@ export function AnalysisDashboard({ result, onExport }: Props) {
                     ? "OpenAI Vision API for table extraction"
                     : meta.extractionMethod === "pdf-ai"
                     ? "AI-powered text analysis"
+                    : meta.extractionMethod === "pdf-ai-partial"
+                    ? "AI extraction returned partial coverage; results may be incomplete"
                     : "Pattern matching heuristics"}
                 </div>
               </div>
@@ -214,26 +242,55 @@ export function AnalysisDashboard({ result, onExport }: Props) {
             {/* Financial Overview Table */}
             <Section title="Financial Overview">
               <div className="grid gap-4 lg:grid-cols-2">
-                <MetricTable rows={[
-                  { label: "Revenue", value: fmt(inc.revenue) },
-                  { label: "Cost of Revenue", value: fmt(inc.costOfRevenue), dim: true },
-                  { label: "Gross Profit", value: fmt(inc.grossProfit), bold: true, sub: fmtPct(inc.grossMargin) },
-                  { label: "SG&A Expense", value: fmt(inc.sgaExpense), dim: true },
-                  { label: "R&D Expense", value: fmt(inc.rdExpense), dim: true },
-                  { label: "Operating Income", value: fmt(inc.operatingIncome), bold: true, sub: fmtPct(inc.operatingMargin) },
-                  { label: "EBITDA", value: fmt(inc.ebitda), bold: true, sub: fmtPct(inc.ebitdaMargin) },
-                  { label: "Net Income", value: fmt(inc.netIncome), bold: true, sub: fmtPct(inc.netMargin) },
-                ]} />
-                <MetricTable rows={[
-                  { label: "Total Assets", value: fmt(bs.totalAssets) },
-                  { label: "Total Equity", value: fmt(bs.totalEquity) },
-                  { label: "Total Debt", value: fmt(debt.totalDebt) },
-                  { label: "Net Debt", value: fmt(debt.netDebt), bold: true },
-                  { label: "Cash & Equivalents", value: fmt(bs.cashAndEquivalents) },
-                  { label: "Operating CF", value: fmt(cf.operatingCashFlow) },
-                  { label: "Capital Expenditures", value: fmt(cf.capitalExpenditures) },
-                  { label: "Free Cash Flow", value: fmt(cf.freeCashFlow), bold: true },
-                ]} />
+                <MetricTable
+                  onRowClick={onTraceMetric ? (label) => {
+                    const tagMap: Record<string, { value: number | null | undefined; tags: string[] }> = {
+                      "Revenue": { value: inc.revenue, tags: ["Revenue", "Revenues", "NetRevenues"] },
+                      "Cost of Revenue": { value: inc.costOfRevenue, tags: ["CostOfRevenue", "CostOfGoodsSold"] },
+                      "Gross Profit": { value: inc.grossProfit, tags: ["GrossProfit"] },
+                      "Operating Income": { value: inc.operatingIncome, tags: ["OperatingIncome", "OperatingIncomeLoss"] },
+                      "EBITDA": { value: inc.ebitda, tags: ["EBITDA"] },
+                      "Net Income": { value: inc.netIncome, tags: ["NetIncome", "NetIncomeLoss"] },
+                    };
+                    const m = tagMap[label];
+                    if (m) trace(label, m.value, m.tags);
+                  } : undefined}
+                  rows={[
+                    { label: "Revenue", value: fmt(inc.revenue), traceable: true },
+                    { label: "Cost of Revenue", value: fmt(inc.costOfRevenue), dim: true, traceable: true },
+                    { label: "Gross Profit", value: fmt(inc.grossProfit), bold: true, sub: fmtPct(inc.grossMargin), traceable: true },
+                    { label: "SG&A Expense", value: fmt(inc.sgaExpense), dim: true },
+                    { label: "R&D Expense", value: fmt(inc.rdExpense), dim: true },
+                    { label: "Operating Income", value: fmt(inc.operatingIncome), bold: true, sub: fmtPct(inc.operatingMargin), traceable: true },
+                    { label: "EBITDA", value: fmt(inc.ebitda), bold: true, sub: fmtPct(inc.ebitdaMargin), traceable: true },
+                    { label: "Net Income", value: fmt(inc.netIncome), bold: true, sub: fmtPct(inc.netMargin), traceable: true },
+                  ]}
+                />
+                <MetricTable
+                  onRowClick={onTraceMetric ? (label) => {
+                    const tagMap: Record<string, { value: number | null | undefined; tags: string[] }> = {
+                      "Total Assets": { value: bs.totalAssets, tags: ["Assets"] },
+                      "Total Equity": { value: bs.totalEquity, tags: ["StockholdersEquity", "Equity"] },
+                      "Total Debt": { value: debt.totalDebt, tags: ["Debt", "LongTermDebt"] },
+                      "Net Debt": { value: debt.netDebt, tags: ["Debt", "LongTermDebt"] },
+                      "Cash & Equivalents": { value: bs.cashAndEquivalents, tags: ["CashAndCashEquivalents"] },
+                      "Operating CF": { value: cf.operatingCashFlow, tags: ["OperatingCashFlow", "CashFromOperating"] },
+                      "Free Cash Flow": { value: cf.freeCashFlow, tags: ["FreeCashFlow"] },
+                    };
+                    const m = tagMap[label];
+                    if (m) trace(label, m.value, m.tags);
+                  } : undefined}
+                  rows={[
+                    { label: "Total Assets", value: fmt(bs.totalAssets), traceable: true },
+                    { label: "Total Equity", value: fmt(bs.totalEquity), traceable: true },
+                    { label: "Total Debt", value: fmt(debt.totalDebt), traceable: true },
+                    { label: "Net Debt", value: fmt(debt.netDebt), bold: true, traceable: true },
+                    { label: "Cash & Equivalents", value: fmt(bs.cashAndEquivalents), traceable: true },
+                    { label: "Operating CF", value: fmt(cf.operatingCashFlow), traceable: true },
+                    { label: "Capital Expenditures", value: fmt(cf.capitalExpenditures) },
+                    { label: "Free Cash Flow", value: fmt(cf.freeCashFlow), bold: true, traceable: true },
+                  ]}
+                />
               </div>
             </Section>
 
@@ -865,34 +922,45 @@ function RatioCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-function MetricTable({ rows, compact }: {
-  rows: Array<{ label: string; value: string; bold?: boolean; dim?: boolean; sub?: string }>;
+function MetricTable({ rows, compact, onRowClick }: {
+  rows: Array<{ label: string; value: string; bold?: boolean; dim?: boolean; sub?: string; traceable?: boolean }>;
   compact?: boolean;
+  onRowClick?: (label: string) => void;
 }) {
   return (
     <table className="w-full text-xs">
       <tbody>
-        {rows.filter(r => r.value !== "—" || !compact).map((r, i) => (
-          <tr key={i} className={cn(
-            "border-b border-slate-100 last:border-b-0",
-            r.bold && "bg-slate-50/50"
-          )}>
-            <td className={cn(
-              compact ? "py-1 px-1" : "py-1.5 px-2",
-              r.bold ? "font-bold text-slate-800" : r.dim ? "text-slate-400" : "text-slate-600"
-            )}>
-              {r.label}
-            </td>
-            <td className={cn(
-              "text-right tabular-nums",
-              compact ? "py-1 px-1" : "py-1.5 px-2",
-              r.bold ? "font-bold text-slate-900" : "font-semibold text-slate-700"
-            )}>
-              {r.value}
-              {r.sub && <span className="ml-1.5 text-[10px] font-normal text-slate-400">{r.sub}</span>}
-            </td>
-          </tr>
-        ))}
+        {rows.filter(r => r.value !== "—" || !compact).map((r, i) => {
+          const clickable = r.traceable && onRowClick;
+          return (
+            <tr
+              key={i}
+              onClick={clickable ? () => onRowClick(r.label) : undefined}
+              className={cn(
+                "border-b border-slate-100 last:border-b-0",
+                r.bold && "bg-slate-50/50",
+                clickable && "cursor-pointer transition hover:bg-yellow-50/60 hover:border-yellow-200 group"
+              )}
+            >
+              <td className={cn(
+                compact ? "py-1 px-1" : "py-1.5 px-2",
+                r.bold ? "font-bold text-slate-800" : r.dim ? "text-slate-400" : "text-slate-600",
+                clickable && "group-hover:text-yellow-800"
+              )}>
+                {r.label}
+                {clickable && <Search className="ml-1 inline h-3 w-3 opacity-0 group-hover:opacity-60 transition-opacity text-yellow-600" />}
+              </td>
+              <td className={cn(
+                "text-right tabular-nums",
+                compact ? "py-1 px-1" : "py-1.5 px-2",
+                r.bold ? "font-bold text-slate-900" : "font-semibold text-slate-700"
+              )}>
+                {r.value}
+                {r.sub && <span className="ml-1.5 text-[10px] font-normal text-slate-400">{r.sub}</span>}
+              </td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );

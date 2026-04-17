@@ -52,10 +52,8 @@ export async function GET(request: Request) {
         const { cik, name } = await resolveTicker(ticker);
         send({ step: "resolve", status: "done", message: `${name} · CIK ${cik}` });
 
-        // 2. Fetch company facts (XBRL) once — reuse for all quarters
-        send({ step: "fetch_xbrl", status: "running", message: "Fetching XBRL facts…" });
+        // 2. Fetch company facts once — reuse for all quarters (no separate pipeline step)
         const facts = await fetchCompanyFacts(cik);
-        send({ step: "fetch_xbrl", status: "done", message: `XBRL loaded for ${facts.entityName}` });
 
         // 3. List available periods
         const periods = listAvailablePeriods(facts, { since, forms: ["10-Q", "10-K"] });

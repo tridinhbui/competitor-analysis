@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import {
   CheckCircle2, CircleDashed, Loader2, AlertCircle, PlayCircle,
   ChevronRight, Clock, Database, Cpu, BarChart3, ShieldCheck,
-  FileText, Search, Download, Calculator, Activity,
+  FileText, Search, Calculator, Activity,
 } from "lucide-react";
 
 interface Props {
@@ -20,7 +20,6 @@ interface Props {
 const STEP_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   ingest: FileText,
   resolve: Search,
-  fetch_xbrl: Download,
   extract_bs: Database,
   extract_cf: Database,
   compute_capital: Calculator,

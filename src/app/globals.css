@@ -5,6 +5,8 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  --font-sans: var(--font-heading);
+  --font-serif: var(--font-body);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -42,46 +44,47 @@
   --shadow-float: 0 20px 40px -12px rgb(15 23 42 / 0.12), 0 8px 16px -8px rgb(15 23 42 / 0.08);
 }
 
-/* App is light-only: bright, modern fintech */
+/* App is light-only with a clean corporate palette */
 :root {
   color-scheme: light;
+  --font-heading: "Montserrat", "Arial Rounded MT Bold", "Segoe UI", Arial, sans-serif;
+  --font-body: "Merriweather", Georgia, "Times New Roman", serif;
 
-  --background: oklch(0.998 0.003 250);
-  --foreground: oklch(0.22 0.02 260);
+  --background: #ffffff;
+  --foreground: #3b4043;
 
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.22 0.02 260);
+  --card: #ffffff;
+  --card-foreground: #3b4043;
 
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.22 0.02 260);
+  --popover: #ffffff;
+  --popover-foreground: #3b4043;
 
-  /* Vibrant but professional blue */
-  --primary: oklch(0.52 0.19 264);
-  --primary-foreground: oklch(0.99 0 0);
+  --primary: #cc521d;
+  --primary-foreground: #ffffff;
 
-  --secondary: oklch(0.97 0.01 250);
-  --secondary-foreground: oklch(0.28 0.03 260);
+  --secondary: #f7f4f1;
+  --secondary-foreground: #3b4043;
 
-  --muted: oklch(0.965 0.008 250);
-  --muted-foreground: oklch(0.48 0.02 260);
+  --muted: #f3f4f5;
+  --muted-foreground: #5a6065;
 
-  --accent: oklch(0.94 0.03 264);
-  --accent-foreground: oklch(0.28 0.06 264);
+  --accent: #fff3eb;
+  --accent-foreground: #9f4017;
 
-  --destructive: oklch(0.52 0.2 25);
-  --destructive-foreground: oklch(0.99 0 0);
+  --destructive: #b42318;
+  --destructive-foreground: #ffffff;
 
-  --success: oklch(0.52 0.14 155);
-  --success-foreground: oklch(0.99 0 0);
+  --success: #2f7d5d;
+  --success-foreground: #ffffff;
 
-  --warning: oklch(0.72 0.16 75);
-  --warning-foreground: oklch(0.22 0.04 75);
+  --warning: #c67b1f;
+  --warning-foreground: #ffffff;
 
-  --border: oklch(0.91 0.01 250);
-  --input: oklch(0.93 0.01 250);
-  --ring: oklch(0.52 0.19 264);
+  --border: #e3e5e7;
+  --input: #e6e8ea;
+  --ring: #cc521d;
 
-  --radius: 0.75rem;
+  --radius: 0.85rem;
 }
 
 /* Keep .dark block for shadcn compatibility but app does not apply .dark on <html> */
@@ -121,14 +124,40 @@
   }
   body {
     @apply min-h-dvh text-foreground antialiased selection:bg-primary/15 selection:text-foreground;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    font-family: var(--font-body);
+    font-feature-settings: "liga", "clig";
+    font-size: 16px;
+    line-height: 1.75;
     background-color: #ffffff;
     background-image:
-      radial-gradient(ellipse 120% 80% at 50% -30%, oklch(0.94 0.04 264 / 0.45), transparent 55%),
-      radial-gradient(ellipse 90% 60% at 100% 0%, oklch(0.96 0.03 200 / 0.35), transparent 50%),
-      radial-gradient(ellipse 70% 50% at 0% 100%, oklch(0.97 0.025 280 / 0.4), transparent 45%),
-      linear-gradient(180deg, oklch(0.999 0.002 250) 0%, oklch(0.995 0.004 250) 100%);
+      radial-gradient(ellipse 110% 78% at 50% -24%, rgb(204 82 29 / 0.1), transparent 58%),
+      linear-gradient(145deg, rgb(204 82 29 / 0.05) 0 14%, transparent 14% 86%, rgb(204 82 29 / 0.05) 86% 100%),
+      linear-gradient(180deg, #ffffff 0%, #fffdfb 100%);
     background-attachment: fixed;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading);
+    color: var(--foreground);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.12;
+  }
+  h1 {
+    font-size: clamp(2.35rem, 5.8vw, 4.6rem);
+    font-weight: 900;
+  }
+  h2 {
+    font-size: clamp(1.8rem, 3.7vw, 3.2rem);
+  }
+  p, li {
+    color: var(--muted-foreground);
+  }
+  nav, button, a {
+    font-family: var(--font-heading);
+  }
+  nav {
+    font-size: 0.9rem;
+    font-weight: 600;
   }
 
   table {
@@ -161,4 +190,14 @@
   ::-webkit-scrollbar-thumb {
     @apply rounded-full bg-slate-200 hover:bg-slate-300;
   }
+}
+
+.brand-keyword {
+  color: var(--primary);
+}
+
+.floating-food {
+  box-shadow:
+    0 18px 34px -16px rgb(16 24 40 / 0.28),
+    0 8px 18px -10px rgb(16 24 40 / 0.2);
 }

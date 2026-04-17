@@ -5,10 +5,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu, X, LogIn, LogOut, User, Settings, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { GlobalChat } from "@/components/chat/GlobalChat";
 import { useAuth } from "@/lib/authContext";
 import { useProfile } from "@/lib/profileContext";
 import { AuthModal } from "@/components/auth/AuthModal";
+import { SmithfieldCorporateLogo } from "@/components/branding/SmithfieldCorporateLogo";
 
 const NAV_ITEMS = [
   { href: "/analyze", label: "Analyze" },
@@ -29,11 +29,11 @@ export function AppShellChrome() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [currentHash, setCurrentHash] = useState("");
   const userMenuRef = useRef<HTMLDivElement>(null);
   const { user, signOut, loading: authLoading } = useAuth();
   const { profile, needsOnboarding } = useProfile();
 
-  const showGlobalChat = useMemo(() => pathname !== "/", [pathname]);
   const displayName =
     profile?.full_name?.trim() ||
     (typeof user?.user_metadata?.full_name === "string" ? user.user_metadata.full_name : null) ||
@@ -43,6 +43,7 @@ export function AppShellChrome() {
     profile?.avatar_url ||
     (typeof user?.user_metadata?.avatar_url === "string" ? user.user_metadata.avatar_url : null) ||
     (typeof user?.user_metadata?.picture === "string" ? user.user_metadata.picture : null);
+  const brandHref = "/";
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -57,25 +58,34 @@ export function AppShellChrome() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [userMenuOpen]);
 
+  useEffect(() => {
+    const syncHash = () => setCurrentHash(window.location.hash || "");
+    syncHash();
+    window.addEventListener("hashchange", syncHash);
+    return () => window.removeEventListener("hashchange", syncHash);
+  }, [pathname]);
+
   return (
     <>
-      <nav className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/85 px-4 py-2.5 text-xs font-semibold backdrop-blur-md sm:px-6">
+      <nav className="sticky top-0 z-40 border-b border-border/90 bg-white/90 px-4 py-2.5 text-xs font-semibold backdrop-blur-md sm:px-6">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <Link href="/" className="text-slate-900 transition hover:text-primary">
-              Dividend IQ
+            <Link href={brandHref} className="inline-flex items-center transition hover:opacity-90" aria-label="Smithfield Strategy home">
+              <SmithfieldCorporateLogo variant="nav" />
             </Link>
-            <span className="hidden text-slate-200 sm:inline">|</span>
+            <span className="hidden text-border sm:inline">|</span>
             <div className="hidden items-center gap-1 md:flex">
               {NAV_ITEMS.map((item) => {
-                const active = isItemActive(pathname, item.href);
+                const active = item.href === "/#pricing"
+                  ? pathname === "/" && currentHash === "#pricing"
+                  : isItemActive(pathname, item.href);
                 return (
                   <Link
                     key={item.href}
                     href={item.href}
                     className={cn(
                       "rounded-full px-2.5 py-1 transition",
-                      active ? "bg-primary/10 text-primary" : "text-slate-500 hover:text-slate-900"
+                      active ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"
                     )}
                   >
                     {item.label}
@@ -88,9 +98,9 @@ export function AppShellChrome() {
           <div className="flex items-center gap-2">
             <Link
               href="/analyze"
-              className="hidden rounded-full bg-gradient-to-r from-primary to-[oklch(0.48_0.16_290)] px-3.5 py-1.5 text-[11px] font-semibold text-white shadow-subtle transition hover:opacity-95 sm:inline-flex"
+              className="hidden rounded-full bg-primary px-3.5 py-1.5 text-[11px] font-semibold text-white shadow-subtle transition hover:bg-[#b7491a] sm:inline-flex"
             >
-              Analyze now
+              Explore now
             </Link>
 
             {/* Auth / user menu */}
@@ -100,10 +110,11 @@ export function AppShellChrome() {
                   <button
                     type="button"
                     onClick={() => setUserMenuOpen((v) => !v)}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-white"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-border bg-secondary px-2.5 py-1 text-[11px] font-semibold text-foreground transition hover:border-[#d2d5d8] hover:bg-white"
                     title={profile?.email ?? user.email ?? ""}
                   >
                     {avatarUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={avatarUrl}
                         alt={displayName}
@@ -114,27 +125,27 @@ export function AppShellChrome() {
                       <User className="h-3.5 w-3.5" aria-hidden />
                     )}
                     <span className="max-w-[96px] truncate">{displayName}</span>
-                    <ChevronDown className={cn("h-3 w-3 text-slate-400 transition-transform", userMenuOpen && "rotate-180")} />
+                    <ChevronDown className={cn("h-3 w-3 text-muted-foreground transition-transform", userMenuOpen && "rotate-180")} />
                   </button>
 
                   {userMenuOpen && (
-                    <div className="absolute right-0 top-full z-50 mt-1.5 w-44 rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+                    <div className="absolute right-0 top-full z-50 mt-1.5 w-44 rounded-xl border border-border bg-white py-1 shadow-lg">
                       <Link
                         href="/profile"
                         onClick={() => setUserMenuOpen(false)}
-                        className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+                        className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-foreground transition hover:bg-secondary"
                       >
-                        <Settings className="h-3.5 w-3.5 text-slate-400" />
+                        <Settings className="h-3.5 w-3.5 text-muted-foreground" />
                         My Profile
                         {needsOnboarding && (
                           <span className="ml-auto h-1.5 w-1.5 rounded-full bg-amber-400" />
                         )}
                       </Link>
-                      <div className="mx-2 my-1 h-px bg-slate-100" />
+                      <div className="mx-2 my-1 h-px bg-border/60" />
                       <button
                         type="button"
                         onClick={() => { setUserMenuOpen(false); void signOut(); }}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium text-slate-500 transition hover:bg-red-50 hover:text-red-600"
+                        className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium text-muted-foreground transition hover:bg-red-50 hover:text-red-600"
                       >
                         <LogOut className="h-3.5 w-3.5" />
                         Sign out
@@ -146,7 +157,7 @@ export function AppShellChrome() {
                 <button
                   type="button"
                   onClick={() => setAuthOpen(true)}
-                  className="hidden items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 transition hover:text-primary sm:inline-flex"
+                  className="hidden items-center gap-1 rounded-full border border-border bg-white px-2.5 py-1 text-[11px] font-semibold text-muted-foreground transition hover:text-primary sm:inline-flex"
                 >
                   <LogIn className="h-3 w-3" aria-hidden />
                   Sign in
@@ -157,7 +168,7 @@ export function AppShellChrome() {
             <button
               type="button"
               onClick={() => setMobileOpen((v) => !v)}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 md:hidden"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-white text-muted-foreground transition hover:bg-secondary md:hidden"
               aria-label={mobileOpen ? "Close navigation menu" : "Open navigation menu"}
               aria-expanded={mobileOpen}
             >
@@ -167,10 +178,12 @@ export function AppShellChrome() {
         </div>
 
         {mobileOpen && (
-          <div className="mt-2 rounded-xl border border-slate-200/80 bg-white p-2 shadow-elevation md:hidden">
+          <div className="mt-2 rounded-xl border border-border bg-white p-2 shadow-elevation md:hidden">
             <div className="grid gap-1">
               {NAV_ITEMS.map((item) => {
-                const active = isItemActive(pathname, item.href);
+                const active = item.href === "/#pricing"
+                  ? pathname === "/" && currentHash === "#pricing"
+                  : isItemActive(pathname, item.href);
                 return (
                   <Link
                     key={item.href}
@@ -178,7 +191,7 @@ export function AppShellChrome() {
                     onClick={() => setMobileOpen(false)}
                     className={cn(
                       "rounded-lg px-3 py-2 text-xs transition",
-                      active ? "bg-primary/10 text-primary" : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                      active ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-secondary hover:text-foreground"
                     )}
                   >
                     {item.label}
@@ -188,14 +201,14 @@ export function AppShellChrome() {
               <Link
                 href="/analyze"
                 onClick={() => setMobileOpen(false)}
-                className="mt-1 inline-flex items-center justify-center rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white"
+                className="mt-1 inline-flex items-center justify-center rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white hover:bg-[#b7491a]"
               >
-                Analyze now
+                Explore now
               </Link>
 
               {user && (
                 <>
-                  <div className="mx-1 my-1 h-px bg-slate-100" />
+                  <div className="mx-1 my-1 h-px bg-border/60" />
                   <Link
                     href="/profile"
                     onClick={() => setMobileOpen(false)}
@@ -203,7 +216,7 @@ export function AppShellChrome() {
                       "flex items-center gap-2 rounded-lg px-3 py-2 text-xs transition",
                       isItemActive(pathname, "/profile")
                         ? "bg-primary/10 text-primary"
-                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900",
+                        : "text-muted-foreground hover:bg-secondary hover:text-foreground",
                     )}
                   >
                     <Settings className="h-3.5 w-3.5" />
@@ -215,7 +228,7 @@ export function AppShellChrome() {
                   <button
                     type="button"
                     onClick={() => { setMobileOpen(false); void signOut(); }}
-                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-slate-500 transition hover:bg-red-50 hover:text-red-600"
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-muted-foreground transition hover:bg-red-50 hover:text-red-600"
                   >
                     <LogOut className="h-3.5 w-3.5" />
                     Sign out
@@ -237,7 +250,6 @@ export function AppShellChrome() {
         </div>
       )}
 
-      {showGlobalChat && <GlobalChat />}
       {authOpen && <AuthModal onClose={() => setAuthOpen(false)} />}
     </>
   );

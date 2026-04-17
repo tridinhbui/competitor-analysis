@@ -4,9 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { FullAnalysis, StepEvent } from "@/types/analysis";
 import { AgentWorkflow } from "./AgentWorkflow";
-import { AnalysisDashboard } from "./AnalysisDashboard";
+import { AnalysisDashboard, type TraceMetric } from "./AnalysisDashboard";
 import { AnalysisChatPanel } from "./AnalysisChatPanel";
-import { PdfViewer } from "./PdfViewer";
+import { PdfViewer, type TraceTarget } from "./PdfViewer";
 import { AnalyzeExtractPanel } from "./AnalyzeExtractPanel";
 import { analyzePdf } from "@/lib/pdfAnalysis";
 import {
@@ -36,6 +36,7 @@ export function TenQDropAnalyzer() {
   const inputRef = useRef<HTMLInputElement>(null);
   const resizeContainerRef = useRef<HTMLDivElement>(null);
   const savedResultKeyRef = useRef<string | null>(null);
+  const [traceTarget, setTraceTarget] = useState<TraceTarget | null>(null);
 
   // Auto-save: Supabase via /api/filings/save for PDF; SEC saved server-side too.
   useEffect(() => {
@@ -339,7 +340,7 @@ export function TenQDropAnalyzer() {
             className="flex min-h-0 min-w-0 shrink-0 flex-col overflow-hidden"
             style={{ flex: `0 0 ${pdfWidthPct}%` }}
           >
-            <PdfViewer file={pdfFile} fullHeight />
+            <PdfViewer file={pdfFile} fullHeight traceTarget={traceTarget} onClearTrace={() => setTraceTarget(null)} />
           </div>
 
           {/* Resize handle */}
@@ -355,7 +356,7 @@ export function TenQDropAnalyzer() {
           {/* Analysis dashboard */}
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto border-l border-slate-200/80 bg-white p-3 sm:p-4">
             {result && phase === "done" ? (
-              <AnalysisDashboard result={result} onExport={handleExport} />
+              <AnalysisDashboard result={result} onExport={handleExport} onTraceMetric={(m: TraceMetric) => setTraceTarget(m)} />
             ) : (
               <div className="flex flex-1 items-center justify-center p-6 text-center">
                 <div>

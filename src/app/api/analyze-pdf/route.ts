@@ -4,6 +4,7 @@ import { extractNonRecurringItems } from "@/lib/filingTextExtractor";
 import { shouldRunExtraction } from "@/lib/llmExtractionGuards";
 import { extractPdfFinancialValue, type PdfFinancialMetric } from "@/lib/pdfFinancialValueExtractor";
 import type { BSItem, FootnoteItem, EarningsNarrative } from "@/types/analysis";
+import { STRICT_PROVENANCE_EXTRACTOR_SYSTEM } from "@/lib/prompts/strictProvenanceExtractor";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -12,140 +13,119 @@ export const maxDuration = 120;
 // Exact XBRL tags that assembleAnalysis actually uses via find()/findOrNull()
 // ---------------------------------------------------------------------------
 
-const BS_PROMPT = `You are a financial data extraction engine. Extract BALANCE SHEET data from this 10-Q/10-K text.
+const BS_PROMPT =
+  STRICT_PROVENANCE_EXTRACTOR_SYSTEM +
+  `
+CALL-SPECIFIC: BALANCE SHEET ONLY
+Return JSON with "meta" and "items" exactly as defined in the system rules (provenance fields required per item).
 
-Return ONLY valid JSON (no markdown):
-{
-  "companyName": "string or null",
-  "periodEnd": "YYYY-MM-DD or null",
-  "scaleNote": "millions|thousands|billions",
-  "items": [
-    {"tag": "EXACT_TAG", "label": "Human label", "value": 1234}
-  ]
-}
+Items MUST use ONLY these EXACT tags (do not output income or cash flow tags in this call):
+- Assets -> Total assets
+- AssetsCurrent -> Total current assets
+- AssetsNoncurrent -> Total non-current assets
+- CashAndCashEquivalentsAtCarryingValue -> Cash and cash equivalents
+- ShortTermInvestments -> Short-term investments / marketable securities
+- AccountsReceivableNet -> Accounts receivable, net (trade receivables)
+- AccountsReceivableNetCurrent -> Accounts receivable current
+- InventoryNet -> Inventories
+- PrepaidExpenseAndOtherAssetsCurrent -> Prepaid expenses & other current assets
+- PropertyPlantAndEquipmentNet -> Property, plant & equipment, net
+- Goodwill -> Goodwill
+- IntangibleAssetsNet -> Intangible assets, net
+- OtherAssetsNoncurrent -> Other non-current assets
+- DeferredIncomeTaxAssetsNet -> Deferred income tax assets
+- Liabilities -> Total liabilities
+- LiabilitiesCurrent -> Total current liabilities
+- LiabilitiesNoncurrent -> Total non-current / long-term liabilities
+- AccountsPayable -> Accounts payable (trade payables)
+- AccruedLiabilitiesCurrent -> Accrued expenses / accrued liabilities
+- DeferredRevenueCurrent -> Deferred revenue (current)
+- DebtCurrent -> Current portion of long-term debt / short-term borrowings / notes payable current
+- LongTermDebtNoncurrent -> Long-term debt (non-current portion)
+- LongTermDebt -> Long-term debt (if only one debt line is shown)
+- ShortTermBorrowings -> Short-term borrowings / revolving credit (if separate from current portion of LT debt)
+- LongTermDebtCurrent -> Current maturities of long-term debt (if shown as separate line from DebtCurrent)
+- OperatingLeaseLiabilityNoncurrent -> Operating lease liabilities (non-current)
+- FinanceLeaseLiabilityNoncurrent -> Finance lease obligations (non-current portion)
+- PensionAndOtherPostretirementDefinedBenefitPlansLiabilitiesNoncurrent -> Pension / OPEB obligations (non-current)
+- RedeemableNoncontrollingInterestEquityCarryingAmount -> Redeemable noncontrolling interests (mezzanine)
+- StockholdersEquity -> Total stockholders' equity / shareholders' equity (NET after treasury & AOCI)
+- CommonStockValue -> Common stock
+- AdditionalPaidInCapital -> Additional paid-in capital / APIC
+- RetainedEarningsAccumulatedDeficit -> Retained earnings / accumulated deficit
+- TreasuryStockValue -> Treasury stock (NEGATIVE when parenthesized)
+- AccumulatedOtherComprehensiveIncomeLoss -> AOCI
+- LiabilitiesAndStockholdersEquity -> Total liabilities and stockholders' equity
+- MinorityInterest -> Noncontrolling interests inside total equity
 
-You MUST use these EXACT tags. Extract the MOST RECENT period (leftmost or first data column).
-ALL values MUST be in USD millions. If filing uses thousands, divide by 1000. If billions, multiply by 1000.
-Parenthesized numbers (1,234) = NEGATIVE.
-
-REQUIRED TAGS (extract ALL that exist in the text):
-- Assets â†’ Total assets
-- AssetsCurrent â†’ Total current assets
-- AssetsNoncurrent â†’ Total non-current assets
-- CashAndCashEquivalentsAtCarryingValue â†’ Cash and cash equivalents
-- ShortTermInvestments â†’ Short-term investments / marketable securities
-- AccountsReceivableNet â†’ Accounts receivable, net (trade receivables)
-- AccountsReceivableNetCurrent â†’ Accounts receivable current
-- InventoryNet â†’ Inventories
-- PrepaidExpenseAndOtherAssetsCurrent â†’ Prepaid expenses & other current assets
-- PropertyPlantAndEquipmentNet â†’ Property, plant & equipment, net
-- Goodwill â†’ Goodwill
-- IntangibleAssetsNet â†’ Intangible assets, net
-- OtherAssetsNoncurrent â†’ Other non-current assets
-- DeferredIncomeTaxAssetsNet â†’ Deferred income tax assets
-- Liabilities â†’ Total liabilities
-- LiabilitiesCurrent â†’ Total current liabilities
-- LiabilitiesNoncurrent â†’ Total non-current / long-term liabilities
-- AccountsPayable â†’ Accounts payable (trade payables)
-- AccruedLiabilitiesCurrent â†’ Accrued expenses / accrued liabilities
-- DeferredRevenueCurrent â†’ Deferred revenue (current)
-- DebtCurrent â†’ Current portion of long-term debt / short-term borrowings / notes payable current
-- LongTermDebtNoncurrent â†’ Long-term debt (non-current portion)
-- LongTermDebt â†’ Long-term debt (if only one debt line is shown)
-- ShortTermBorrowings â†’ Short-term borrowings / revolving credit (if separate from current portion of LT debt)
-- LongTermDebtCurrent â†’ Current maturities of long-term debt (if shown as separate line from DebtCurrent)
-- OperatingLeaseLiabilityNoncurrent â†’ Operating lease liabilities (non-current)
-- FinanceLeaseLiabilityNoncurrent â†’ Finance lease obligations (non-current portion)
-- PensionAndOtherPostretirementDefinedBenefitPlansLiabilitiesNoncurrent â†’ Pension obligations / defined benefit plan liabilities / OPEB liabilities (non-current). Also matches "Pension benefit obligations", "Postretirement benefit obligations".
-- RedeemableNoncontrollingInterestEquityCarryingAmount â†’ Redeemable noncontrolling interests. This is a MEZZANINE item that appears between Total Liabilities and Shareholders' Equity sections â€” it is neither a standard liability nor equity. Extract it if it exists.
-- StockholdersEquity â†’ Total stockholders' equity / total shareholders' equity / total shareholders' investment / total equity / shareholders' investment (the net subtotal AFTER deducting treasury stock and including AOCI)
-- CommonStockValue â†’ Common stock
-- AdditionalPaidInCapital â†’ Additional paid-in capital / APIC
-- RetainedEarningsAccumulatedDeficit â†’ Retained earnings (or accumulated deficit if negative)
-- TreasuryStockValue â†’ Treasury stock (NEGATIVE â€” shown in parentheses in filings). Must be extracted as a negative number.
-- AccumulatedOtherComprehensiveIncomeLoss â†’ Accumulated other comprehensive income/loss (AOCI â€” can be positive or negative)
-- LiabilitiesAndStockholdersEquity â†’ Total liabilities and stockholders' equity
-- MinorityInterest â†’ Noncontrolling interests / minority interest (the portion already inside Total Equity)
-
-RULES:
+Balance-sheet rules:
+- Extract the most recent balance sheet column (latest "As of" / rightmost data column if clearly labeled).
+- For every item set statementType to "balance_sheet".
+- periodBasis: use "unknown" for typical point-in-time balances unless clearly fiscal year-end only.
 - If a line item matches multiple tags, pick the most specific one.
-- ALL parenthesized values (1,234) are NEGATIVE. This applies especially to TreasuryStockValue and AccumulatedOtherComprehensiveIncomeLoss.
-- TreasuryStockValue MUST be negative. If you see a large parenthesized number on the Treasury stock line, record it as a negative value (e.g., (4,949) â†’ -4949).
-- StockholdersEquity is the NET total line â€” it already reflects the deduction of treasury stock. Do not add treasury stock back in.
-- For StockholdersEquity, ALWAYS prioritize the FINAL total line in the equity section.
-- Equity aliases to treat as equivalent: "Total Shareholders' Equity", "Total Shareholders' Investment", "Total Stockholders' Equity", "Total Equity", "Shareholders' Investment".
-- If both "Company Shareholders' Equity" and "Total Shareholders' Equity" exist, ALWAYS choose the TOTAL line (includes noncontrolling interest).
-- Equity section is usually after liabilities and before the final total. Prefer that final subtotal line over component lines.
-- Validation: confirm Assets is approximately equal to Liabilities + Equity. If mismatch, re-check StockholdersEquity and choose the line that best reconciles.
-- RedeemableNoncontrollingInterestEquityCarryingAmount appears between Liabilities and Equity sections. Always extract it when present.
-- If "Total liabilities and equity" exists, include it as LiabilitiesAndStockholdersEquity.
-- Ignore standalone superscript/footnote markers (e.g., 1, 2, 3) after labels. They are not dollar values.
-- Do NOT invent numbers. Only extract what is in the text.`;
+- ALL parenthesized values (1,234) are NEGATIVE where applicable (TreasuryStockValue, AOCI, etc.).
+- TreasuryStockValue MUST be negative when shown in parentheses.
+- StockholdersEquity: prefer the FINAL total line; if Company vs Total exist, choose TOTAL (includes NCI).
+- Validate Assets ~ Liabilities + Equity; if mismatch, re-check StockholdersEquity.
+- Do NOT invent numbers.
+`;
 
-const IS_CF_PROMPT = `You are a financial data extraction engine. Extract INCOME STATEMENT and CASH FLOW STATEMENT data from this 10-Q/10-K text.
+const IS_CF_PROMPT =
+  STRICT_PROVENANCE_EXTRACTOR_SYSTEM +
+  `
+CALL-SPECIFIC: INCOME STATEMENT + CASH FLOW (+ equity-statement SBC if only shown there)
+Return JSON with "meta" and "items" exactly as defined in the system rules (provenance fields required per item).
 
-Return ONLY valid JSON (no markdown):
-{
-  "items": [
-    {"tag": "EXACT_TAG", "label": "Human label", "value": 1234}
-  ]
-}
+Items MUST use ONLY these EXACT tags:
 
-You MUST use these EXACT tags. Extract the MOST RECENT period (leftmost or first data column, typically "Three months ended" for quarterly, or annual if 10-K).
-ALL values MUST be in USD millions. If filing uses thousands, divide by 1000. If billions, multiply by 1000.
-Parenthesized numbers (1,234) = NEGATIVE.
+INCOME STATEMENT:
+- Revenues -> Net sales / sales / net revenue / total revenue (food companies often label "Sales")
+- CostOfGoodsSold -> Cost of goods sold / cost of sales / cost of products sold
+- CostOfGoodsAndServicesSold -> Cost of goods and services sold
+- CostOfRevenue -> Cost of revenue (exact label)
+- GrossProfit -> Gross profit (or compute Revenues - COGS if clearly implied)
+- SellingGeneralAndAdministrativeExpense -> SG&A
+- ResearchAndDevelopmentExpense -> R&D
+- OperatingExpenses -> Total operating expenses (if shown as a total)
+- OperatingIncomeLoss -> Operating income / income from operations / operating profit
+- InterestExpense -> Interest expense (positive)
+- InterestIncome -> Interest income
+- IncomeTaxExpenseBenefit -> Income tax expense / provision for income taxes
+- NetIncomeLoss -> Net income / net earnings / attributable lines
+- EarningsPerShareBasic -> Basic EPS (per-share; unit per-share; NOT millions)
+- EarningsPerShareDiluted -> Diluted EPS (per-share; unit per-share)
+- WeightedAverageSharesBasic -> Weighted average shares basic (millions; unit shares-millions)
+- WeightedAverageSharesDiluted -> Weighted average shares diluted (millions; unit shares-millions)
 
-INCOME STATEMENT TAGS:
-- Revenues â†’ Total revenue / net revenues / net sales / sales / net revenue. NOTE: many filings (especially food/meat companies) label this simply "Sales" â€” treat "Sales" as revenue.
-- CostOfGoodsSold â†’ Cost of goods sold / cost of sales / cost of products sold / cost of products
-- CostOfGoodsAndServicesSold â†’ Cost of goods and services sold (use this tag if "goods and services" appears)
-- CostOfRevenue â†’ Cost of revenue (use this if "cost of revenue" is the exact label)
-- GrossProfit â†’ Gross profit (Revenue minus COGS). If not shown, compute as Revenues minus CostOfGoodsSold.
-- SellingGeneralAndAdministrativeExpense â†’ SG&A / selling, general & administrative / selling, general and administrative expenses
-- ResearchAndDevelopmentExpense â†’ R&D / research and development expense
-- OperatingExpenses â†’ Total operating expenses (if shown as a total)
-- OperatingIncomeLoss â†’ Operating income (loss) / income from operations / operating profit / operating earnings. NOTE: "Operating profit" is a common synonym â€” extract it as OperatingIncomeLoss.
-- InterestExpense â†’ Interest expense (absolute value, positive number)
-- InterestIncome â†’ Interest income
-- IncomeTaxExpenseBenefit â†’ Income tax expense / provision for income taxes / income taxes
-- NetIncomeLoss â†’ Net income (loss) / net earnings / net income attributable to parent / net earnings attributable to shareholders
-- EarningsPerShareBasic â†’ Basic earnings per share (this is a per-share number, NOT millions)
-- EarningsPerShareDiluted â†’ Diluted earnings per share (per-share number, NOT millions)
-- WeightedAverageSharesBasic â†’ Weighted average shares outstanding, basic (in millions)
-- WeightedAverageSharesDiluted â†’ Weighted average shares outstanding, diluted (in millions)
+CASH FLOW:
+- DepreciationDepletionAndAmortization -> D&A
+- DepreciationAndAmortization -> alternative D&A tag
+- Depreciation -> Depreciation only
+- AmortizationOfIntangibleAssets -> Amortization of intangibles
+- ShareBasedCompensation -> SBC (check equity statement if missing from CF)
+- NetCashProvidedByOperatingActivities -> Net cash from operating activities (continuing if split)
+- PaymentsToAcquirePropertyPlantAndEquipment -> CapEx (POSITIVE outflow magnitude)
+- NetCashProvidedByInvestingActivities -> Net cash from investing activities
+- ProceedsFromIssuanceOfLongTermDebt -> Debt issuance (POSITIVE)
+- RepaymentsOfLongTermDebt -> LT debt repayments ONLY when label explicitly long-term (POSITIVE)
+- RepaymentsOfShortTermDebt -> ST debt repayments (POSITIVE)
+- RepaymentsOfDebt -> Mixed / ambiguous debt payments (POSITIVE)
+- RepaymentsOfCommercialPaper -> Commercial paper repayments (POSITIVE)
+- PaymentsOfDividends -> Dividends paid (POSITIVE even if filing shows negative)
+- PaymentsOfDividendsCommonStock -> Common dividends (POSITIVE)
+- PaymentsForRepurchaseOfCommonStock -> Share repurchases / buybacks (POSITIVE; prefer financing CF dollars)
+- NetCashProvidedByFinancingActivities -> Net cash from financing activities
 
-CASH FLOW STATEMENT TAGS:
-- DepreciationDepletionAndAmortization â†’ Depreciation and amortization (D&A) / depreciation, depletion and amortization
-- DepreciationAndAmortization â†’ (alternative D&A tag)
-- Depreciation â†’ Depreciation only (if shown separately)
-- AmortizationOfIntangibleAssets â†’ Amortization of intangibles (if shown separately)
-- ShareBasedCompensation â†’ Stock-based compensation / share-based compensation / stock compensation expense. NOTE: some filers (especially recently-IPO'd companies) show SBC in the Shareholders' Equity statement rather than the Cash Flow Statement â€” look in both sections.
-- NetCashProvidedByOperatingActivities â†’ Net cash from operating activities / net cash provided by operating activities / net cash flows from operating activities / net cash flows from operating activities of continuing operations. NOTE: if the filing separates "continuing" and "discontinued" operations, use the "continuing operations" value.
-- PaymentsToAcquirePropertyPlantAndEquipment â†’ Capital expenditures / purchases of property / purchases of property and equipment / payments for property, plant and equipment / capital additions / additions to property, plant and equipment (POSITIVE number)
-- NetCashProvidedByInvestingActivities â†’ Net cash from investing activities / net cash used in investing activities / net cash flows from investing activities
-- ProceedsFromIssuanceOfLongTermDebt â†’ Proceeds from issuance of long-term debt / borrowings / proceeds from debt (POSITIVE number)
-- RepaymentsOfLongTermDebt â†’ Repayments of long-term debt ONLY when the label explicitly names long-term debt, term loan, or non-current notes (e.g., "Repayment of term loan", "Principal payments on long-term debt"). Do NOT use this tag for "Payments on debt" or any label that does not explicitly say "long-term". (POSITIVE number)
-- RepaymentsOfShortTermDebt â†’ Repayments of short-term borrowings / short-term debt / revolving credit borrowings (POSITIVE number)
-- RepaymentsOfDebt â†’ Use this tag when the label is ambiguous mixed debt repayment such as "Payments on debt", "Repayment of debt", or "Debt payments" â€” i.e., when the filing does NOT specify long-term vs short-term. (POSITIVE number)
-- RepaymentsOfCommercialPaper â†’ Repayments of commercial paper / repayments of short-term borrowings when labeled as commercial paper. (POSITIVE number)
-- PaymentsOfDividends â†’ Dividends paid / payment of dividends / payments of dividends / dividends paid to shareholders (POSITIVE number, even if shown as negative in filing)
-- PaymentsOfDividendsCommonStock â†’ Dividends paid to common stockholders (use if "common" is specified)
-- PaymentsForRepurchaseOfCommonStock â†’ Share repurchases / stock buybacks. Matches any of these labels: "repurchase of common stock", "purchases of common stock", "purchases of [any company name] Class A common stock", "purchases of [any company name] Class B common stock", "total share repurchases", "share repurchase program", "repurchase program". SEARCH PRIORITY: (1) financing section of Cash Flow Statement â€” preferred; (2) equity rollforward table or share repurchase note â€” use DOLLAR value column only, not shares column. If the filing is quarterly (10-Q), use the Three Months column; if YTD, use the Nine Months / Year-to-Date column. (POSITIVE number)
-- NetCashProvidedByFinancingActivities â†’ Net cash from financing activities / net cash used in financing activities / net cash flows from financing activities
-
-RULES:
-- EPS values are per-share (e.g., 2.45), NOT in millions. Do not multiply by 1,000,000.
-- CapEx, debt repayments, dividends, and buybacks should be POSITIVE even if the filing shows them as negative outflows.
-- Interest expense should be POSITIVE.
-- If both "Cost of goods sold" and "Cost of revenue" appear, use CostOfGoodsSold for the former and CostOfRevenue for the latter.
-- Operating income can be negative (a loss). Keep the sign.
-- Net income can be negative (a loss). Keep the sign.
-- "Sales" at the top of the income statement = Revenue (Revenues tag). Do not confuse with "Sales" as a cost-center in SG&A breakdowns.
-- Free Cash Flow (FCF) is NOT a required tag â€” it is computed downstream as (NetCashProvidedByOperatingActivities minus PaymentsToAcquirePropertyPlantAndEquipment). Just extract those two values accurately.
-- For debt repayment: "Payments on debt" â†’ RepaymentsOfDebt (mixed). "Repayments of long-term debt" â†’ RepaymentsOfLongTermDebt. "Repayments of commercial paper" â†’ RepaymentsOfCommercialPaper. Do NOT use RepaymentsOfLongTermDebt for ambiguous labels.
-- For share repurchases: do NOT require the exact phrase "share repurchases" â€” any stock purchase line in the financing section qualifies. Check equity notes if not in cash flow.
-- Ignore standalone superscript/footnote markers (e.g., 1, 2, 3) after labels. They are not dollar values.
-- Do NOT invent numbers. Only extract what is in the text.`;
+IS/CF rules:
+- For a quarterly 10-Q dashboard, prefer **Three months ended** column (periodBasis "quarter"), not YTD, unless only YTD is available.
+- CapEx, debt repayments, dividends, buybacks: POSITIVE magnitudes as specified above.
+- Interest expense POSITIVE.
+- Operating income and net income may be negative (losses).
+- "Sales" at top of consolidated income statement = Revenues; do not confuse with SG&A segment "sales".
+- FCF is computed downstream from OCF and CapEx only.
+- Debt repayment tag rules: ambiguous "Payments on debt" -> RepaymentsOfDebt; explicit LT -> RepaymentsOfLongTermDebt; commercial paper -> RepaymentsOfCommercialPaper.
+- Do NOT invent numbers.
+`;
 
 const QUALITATIVE_PROMPT = `You are a financial analyst reading an SEC filing. Extract qualitative insights.
 
@@ -237,15 +217,41 @@ RULES:
 // Types
 // ---------------------------------------------------------------------------
 
+interface ExtractionMeta {
+  companyName?: string | null;
+  periodEnd?: string | null;
+  filingType?: string | null;
+  scaleNote?: string;
+  confidence?: string;
+}
+
+/** AI row with optional provenance (strict schema) or legacy { tag, label, value }. */
+interface RawAiItem {
+  tag?: string;
+  label?: string;
+  value?: number | string | null;
+  valueRaw?: string | null;
+  unit?: string | null;
+  statementType?: string | null;
+  periodBasis?: string | null;
+  page?: number | null;
+  rowLabel?: string | null;
+  columnLabel?: string | null;
+  source?: string | null;
+  notes?: string | null;
+}
+
 interface BsExtraction {
+  meta?: ExtractionMeta;
   companyName?: string | null;
   periodEnd?: string | null;
   scaleNote?: string;
-  items?: { tag: string; label: string; value: number | string | null }[];
+  items?: RawAiItem[];
 }
 
 interface IsCfExtraction {
-  items?: { tag: string; label: string; value: number | string | null }[];
+  meta?: ExtractionMeta;
+  items?: RawAiItem[];
 }
 
 interface QualExtraction {
@@ -275,6 +281,151 @@ interface SegmentExtraction {
   }>;
   intercompanyEliminations?: { revenue?: number | null; operatingIncome?: number | null };
   corporateAndOther?: { operatingIncome?: number | null };
+}
+
+const BS_TAG_SET = new Set([
+  "Assets", "AssetsCurrent", "AssetsNoncurrent", "CashAndCashEquivalentsAtCarryingValue",
+  "ShortTermInvestments", "AccountsReceivableNet", "AccountsReceivableNetCurrent", "InventoryNet",
+  "PrepaidExpenseAndOtherAssetsCurrent", "PropertyPlantAndEquipmentNet", "Goodwill", "IntangibleAssetsNet",
+  "OtherAssetsNoncurrent", "DeferredIncomeTaxAssetsNet", "Liabilities", "LiabilitiesCurrent", "LiabilitiesNoncurrent",
+  "AccountsPayable", "AccruedLiabilitiesCurrent", "DeferredRevenueCurrent", "DebtCurrent", "LongTermDebtNoncurrent",
+  "LongTermDebt", "ShortTermBorrowings", "LongTermDebtCurrent", "OperatingLeaseLiabilityNoncurrent",
+  "FinanceLeaseLiabilityNoncurrent", "PensionAndOtherPostretirementDefinedBenefitPlansLiabilitiesNoncurrent",
+  "RedeemableNoncontrollingInterestEquityCarryingAmount", "StockholdersEquity", "CommonStockValue",
+  "AdditionalPaidInCapital", "RetainedEarningsAccumulatedDeficit", "TreasuryStockValue",
+  "AccumulatedOtherComprehensiveIncomeLoss", "LiabilitiesAndStockholdersEquity", "MinorityInterest",
+]);
+
+const CF_TAG_SET = new Set([
+  "Revenues",
+  "RevenueFromContractWithCustomerExcludingAssessedTax",
+  "SalesRevenueNet",
+  "SalesRevenueGoodsNet",
+  "CostOfGoodsSold", "CostOfGoodsAndServicesSold", "CostOfRevenue", "GrossProfit",
+  "SellingGeneralAndAdministrativeExpense", "ResearchAndDevelopmentExpense", "OperatingExpenses",
+  "OperatingIncomeLoss", "InterestExpense", "InterestIncome", "IncomeTaxExpenseBenefit", "NetIncomeLoss",
+  "EarningsPerShareBasic", "EarningsPerShareDiluted", "WeightedAverageSharesBasic", "WeightedAverageSharesDiluted",
+  "DepreciationDepletionAndAmortization", "DepreciationAndAmortization", "Depreciation", "AmortizationOfIntangibleAssets",
+  "ShareBasedCompensation", "NetCashProvidedByOperatingActivities", "PaymentsToAcquirePropertyPlantAndEquipment",
+  "NetCashProvidedByInvestingActivities", "ProceedsFromIssuanceOfLongTermDebt", "RepaymentsOfLongTermDebt",
+  "RepaymentsOfShortTermDebt", "RepaymentsOfDebt", "RepaymentsOfCommercialPaper", "PaymentsOfDividends",
+  "PaymentsOfDividendsCommonStock", "PaymentsForRepurchaseOfCommonStock", "NetCashProvidedByFinancingActivities",
+]);
+
+function parseAiEnvelope(raw: unknown): { meta: ExtractionMeta; items: RawAiItem[] } {
+  const meta: ExtractionMeta = {};
+  const items: RawAiItem[] = [];
+  if (!raw || typeof raw !== "object") return { meta, items };
+  const o = raw as Record<string, unknown>;
+  if (o.meta && typeof o.meta === "object") {
+    const m = o.meta as Record<string, unknown>;
+    if ("companyName" in m) meta.companyName = m.companyName as string | null;
+    if ("periodEnd" in m) meta.periodEnd = m.periodEnd as string | null;
+    if ("filingType" in m) meta.filingType = m.filingType as string | null;
+    if ("scaleNote" in m && m.scaleNote != null) meta.scaleNote = String(m.scaleNote);
+    if ("confidence" in m && m.confidence != null) meta.confidence = String(m.confidence);
+  }
+  if (meta.companyName === undefined && "companyName" in o) meta.companyName = o.companyName as string | null;
+  if (meta.periodEnd === undefined && "periodEnd" in o) meta.periodEnd = o.periodEnd as string | null;
+  if (meta.scaleNote === undefined && "scaleNote" in o && o.scaleNote != null) meta.scaleNote = String(o.scaleNote);
+
+  const arr = o.items;
+  if (!Array.isArray(arr)) return { meta, items };
+  for (const it of arr) {
+    if (it && typeof it === "object" && typeof (it as RawAiItem).tag === "string") {
+      items.push(it as RawAiItem);
+    }
+  }
+  return { meta, items };
+}
+
+function rowLabelForSource(it: RawAiItem): string {
+  const r =
+    String(it.rowLabel ?? "").trim() ||
+    String(it.label ?? "").trim() ||
+    String(it.tag ?? "").trim() ||
+    "row";
+  return r.replace(/"/g, "'").slice(0, 120);
+}
+
+function buildProvenanceSource(it: RawAiItem, tag: string, aiPrefix: "bs" | "cf"): string {
+  const s = typeof it.source === "string" ? it.source.trim() : "";
+  if (/^PDF:p\d+/i.test(s)) return s;
+  const pg = it.page;
+  if (pg != null && Number.isFinite(Number(pg))) {
+    const p = Math.max(1, Math.floor(Number(pg)));
+    return `PDF:p${p}:"${rowLabelForSource(it)}"`;
+  }
+  return `AI:${aiPrefix}:${tag}`;
+}
+
+function periodTypeFromItem(it: RawAiItem, kind: "bs" | "cf"): BSItem["period_type"] | undefined {
+  if (kind === "bs") return "balance_sheet";
+  const b = String(it.periodBasis ?? "").toLowerCase();
+  if (b === "quarter") return "quarter";
+  if (b === "ytd") return "ytd";
+  if (b === "annual") return "annual";
+  return undefined;
+}
+
+function itemValueForTag(tag: string, v: number | string | null | undefined): number {
+  if (v == null) return 0;
+  const s = typeof v === "string" ? v.trim() : String(v);
+  if (s === "" || s === "N/A" || s === "n/a" || s === "-" || s === "—" || s === "–") return 0;
+  const cleaned = s.replace(/[,$\s]/g, "");
+  const n = Number(cleaned);
+  if (Number.isNaN(n)) return 0;
+  if (tag === "EarningsPerShareBasic" || tag === "EarningsPerShareDiluted") {
+    return Math.round(n * 10000) / 10000;
+  }
+  if (tag === "WeightedAverageSharesBasic" || tag === "WeightedAverageSharesDiluted") {
+    return Math.round(n * 1000) / 1000;
+  }
+  return Math.round(n);
+}
+
+function rawAiToBSItem(it: RawAiItem, period: string, kind: "bs" | "cf"): BSItem | null {
+  const tag = String(it.tag ?? "").trim();
+  if (!tag) return null;
+  return {
+    tag,
+    label: String(it.label ?? tag),
+    value: itemValueForTag(tag, it.value),
+    period,
+    source: buildProvenanceSource(it, tag, kind === "bs" ? "bs" : "cf"),
+    period_type: periodTypeFromItem(it, kind),
+  };
+}
+
+function dedupeByTagPreferPdf(items: BSItem[]): BSItem[] {
+  const m = new Map<string, BSItem>();
+  const pdfFirst = (s: string) => /^PDF:p/i.test(s);
+  const rankPeriod = (p: BSItem["period_type"] | undefined) =>
+    p === "quarter" ? 3 : p === "ytd" ? 2 : p === "annual" ? 1 : 0;
+  for (const it of items) {
+    const prev = m.get(it.tag);
+    if (!prev) {
+      m.set(it.tag, it);
+      continue;
+    }
+    let replace = false;
+    if (pdfFirst(it.source) && !pdfFirst(prev.source)) replace = true;
+    else if (pdfFirst(it.source) === pdfFirst(prev.source)) {
+      if (rankPeriod(it.period_type) > rankPeriod(prev.period_type)) replace = true;
+    }
+    if (replace) m.set(it.tag, it);
+  }
+  return [...m.values()];
+}
+
+/** Map meta.scaleNote ("millions", "unknown", etc.) to heuristic helpers. */
+function normalizeScaleNote(s: string | undefined): string | undefined {
+  if (!s) return undefined;
+  const l = s.toLowerCase();
+  if (l.includes("thousand")) return "thousands";
+  if (l.includes("billion")) return "billions";
+  if (l.includes("million")) return "millions";
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -1128,29 +1279,37 @@ export async function POST(request: Request) {
       try { segExtraction = JSON.parse(segCall.content); } catch { /* ignore */ }
     }
 
-    const period = bsExtraction.periodEnd ?? new Date().toISOString().slice(0, 10);
+    const bsParsed = parseAiEnvelope(bsExtraction);
+    const isCfParsed = parseAiEnvelope(isCfExtraction);
 
-    // Build BSItem arrays with exact tags
-    const bsItems: BSItem[] = toBsItems(bsExtraction.items, period, "AI:bs");
-    repairCriticalFinancialValue(
-      bsItems,
-      "totalAssets",
-      filingText,
-      bsExtraction.scaleNote,
-      period
-    );
-    repairCriticalFinancialValue(
-      bsItems,
-      "cashAndEquivalents",
-      filingText,
-      bsExtraction.scaleNote,
-      period
+    const period =
+      bsParsed.meta.periodEnd ??
+      isCfParsed.meta.periodEnd ??
+      bsExtraction.periodEnd ??
+      new Date().toISOString().slice(0, 10);
+
+    const mergedScaleRaw =
+      bsParsed.meta.scaleNote ??
+      bsExtraction.scaleNote ??
+      isCfParsed.meta.scaleNote;
+    const scaleForHeuristics =
+      normalizeScaleNote(mergedScaleRaw) ?? bsExtraction.scaleNote;
+
+    const mergedCompanyName =
+      bsParsed.meta.companyName ??
+      isCfParsed.meta.companyName ??
+      bsExtraction.companyName ??
+      null;
+
+    // Build BSItem arrays with exact tags + PDF provenance when model provides it
+    const bsItems: BSItem[] = dedupeByTagPreferPdf(
+      bsParsed.items
+        .filter((it) => BS_TAG_SET.has(String(it.tag ?? "")))
+        .map((it) => rawAiToBSItem(it, period, "bs"))
+        .filter((x): x is BSItem => x != null)
     );
 
-    const equityCandidate = extractTotalEquityHeuristic(
-      filingText,
-      bsExtraction.scaleNote
-    );
+    const equityCandidate = extractTotalEquityHeuristic(filingText, scaleForHeuristics);
     if (equityCandidate.totalEquity != null) {
       const assetsValue =
         bsItems.find((item) => item.tag === "Assets")?.value ?? null;
@@ -1212,55 +1371,11 @@ export async function POST(request: Request) {
       });
     }
 
-    const cfItems: BSItem[] = toBsItems(isCfExtraction.items, period, "AI:cf");
-    repairCriticalFinancialValue(
-      cfItems,
-      "revenue",
-      filingText,
-      bsExtraction.scaleNote,
-      period
-    );
-    repairCriticalFinancialValue(
-      cfItems,
-      "costOfRevenue",
-      filingText,
-      bsExtraction.scaleNote,
-      period
-    );
-    repairCriticalFinancialValue(
-      cfItems,
-      "grossProfit",
-      filingText,
-      bsExtraction.scaleNote,
-      period
-    );
-    repairCriticalFinancialValue(
-      cfItems,
-      "operatingIncome",
-      filingText,
-      bsExtraction.scaleNote,
-      period
-    );
-    repairCriticalFinancialValue(
-      cfItems,
-      "netIncome",
-      filingText,
-      bsExtraction.scaleNote,
-      period
-    );
-    repairCriticalFinancialValue(
-      cfItems,
-      "operatingCashFlow",
-      filingText,
-      bsExtraction.scaleNote,
-      period
-    );
-    repairCriticalFinancialValue(
-      cfItems,
-      "capitalExpenditures",
-      filingText,
-      bsExtraction.scaleNote,
-      period
+    const cfItems: BSItem[] = dedupeByTagPreferPdf(
+      isCfParsed.items
+        .filter((it) => CF_TAG_SET.has(String(it.tag ?? "")))
+        .map((it) => rawAiToBSItem(it, period, "cf"))
+        .filter((x): x is BSItem => x != null)
     );
 
     // Heuristic fallback: run when the AI either missed repurchases entirely or
@@ -1277,7 +1392,7 @@ export async function POST(request: Request) {
     if (!hasValidRepurchase) {
       const heuristicValue = extractShareRepurchasesHeuristic(
         filingText,
-        bsExtraction.scaleNote
+        scaleForHeuristics
       );
       console.log("[repurchase:heuristic] heuristicValue:", heuristicValue);
       if (heuristicValue != null && heuristicValue > 0) {
@@ -1388,21 +1503,21 @@ export async function POST(request: Request) {
     );
     const rdResolution = resolveRnDExpense({
       text: filingText,
-      scaleNote: bsExtraction.scaleNote,
-      companyName: bsExtraction.companyName,
+      scaleNote: scaleForHeuristics,
+      companyName: mergedCompanyName,
       existingRd: hasValidRd ? existingRdItem!.value : null,
       currentRevenue: revenueItem != null ? Math.abs(revenueItem.value) : null,
     });
     console.log("[rd:resolution]", rdResolution);
 
-    const rdExpense = rdResolution.rAndDExpense;
-    const shouldBackfillRd =
+    // Inline guards (not a precomputed boolean) so TS narrows rAndDExpense to number.
+    if (
       !hasValidRd &&
-      rdExpense != null &&
-      rdExpense > 0 &&
-      rdResolution.method === "extracted";
-
-    if (shouldBackfillRd) {
+      rdResolution.rAndDExpense != null &&
+      rdResolution.rAndDExpense > 0 &&
+      rdResolution.method === "extracted"
+    ) {
+      const rdExpense = rdResolution.rAndDExpense;
       const basisPart = rdResolution.rAndDPeriodBasis
         ? `:basis=${rdResolution.rAndDPeriodBasis}`
         : "";
@@ -1458,18 +1573,30 @@ export async function POST(request: Request) {
         reasons.push(`upstream AI errors: ${aiErrors.join(" | ")}`);
       }
 
-      return NextResponse.json(
-        {
-          error: `AI extraction coverage too low (${reasons.join("; ")}). Falling back to heuristic parser.`,
-        },
-        { status: 502 }
-      );
+      const degradedAnalysis = assembleAnalysis(bsItems, cfItems, {
+        source: "pdf",
+        companyName: mergedCompanyName ?? undefined,
+        fileName: body.fileName,
+        pagesRead: body.pages,
+        charsExtracted: body.chars ?? filingText.length,
+        periodEnd: period,
+        confidence: "low",
+        extractionMethod: "pdf-ai-partial",
+      });
+
+      console.warn("[analyze-pdf] Degraded extraction mode:", reasons);
+
+      return NextResponse.json({
+        analysis: degradedAnalysis,
+        degraded: true,
+        warning: `AI extraction coverage low (${reasons.join("; ")}). Returned partial analysis instead of failing request.`,
+      });
     }
 
     // Assemble full analysis
     const analysis = assembleAnalysis(bsItems, cfItems, {
       source: "pdf",
-      companyName: bsExtraction.companyName ?? undefined,
+      companyName: mergedCompanyName ?? undefined,
       fileName: body.fileName,
       pagesRead: body.pages,
       charsExtracted: body.chars ?? filingText.length,

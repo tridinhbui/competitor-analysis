@@ -36,11 +36,11 @@ export function FeatureGrid() {
   return (
     <section className="mx-auto max-w-6xl px-4 py-14 sm:py-16" aria-labelledby="features-heading">
       <div className="mb-10 text-center">
-        <h2 id="features-heading" className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
-          Financial signal, not filing noise
+        <h2 id="features-heading" className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+          Premium execution, not dashboard clutter
         </h2>
-        <p className="mx-auto mt-3 max-w-2xl text-sm text-slate-600 sm:text-base">
-          Built to cut scan time, expose risk fast, and push decision-ready numbers into your workflow.
+        <p className="mx-auto mt-3 max-w-2xl text-sm text-muted-foreground sm:text-base">
+          Built for fast leadership decisions across products, channel performance, and operational planning.
         </p>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
@@ -51,17 +51,17 @@ export function FeatureGrid() {
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, margin: "-40px" }}
             transition={{ delay: i * 0.05, duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-            className="group rounded-3xl border border-slate-200/90 bg-white/85 p-5 shadow-subtle transition-all hover:-translate-y-0.5 hover:shadow-elevation sm:p-6"
+            className="group rounded-3xl border border-border bg-white p-5 shadow-subtle transition-all hover:-translate-y-0.5 hover:shadow-elevation sm:p-6"
           >
             <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
               <f.icon className="h-5 w-5" aria-hidden />
             </div>
-            <div className="mb-2 inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+            <div className="mb-2 inline-flex items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
               <Gauge className="h-3 w-3" aria-hidden />
               High signal
             </div>
-            <h3 className="text-base font-bold text-slate-900">{f.title}</h3>
-            <p className="mt-2 text-xs leading-relaxed text-slate-600 sm:text-sm">{f.body}</p>
+            <h3 className="text-base font-bold text-foreground">{f.title}</h3>
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground sm:text-sm">{f.body}</p>
           </motion.article>
         ))}
       </div>

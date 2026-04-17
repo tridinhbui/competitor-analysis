@@ -1,16 +1,27 @@
 import type { Metadata } from "next";
-import "@fontsource/inter/400.css";
-import "@fontsource/inter/500.css";
-import "@fontsource/inter/600.css";
-import "@fontsource/inter/700.css";
+import { Merriweather, Montserrat } from "next/font/google";
 import { AppShellChrome } from "@/components/layout/AppShellChrome";
 import { AuthProvider } from "@/lib/authContext";
 import { ProfileProvider } from "@/lib/profileContext";
 import "./globals.css";
 
+const montserrat = Montserrat({
+  subsets: ["latin"],
+  weight: ["600", "700", "800", "900"],
+  variable: "--font-heading",
+  display: "swap",
+});
+
+const merriweather = Merriweather({
+  subsets: ["latin"],
+  weight: ["400", "700"],
+  variable: "--font-body",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
-  title: "Dividend IQ · Analyst",
-  description: "Intelligent Financial Analysis & Reporting",
+  title: "Smithfield Strategy Hub",
+  description: "Corporate food category insights, planning, and reporting workspace",
 };
 
 export default function RootLayout({
@@ -19,8 +30,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="light" style={{ colorScheme: "light" }} suppressHydrationWarning>
-      <body className="min-h-dvh bg-transparent font-[Inter] text-foreground antialiased">
+    <html
+      lang="en"
+      className={`light ${montserrat.variable} ${merriweather.variable}`}
+      style={{ colorScheme: "light" }}
+      suppressHydrationWarning
+    >
+      <body className="min-h-dvh bg-transparent font-serif text-foreground antialiased">
         <AuthProvider>
           <ProfileProvider>
             <AppShellChrome />
