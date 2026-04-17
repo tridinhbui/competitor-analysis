@@ -9,6 +9,7 @@ import { PeerModulePanel } from "@/components/workspace/PeerModulePanel";
 import { AdjustmentPanel } from "@/components/workspace/AdjustmentPanel";
 import { ManualDataPanel } from "@/components/workspace/ManualDataPanel";
 import { PeerComparisonView } from "@/components/workspace/PeerComparisonView";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 import { MacroInsightsPanel } from "@/components/workspace/MacroInsightsPanel";
 import type { CompanyRegistry, PeerType } from "@/types/competitor";
 import {
@@ -342,5 +343,6 @@ export default function WorkspacePage() {
         </div>
       )}
     </div>
+    </RequireAuth>
   );
 }
