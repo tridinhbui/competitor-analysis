@@ -6,8 +6,17 @@ import type { FullAnalysis } from "@/types/analysis";
 import { AnalysisDashboard } from "@/components/filings/AnalysisDashboard";
 import { ArrowLeft, Clock, FileText, Globe, Loader2, LogIn, Search, Trash2 } from "lucide-react";
 import { fetchWithAuth } from "@/lib/fetchWithAuth";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 
 export default function HistoryPage() {
+  return (
+    <RequireAuth>
+      <HistoryPageInner />
+    </RequireAuth>
+  );
+}
+
+function HistoryPageInner() {
   const [threads, setThreads] = useState<HistoryThread[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("");

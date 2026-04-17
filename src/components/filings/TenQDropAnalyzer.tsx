@@ -436,7 +436,11 @@ export function TenQDropAnalyzer() {
 
         {result && phase === "done" && (
           <div className="min-w-0 rounded-2xl border border-slate-200/80 bg-white p-3 shadow-elevation sm:p-5">
-            <AnalysisDashboard result={result} onExport={handleExport} />
+            <AnalysisDashboard
+              result={result}
+              onExport={handleExport}
+              onTraceMetric={hasPdf ? (m: TraceMetric) => setTraceTarget(m) : undefined}
+            />
           </div>
         )}
       </div>

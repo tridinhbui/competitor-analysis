@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu, X, LogIn, LogOut, User, Settings, ChevronDown } from "lucide-react";
@@ -44,6 +44,7 @@ export function AppShellChrome() {
     (typeof user?.user_metadata?.avatar_url === "string" ? user.user_metadata.avatar_url : null) ||
     (typeof user?.user_metadata?.picture === "string" ? user.user_metadata.picture : null);
   const brandHref = "/";
+  const showAppNav = Boolean(user) && !authLoading;
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -73,35 +74,41 @@ export function AppShellChrome() {
             <Link href={brandHref} className="inline-flex items-center transition hover:opacity-90" aria-label="Smithfield Strategy home">
               <SmithfieldCorporateLogo variant="nav" />
             </Link>
-            <span className="hidden text-border sm:inline">|</span>
-            <div className="hidden items-center gap-1 md:flex">
-              {NAV_ITEMS.map((item) => {
-                const active = item.href === "/#pricing"
-                  ? pathname === "/" && currentHash === "#pricing"
-                  : isItemActive(pathname, item.href);
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={cn(
-                      "rounded-full px-2.5 py-1 transition",
-                      active ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"
-                    )}
-                  >
-                    {item.label}
-                  </Link>
-                );
-              })}
-            </div>
+            {showAppNav && (
+              <>
+                <span className="hidden text-border sm:inline">|</span>
+                <div className="hidden items-center gap-1 md:flex">
+                  {NAV_ITEMS.map((item) => {
+                    const active = item.href === "/#pricing"
+                      ? pathname === "/" && currentHash === "#pricing"
+                      : isItemActive(pathname, item.href);
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        className={cn(
+                          "rounded-full px-2.5 py-1 transition",
+                          active ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        {item.label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
-            <Link
-              href="/analyze"
-              className="hidden rounded-full bg-primary px-3.5 py-1.5 text-[11px] font-semibold text-white shadow-subtle transition hover:bg-[#b7491a] sm:inline-flex"
-            >
-              Explore now
-            </Link>
+            {showAppNav && (
+              <Link
+                href="/analyze"
+                className="hidden rounded-full bg-primary px-3.5 py-1.5 text-[11px] font-semibold text-white shadow-subtle transition hover:bg-[#b7491a] sm:inline-flex"
+              >
+                Explore now
+              </Link>
+            )}
 
             {/* Auth / user menu */}
             {!authLoading && (
@@ -157,7 +164,7 @@ export function AppShellChrome() {
                 <button
                   type="button"
                   onClick={() => setAuthOpen(true)}
-                  className="hidden items-center gap-1 rounded-full border border-border bg-white px-2.5 py-1 text-[11px] font-semibold text-muted-foreground transition hover:text-primary sm:inline-flex"
+                  className="inline-flex items-center gap-1 rounded-full border border-border bg-white px-2.5 py-1 text-[11px] font-semibold text-muted-foreground transition hover:text-primary"
                 >
                   <LogIn className="h-3 w-3" aria-hidden />
                   Sign in
@@ -180,31 +187,47 @@ export function AppShellChrome() {
         {mobileOpen && (
           <div className="mt-2 rounded-xl border border-border bg-white p-2 shadow-elevation md:hidden">
             <div className="grid gap-1">
-              {NAV_ITEMS.map((item) => {
-                const active = item.href === "/#pricing"
-                  ? pathname === "/" && currentHash === "#pricing"
-                  : isItemActive(pathname, item.href);
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    onClick={() => setMobileOpen(false)}
-                    className={cn(
-                      "rounded-lg px-3 py-2 text-xs transition",
-                      active ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-                    )}
-                  >
-                    {item.label}
-                  </Link>
-                );
-              })}
-              <Link
-                href="/analyze"
-                onClick={() => setMobileOpen(false)}
-                className="mt-1 inline-flex items-center justify-center rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white hover:bg-[#b7491a]"
-              >
-                Explore now
-              </Link>
+              {showAppNav &&
+                NAV_ITEMS.map((item) => {
+                  const active = item.href === "/#pricing"
+                    ? pathname === "/" && currentHash === "#pricing"
+                    : isItemActive(pathname, item.href);
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      onClick={() => setMobileOpen(false)}
+                      className={cn(
+                        "rounded-lg px-3 py-2 text-xs transition",
+                        active ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                      )}
+                    >
+                      {item.label}
+                    </Link>
+                  );
+                })}
+              {showAppNav && (
+                <Link
+                  href="/analyze"
+                  onClick={() => setMobileOpen(false)}
+                  className="mt-1 inline-flex items-center justify-center rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white hover:bg-[#b7491a]"
+                >
+                  Explore now
+                </Link>
+              )}
+              {!authLoading && !user && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileOpen(false);
+                    setAuthOpen(true);
+                  }}
+                  className="mt-1 inline-flex w-full items-center justify-center gap-1 rounded-lg border border-border bg-white px-3 py-2 text-xs font-semibold text-muted-foreground transition hover:bg-secondary hover:text-primary"
+                >
+                  <LogIn className="h-3.5 w-3.5" aria-hidden />
+                  Sign in
+                </button>
+              )}
 
               {user && (
                 <>

@@ -9,6 +9,7 @@ import { PeerModulePanel } from "@/components/workspace/PeerModulePanel";
 import { AdjustmentPanel } from "@/components/workspace/AdjustmentPanel";
 import { ManualDataPanel } from "@/components/workspace/ManualDataPanel";
 import { PeerComparisonView } from "@/components/workspace/PeerComparisonView";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 import { MacroInsightsPanel } from "@/components/workspace/MacroInsightsPanel";
 import type { CompanyRegistry, PeerType } from "@/types/competitor";
 import {
@@ -93,6 +94,7 @@ export default function WorkspacePage() {
   };
 
   return (
+    <RequireAuth>
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       {/* Header */}
       <div className="mb-6 flex items-center gap-4">
@@ -217,5 +219,6 @@ export default function WorkspacePage() {
         </div>
       )}
     </div>
+    </RequireAuth>
   );
 }
