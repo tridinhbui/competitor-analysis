@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FullAnalysis, BSItem, IncomeStatement } from "@/types/analysis";
+import { buildMetricTraceLabelMap, type MetricTraceSpec } from "@/lib/metricTraceLabels";
 import type { DataSourceRow } from "@/types/dataSource";
 import { cn } from "@/lib/utils";
 import {
@@ -81,6 +82,21 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
     onTraceMetric({ key: label, label, value: value ?? null, sourceHint: findSource(tags) });
   }, [onTraceMetric, findSource]);
 
+  const traceLabelMap = useMemo(
+    () => (onTraceMetric ? buildMetricTraceLabelMap(result) : null),
+    [result, onTraceMetric],
+  );
+
+  const onMetricTableRowClick = useCallback(
+    (label: string, extra?: Record<string, MetricTraceSpec>) => {
+      if (!onTraceMetric || !traceLabelMap) return;
+      const merged = { ...traceLabelMap, ...extra };
+      const m = merged[label];
+      if (m) trace(label, m.value, m.tags);
+    },
+    [onTraceMetric, traceLabelMap, trace],
+  );
+
   const verdictColor = {
     strong: "text-emerald-700 bg-emerald-50 border-emerald-200",
     adequate: "text-blue-700 bg-blue-50 border-blue-200",
@@ -157,12 +173,12 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
 
       {/* ═══ KPI STRIP ═══ */}
       <div className="mb-3 grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-slate-200 bg-slate-200 sm:grid-cols-6">
-        <KpiCell label="Revenue" value={fmt(inc.revenue)} />
-        <KpiCell label="Gross Margin" value={fmtPct(inc.grossMargin)} highlight={inc.grossMargin} />
-        <KpiCell label="OP Margin" value={fmtPct(inc.operatingMargin)} highlight={inc.operatingMargin} />
-        <KpiCell label="EBITDA" value={fmt(inc.ebitda)} />
-        <KpiCell label="Net Income" value={fmt(inc.netIncome)} highlight={inc.netIncome} />
-        <KpiCell label="FCF" value={fmt(cf.freeCashFlow)} highlight={cf.freeCashFlow} />
+        <KpiCell label="Revenue" value={fmt(inc.revenue)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Revenue") : undefined} />
+        <KpiCell label="Gross Margin" value={fmtPct(inc.grossMargin)} highlight={inc.grossMargin} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Gross Margin") : undefined} />
+        <KpiCell label="OP Margin" value={fmtPct(inc.operatingMargin)} highlight={inc.operatingMargin} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("OP Margin") : undefined} />
+        <KpiCell label="EBITDA" value={fmt(inc.ebitda)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("EBITDA") : undefined} />
+        <KpiCell label="Net Income" value={fmt(inc.netIncome)} highlight={inc.netIncome} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Net Income") : undefined} />
+        <KpiCell label="FCF" value={fmt(cf.freeCashFlow)} highlight={cf.freeCashFlow} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Free Cash Flow") : undefined} />
       </div>
 
       {/* ═══ TAB BAR ═══ */}
@@ -243,43 +259,20 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
             <Section title="Financial Overview">
               <div className="grid gap-4 lg:grid-cols-2">
                 <MetricTable
-                  onRowClick={onTraceMetric ? (label) => {
-                    const tagMap: Record<string, { value: number | null | undefined; tags: string[] }> = {
-                      "Revenue": { value: inc.revenue, tags: ["Revenue", "Revenues", "NetRevenues"] },
-                      "Cost of Revenue": { value: inc.costOfRevenue, tags: ["CostOfRevenue", "CostOfGoodsSold"] },
-                      "Gross Profit": { value: inc.grossProfit, tags: ["GrossProfit"] },
-                      "Operating Income": { value: inc.operatingIncome, tags: ["OperatingIncome", "OperatingIncomeLoss"] },
-                      "EBITDA": { value: inc.ebitda, tags: ["EBITDA"] },
-                      "Net Income": { value: inc.netIncome, tags: ["NetIncome", "NetIncomeLoss"] },
-                    };
-                    const m = tagMap[label];
-                    if (m) trace(label, m.value, m.tags);
-                  } : undefined}
+                  onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
                   rows={[
                     { label: "Revenue", value: fmt(inc.revenue), traceable: true },
                     { label: "Cost of Revenue", value: fmt(inc.costOfRevenue), dim: true, traceable: true },
                     { label: "Gross Profit", value: fmt(inc.grossProfit), bold: true, sub: fmtPct(inc.grossMargin), traceable: true },
-                    { label: "SG&A Expense", value: fmt(inc.sgaExpense), dim: true },
-                    { label: "R&D Expense", value: fmt(inc.rdExpense), dim: true },
+                    { label: "SG&A Expense", value: fmt(inc.sgaExpense), dim: true, traceable: true },
+                    { label: "R&D Expense", value: fmt(inc.rdExpense), dim: true, traceable: true },
                     { label: "Operating Income", value: fmt(inc.operatingIncome), bold: true, sub: fmtPct(inc.operatingMargin), traceable: true },
                     { label: "EBITDA", value: fmt(inc.ebitda), bold: true, sub: fmtPct(inc.ebitdaMargin), traceable: true },
                     { label: "Net Income", value: fmt(inc.netIncome), bold: true, sub: fmtPct(inc.netMargin), traceable: true },
                   ]}
                 />
                 <MetricTable
-                  onRowClick={onTraceMetric ? (label) => {
-                    const tagMap: Record<string, { value: number | null | undefined; tags: string[] }> = {
-                      "Total Assets": { value: bs.totalAssets, tags: ["Assets"] },
-                      "Total Equity": { value: bs.totalEquity, tags: ["StockholdersEquity", "Equity"] },
-                      "Total Debt": { value: debt.totalDebt, tags: ["Debt", "LongTermDebt"] },
-                      "Net Debt": { value: debt.netDebt, tags: ["Debt", "LongTermDebt"] },
-                      "Cash & Equivalents": { value: bs.cashAndEquivalents, tags: ["CashAndCashEquivalents"] },
-                      "Operating CF": { value: cf.operatingCashFlow, tags: ["OperatingCashFlow", "CashFromOperating"] },
-                      "Free Cash Flow": { value: cf.freeCashFlow, tags: ["FreeCashFlow"] },
-                    };
-                    const m = tagMap[label];
-                    if (m) trace(label, m.value, m.tags);
-                  } : undefined}
+                  onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
                   rows={[
                     { label: "Total Assets", value: fmt(bs.totalAssets), traceable: true },
                     { label: "Total Equity", value: fmt(bs.totalEquity), traceable: true },
@@ -287,7 +280,7 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                     { label: "Net Debt", value: fmt(debt.netDebt), bold: true, traceable: true },
                     { label: "Cash & Equivalents", value: fmt(bs.cashAndEquivalents), traceable: true },
                     { label: "Operating CF", value: fmt(cf.operatingCashFlow), traceable: true },
-                    { label: "Capital Expenditures", value: fmt(cf.capitalExpenditures) },
+                    { label: "Capital Expenditures", value: fmt(cf.capitalExpenditures), traceable: true },
                     { label: "Free Cash Flow", value: fmt(cf.freeCashFlow), bold: true, traceable: true },
                   ]}
                 />
@@ -347,18 +340,18 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
             {/* Key Ratios Grid */}
             <Section title="Key Ratios">
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-                <RatioCard label="Gross Margin" value={fmtPct(ratios.grossMargin)} />
-                <RatioCard label="Operating Margin" value={fmtPct(ratios.operatingMargin)} />
-                <RatioCard label="EBITDA Margin" value={fmtPct(ratios.ebitdaMargin)} />
-                <RatioCard label="Net Margin" value={fmtPct(ratios.netMargin)} />
-                <RatioCard label="ROE" value={fmtPct(ratios.returnOnEquity)} />
-                <RatioCard label="ROA" value={fmtPct(ratios.returnOnAssets)} />
-                <RatioCard label="ROIC" value={fmtPct(ratios.returnOnInvestedCapital)} />
-                <RatioCard label="D/E Ratio" value={fmtX(ratios.debtToEquity)} />
-                <RatioCard label="ND/EBITDA" value={fmtX(ratios.netDebtToEbitda)} />
-                <RatioCard label="Interest Cov." value={fmtX(ratios.interestCoverage)} />
-                <RatioCard label="Current Ratio" value={fmtX(ratios.currentRatio)} />
-                <RatioCard label="FCF Yield" value={fmtPct(ratios.fcfYield)} />
+                <RatioCard label="Gross Margin" value={fmtPct(ratios.grossMargin)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Gross Margin") : undefined} />
+                <RatioCard label="Operating Margin" value={fmtPct(ratios.operatingMargin)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Operating Margin") : undefined} />
+                <RatioCard label="EBITDA Margin" value={fmtPct(ratios.ebitdaMargin)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("EBITDA Margin") : undefined} />
+                <RatioCard label="Net Margin" value={fmtPct(ratios.netMargin)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Net Margin") : undefined} />
+                <RatioCard label="ROE" value={fmtPct(ratios.returnOnEquity)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("ROE") : undefined} />
+                <RatioCard label="ROA" value={fmtPct(ratios.returnOnAssets)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("ROA") : undefined} />
+                <RatioCard label="ROIC" value={fmtPct(ratios.returnOnInvestedCapital)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("ROIC") : undefined} />
+                <RatioCard label="D/E Ratio" value={fmtX(ratios.debtToEquity)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("D/E Ratio") : undefined} />
+                <RatioCard label="ND/EBITDA" value={fmtX(ratios.netDebtToEbitda)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Net Debt / EBITDA") : undefined} />
+                <RatioCard label="Interest Cov." value={fmtX(ratios.interestCoverage)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Interest Coverage") : undefined} />
+                <RatioCard label="Current Ratio" value={fmtX(ratios.currentRatio)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Current Ratio") : undefined} />
+                <RatioCard label="FCF Yield" value={fmtPct(ratios.fcfYield)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("FCF Yield") : undefined} />
               </div>
             </Section>
 
@@ -429,7 +422,7 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
             <div className="space-y-4">
               {/* Income Statement Table */}
               <Section title="Income Statement">
-                <IncomeStatementTable inc={inc} />
+                <IncomeStatementTable inc={inc} onRowClick={onTraceMetric ? onMetricTableRowClick : undefined} />
               </Section>
 
               {/* Charts */}
@@ -467,23 +460,26 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
 
               {/* SG&A / R&D / D&A Breakdown */}
               <Section title="Operating Expense Breakdown">
-                <MetricTable rows={[
-                  { label: "SG&A Expense", value: fmt(inc.sgaExpense), sub: inc.revenue && inc.sgaExpense ? `${((inc.sgaExpense / inc.revenue) * 100).toFixed(1)}% of revenue` : undefined },
-                  { label: "R&D Expense", value: fmt(inc.rdExpense), sub: inc.revenue && inc.rdExpense ? `${((inc.rdExpense / inc.revenue) * 100).toFixed(1)}% of revenue` : undefined },
-                  { label: "Depreciation", value: fmt(inc.depreciation) },
-                  { label: "Amortization", value: fmt(inc.amortization) },
-                  { label: "D&A Total", value: fmt(inc.depreciation != null || inc.amortization != null ? (inc.depreciation ?? 0) + (inc.amortization ?? 0) : null), bold: true },
-                  { label: "Interest Expense", value: fmt(inc.interestExpense) },
-                  { label: "Income Tax", value: fmt(inc.incomeTax) },
-                ]} />
+                <MetricTable
+                  onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
+                  rows={[
+                    { label: "SG&A Expense", value: fmt(inc.sgaExpense), sub: inc.revenue && inc.sgaExpense ? `${((inc.sgaExpense / inc.revenue) * 100).toFixed(1)}% of revenue` : undefined, traceable: true },
+                    { label: "R&D Expense", value: fmt(inc.rdExpense), sub: inc.revenue && inc.rdExpense ? `${((inc.rdExpense / inc.revenue) * 100).toFixed(1)}% of revenue` : undefined, traceable: true },
+                    { label: "Depreciation", value: fmt(inc.depreciation), traceable: true },
+                    { label: "Amortization", value: fmt(inc.amortization), traceable: true },
+                    { label: "D&A Total", value: fmt(inc.depreciation != null || inc.amortization != null ? (inc.depreciation ?? 0) + (inc.amortization ?? 0) : null), bold: true, traceable: true },
+                    { label: "Interest Expense", value: fmt(inc.interestExpense), traceable: true },
+                    { label: "Income Tax", value: fmt(inc.incomeTax), traceable: true },
+                  ]}
+                />
               </Section>
 
               {/* EPS */}
               {(inc.epsBasic != null || inc.epsDiluted != null) && (
                 <Section title="Earnings Per Share">
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                    <RatioCard label="EPS (Basic)" value={inc.epsBasic != null ? `$${inc.epsBasic.toFixed(2)}` : "—"} />
-                    <RatioCard label="EPS (Diluted)" value={inc.epsDiluted != null ? `$${inc.epsDiluted.toFixed(2)}` : "—"} />
+                    <RatioCard label="EPS (Basic)" value={inc.epsBasic != null ? `$${inc.epsBasic.toFixed(2)}` : "—"} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("EPS (Basic)") : undefined} />
+                    <RatioCard label="EPS (Diluted)" value={inc.epsDiluted != null ? `$${inc.epsDiluted.toFixed(2)}` : "—"} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("EPS (Diluted)") : undefined} />
                   </div>
                 </Section>
               )}
@@ -513,16 +509,19 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
               <div className="grid gap-4 lg:grid-cols-2">
                 {/* Key Balance Sheet Metrics */}
                 <Section title="Balance Sheet Summary">
-                  <MetricTable rows={[
-                    { label: "Total Assets", value: fmt(bs.totalAssets), bold: true },
-                    { label: "Current Assets", value: fmt(bs.items.find(i => i.tag === "AssetsCurrent")?.value ?? null) },
-                    { label: "PP&E (Net)", value: fmt(bs.items.find(i => i.tag === "PropertyPlantAndEquipmentNet")?.value ?? null) },
-                    { label: "Goodwill", value: fmt(bs.items.find(i => i.tag === "Goodwill")?.value ?? null) },
-                    { label: "Total Liabilities", value: fmt(bs.totalLiabilities), bold: true },
-                    { label: "Current Liabilities", value: fmt(bs.items.find(i => i.tag === "LiabilitiesCurrent")?.value ?? null) },
-                    { label: "Total Equity", value: fmt(bs.totalEquity), bold: true },
-                    { label: "Retained Earnings", value: fmt(bs.retainedEarnings) },
-                  ]} />
+                  <MetricTable
+                    onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
+                    rows={[
+                      { label: "Total Assets", value: fmt(bs.totalAssets), bold: true, traceable: true },
+                      { label: "Current Assets", value: fmt(bs.items.find(i => i.tag === "AssetsCurrent")?.value ?? null), traceable: true },
+                      { label: "PP&E (Net)", value: fmt(bs.items.find(i => i.tag === "PropertyPlantAndEquipmentNet")?.value ?? null), traceable: true },
+                      { label: "Goodwill", value: fmt(bs.items.find(i => i.tag === "Goodwill")?.value ?? null), traceable: true },
+                      { label: "Total Liabilities", value: fmt(bs.totalLiabilities), bold: true, traceable: true },
+                      { label: "Current Liabilities", value: fmt(bs.items.find(i => i.tag === "LiabilitiesCurrent")?.value ?? null), traceable: true },
+                      { label: "Total Equity", value: fmt(bs.totalEquity), bold: true, traceable: true },
+                      { label: "Retained Earnings", value: fmt(bs.retainedEarnings), traceable: true },
+                    ]}
+                  />
                 </Section>
 
                 {/* Capital Structure Pie */}
@@ -547,28 +546,31 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
               {/* Debt Structure */}
               <Section title="Debt Structure">
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  <RatioCard label="Short-Term Debt" value={fmt(debt.shortTermDebt)} />
-                  <RatioCard label="Long-Term Debt" value={fmt(debt.longTermDebt)} />
-                  <RatioCard label="Total Debt" value={fmt(debt.totalDebt)} />
-                  <RatioCard label="Net Debt" value={fmt(debt.netDebt)} />
+                  <RatioCard label="Short-Term Debt" value={fmt(debt.shortTermDebt)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Short-Term Debt") : undefined} />
+                  <RatioCard label="Long-Term Debt" value={fmt(debt.longTermDebt)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Long-Term Debt") : undefined} />
+                  <RatioCard label="Total Debt" value={fmt(debt.totalDebt)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Total Debt") : undefined} />
+                  <RatioCard label="Net Debt" value={fmt(debt.netDebt)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Net Debt") : undefined} />
                 </div>
               </Section>
 
               {/* Working Capital */}
               <Section title="Working Capital">
                 <div className="grid gap-4 lg:grid-cols-2">
-                  <MetricTable rows={[
-                    { label: "Accounts Receivable", value: fmt(ar) },
-                    { label: "Inventories", value: fmt(inv) },
-                    { label: "Accounts Payable", value: fmt(ap) },
-                    { label: "Working Capital", value: fmt(ratios.workingCapital), bold: true },
-                    { label: "Current Ratio", value: fmtX(ratios.currentRatio) },
-                  ]} />
+                  <MetricTable
+                    onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
+                    rows={[
+                      { label: "Accounts Receivable", value: fmt(ar), traceable: true },
+                      { label: "Inventories", value: fmt(inv), traceable: true },
+                      { label: "Accounts Payable", value: fmt(ap), traceable: true },
+                      { label: "Working Capital", value: fmt(ratios.workingCapital), bold: true, traceable: true },
+                      { label: "Current Ratio", value: fmtX(ratios.currentRatio), traceable: true },
+                    ]}
+                  />
                   <div className="grid grid-cols-2 gap-3">
-                    <RatioCard label="Asset Turnover" value={fmtX(ratios.assetTurnover)} />
-                    <RatioCard label="Inventory Turn." value={fmtX(ratios.inventoryTurnover)} />
-                    <RatioCard label="Receivables Turn." value={fmtX(ratios.receivablesTurnover)} />
-                    <RatioCard label="WC / Revenue" value={fmtPct(ratios.workingCapitalRatio)} />
+                    <RatioCard label="Asset Turnover" value={fmtX(ratios.assetTurnover)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Asset Turnover") : undefined} />
+                    <RatioCard label="Inventory Turn." value={fmtX(ratios.inventoryTurnover)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Inventory Turn.") : undefined} />
+                    <RatioCard label="Receivables Turn." value={fmtX(ratios.receivablesTurnover)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Receivables Turn.") : undefined} />
+                    <RatioCard label="WC / Revenue" value={fmtPct(ratios.workingCapitalRatio)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Working Capital") : undefined} />
                   </div>
                 </div>
               </Section>
@@ -638,11 +640,11 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
             <div className="space-y-4">
               {/* KPIs */}
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-                <RatioCard label="Operating CF" value={fmt(cf.operatingCashFlow)} />
-                <RatioCard label="CapEx" value={cf.capitalExpenditures != null ? fmt(-Math.abs(cf.capitalExpenditures)) : "—"} />
-                <RatioCard label="Free Cash Flow" value={fmt(cf.freeCashFlow)} />
-                <RatioCard label="Dividends Paid" value={cf.dividendsPaid != null ? fmt(-Math.abs(cf.dividendsPaid)) : "—"} />
-                <RatioCard label="FCF Conversion" value={fmtPct(ratios.fcfConversion)} />
+                <RatioCard label="Operating CF" value={fmt(cf.operatingCashFlow)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Operating CF") : undefined} />
+                <RatioCard label="CapEx" value={cf.capitalExpenditures != null ? fmt(-Math.abs(cf.capitalExpenditures)) : "—"} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Capital Expenditures") : undefined} />
+                <RatioCard label="Free Cash Flow" value={fmt(cf.freeCashFlow)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Free Cash Flow") : undefined} />
+                <RatioCard label="Dividends Paid" value={cf.dividendsPaid != null ? fmt(-Math.abs(cf.dividendsPaid)) : "—"} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Dividends Paid") : undefined} />
+                <RatioCard label="FCF Conversion" value={fmtPct(ratios.fcfConversion)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("FCF Conversion") : undefined} />
               </div>
 
               <div className="grid gap-4 lg:grid-cols-2">
@@ -664,17 +666,20 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
 
                 {/* Cash Flow Detail */}
                 <Section title="Cash Flow Statement">
-                  <MetricTable rows={[
-                    { label: "Operating Cash Flow", value: fmt(cf.operatingCashFlow), bold: true },
-                    { label: "Capital Expenditures", value: fmt(cf.capitalExpenditures != null ? -Math.abs(cf.capitalExpenditures) : null), dim: true },
-                    { label: "Free Cash Flow", value: fmt(cf.freeCashFlow), bold: true },
-                    { label: "Dividends Paid", value: fmt(cf.dividendsPaid != null ? -Math.abs(cf.dividendsPaid) : null), dim: true },
-                    { label: "Share Repurchases", value: fmt(buyback != null ? -Math.abs(buyback) : null), dim: true },
-                    { label: "Investing Cash Flow", value: fmt(invCF) },
-                    { label: "LT Debt Issuance", value: fmt(debtIssuance), dim: true },
-                    { label: "LT Debt Repayments", value: fmt(debtRepay != null ? -Math.abs(debtRepay) : null), dim: true },
-                    { label: "Financing Cash Flow", value: fmt(finCF) },
-                  ]} />
+                  <MetricTable
+                    onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
+                    rows={[
+                      { label: "Operating Cash Flow", value: fmt(cf.operatingCashFlow), bold: true, traceable: true },
+                      { label: "Capital Expenditures", value: fmt(cf.capitalExpenditures != null ? -Math.abs(cf.capitalExpenditures) : null), dim: true, traceable: true },
+                      { label: "Free Cash Flow", value: fmt(cf.freeCashFlow), bold: true, traceable: true },
+                      { label: "Dividends Paid", value: fmt(cf.dividendsPaid != null ? -Math.abs(cf.dividendsPaid) : null), dim: true, traceable: true },
+                      { label: "Share Repurchases", value: fmt(buyback != null ? -Math.abs(buyback) : null), dim: true, traceable: true },
+                      { label: "Investing Cash Flow", value: fmt(invCF), traceable: true },
+                      { label: "LT Debt Issuance", value: fmt(debtIssuance), dim: true, traceable: true },
+                      { label: "LT Debt Repayments", value: fmt(debtRepay != null ? -Math.abs(debtRepay) : null), dim: true, traceable: true },
+                      { label: "Financing Cash Flow", value: fmt(finCF), traceable: true },
+                    ]}
+                  />
                 </Section>
               </div>
 
@@ -692,7 +697,9 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
         })()}
 
         {/* ─── INSIGHTS ─── */}
-        {activeTab === "insights" && <InsightsTab result={result} />}
+        {activeTab === "insights" && (
+          <InsightsTab result={result} onMetricTableRowClick={onTraceMetric ? onMetricTableRowClick : undefined} />
+        )}
 
         {/* ─── DEEP DIVE ─── */}
         {activeTab === "deep-dive" && (() => {
@@ -740,36 +747,48 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                 <div className="grid gap-4 lg:grid-cols-3">
                   <div>
                     <h5 className="mb-2 text-[11px] font-bold uppercase text-slate-400">Profitability</h5>
-                    <MetricTable compact rows={[
-                      { label: "Gross Margin", value: fmtPct(ratios.grossMargin) },
-                      { label: "Operating Margin", value: fmtPct(ratios.operatingMargin) },
-                      { label: "EBITDA Margin", value: fmtPct(ratios.ebitdaMargin) },
-                      { label: "Net Margin", value: fmtPct(ratios.netMargin) },
-                      { label: "ROE", value: fmtPct(ratios.returnOnEquity) },
-                      { label: "ROA", value: fmtPct(ratios.returnOnAssets) },
-                      { label: "ROIC", value: fmtPct(ratios.returnOnInvestedCapital) },
-                    ]} />
+                    <MetricTable
+                      compact
+                      onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
+                      rows={[
+                        { label: "Gross Margin", value: fmtPct(ratios.grossMargin), traceable: true },
+                        { label: "Operating Margin", value: fmtPct(ratios.operatingMargin), traceable: true },
+                        { label: "EBITDA Margin", value: fmtPct(ratios.ebitdaMargin), traceable: true },
+                        { label: "Net Margin", value: fmtPct(ratios.netMargin), traceable: true },
+                        { label: "ROE", value: fmtPct(ratios.returnOnEquity), traceable: true },
+                        { label: "ROA", value: fmtPct(ratios.returnOnAssets), traceable: true },
+                        { label: "ROIC", value: fmtPct(ratios.returnOnInvestedCapital), traceable: true },
+                      ]}
+                    />
                   </div>
                   <div>
                     <h5 className="mb-2 text-[11px] font-bold uppercase text-slate-400">Leverage & Liquidity</h5>
-                    <MetricTable compact rows={[
-                      { label: "Debt / Equity", value: fmtX(ratios.debtToEquity) },
-                      { label: "Debt / Capital", value: fmtPct(ratios.debtToCapital) },
-                      { label: "Net Debt / EBITDA", value: fmtX(ratios.netDebtToEbitda) },
-                      { label: "Interest Coverage", value: fmtX(ratios.interestCoverage) },
-                      { label: "Current Ratio", value: fmtX(ratios.currentRatio) },
-                      { label: "Working Capital", value: fmt(ratios.workingCapital) },
-                    ]} />
+                    <MetricTable
+                      compact
+                      onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
+                      rows={[
+                        { label: "Debt / Equity", value: fmtX(ratios.debtToEquity), traceable: true },
+                        { label: "Debt / Capital", value: fmtPct(ratios.debtToCapital), traceable: true },
+                        { label: "Net Debt / EBITDA", value: fmtX(ratios.netDebtToEbitda), traceable: true },
+                        { label: "Interest Coverage", value: fmtX(ratios.interestCoverage), traceable: true },
+                        { label: "Current Ratio", value: fmtX(ratios.currentRatio), traceable: true },
+                        { label: "Working Capital", value: fmt(ratios.workingCapital), traceable: true },
+                      ]}
+                    />
                   </div>
                   <div>
                     <h5 className="mb-2 text-[11px] font-bold uppercase text-slate-400">Efficiency & Cash</h5>
-                    <MetricTable compact rows={[
-                      { label: "Asset Turnover", value: fmtX(ratios.assetTurnover) },
-                      { label: "Inventory Turnover", value: fmtX(ratios.inventoryTurnover) },
-                      { label: "Receivables Turnover", value: fmtX(ratios.receivablesTurnover) },
-                      { label: "FCF Yield", value: fmtPct(ratios.fcfYield) },
-                      { label: "FCF Conversion", value: fmtPct(ratios.fcfConversion) },
-                    ]} />
+                    <MetricTable
+                      compact
+                      onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
+                      rows={[
+                        { label: "Asset Turnover", value: fmtX(ratios.assetTurnover), traceable: true },
+                        { label: "Inventory Turnover", value: fmtX(ratios.inventoryTurnover), traceable: true },
+                        { label: "Receivables Turnover", value: fmtX(ratios.receivablesTurnover), traceable: true },
+                        { label: "FCF Yield", value: fmtPct(ratios.fcfYield), traceable: true },
+                        { label: "FCF Conversion", value: fmtPct(ratios.fcfConversion), traceable: true },
+                      ]}
+                    />
                   </div>
                 </div>
               </Section>
@@ -847,8 +866,16 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
               {/* Raw Line Items */}
               <Section title="Extracted Line Items">
                 <div className="grid gap-4 lg:grid-cols-2">
-                  <LineItemTable title="Balance Sheet" items={bs.items} />
-                  <LineItemTable title="Income & Cash Flow" items={cfItems} />
+                  <LineItemTable
+                    title="Balance Sheet"
+                    items={bs.items}
+                    onRowClick={onTraceMetric ? (item) => trace(item.label, item.value, [item.tag]) : undefined}
+                  />
+                  <LineItemTable
+                    title="Income & Cash Flow"
+                    items={cfItems}
+                    onRowClick={onTraceMetric ? (item) => trace(item.label, item.value, [item.tag]) : undefined}
+                  />
                 </div>
               </Section>
             </div>
@@ -861,16 +888,38 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
 
 /* ──────────────────── Sub-components ──────────────────── */
 
-function KpiCell({ label, value, highlight }: { label: string; value: string; highlight?: number | null }) {
+function KpiCell({
+  label,
+  value,
+  highlight,
+  traceable,
+  onClick,
+}: {
+  label: string;
+  value: string;
+  highlight?: number | null;
+  traceable?: boolean;
+  onClick?: () => void;
+}) {
+  const valueClass = cn(
+    "mt-0.5 text-sm font-bold tabular-nums sm:text-base",
+    highlight != null ? (highlight > 0 ? "text-slate-900" : highlight < 0 ? "text-red-600" : "text-slate-900") : "text-slate-900",
+  );
   return (
     <div className="bg-white px-3 py-2.5 sm:px-4 sm:py-3">
       <p className="text-[9px] font-semibold uppercase tracking-wider text-slate-400">{label}</p>
-      <p className={cn(
-        "mt-0.5 text-sm font-bold tabular-nums sm:text-base",
-        highlight != null ? (highlight > 0 ? "text-slate-900" : highlight < 0 ? "text-red-600" : "text-slate-900") : "text-slate-900"
-      )}>
-        {value}
-      </p>
+      {traceable && onClick ? (
+        <button
+          type="button"
+          onClick={onClick}
+          className="group mt-0.5 flex w-full items-center justify-between gap-1 rounded-md text-left transition hover:bg-yellow-50/80"
+        >
+          <span className={valueClass}>{value}</span>
+          <Search className="h-3.5 w-3.5 shrink-0 text-yellow-600 opacity-0 transition group-hover:opacity-70" aria-hidden />
+        </button>
+      ) : (
+        <p className={valueClass}>{value}</p>
+      )}
     </div>
   );
 }
@@ -913,11 +962,28 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function RatioCard({ label, value }: { label: string; value: string }) {
+function RatioCard({
+  label,
+  value,
+  traceable,
+  onClick,
+}: {
+  label: string;
+  value: string;
+  traceable?: boolean;
+  onClick?: () => void;
+}) {
   return (
-    <div className="rounded-lg bg-slate-50 px-3 py-2.5">
+    <div className={cn("rounded-lg bg-slate-50 px-3 py-2.5", traceable && onClick && "transition hover:bg-yellow-50/80")}>
       <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
-      <p className="mt-0.5 text-sm font-bold tabular-nums text-slate-900">{value}</p>
+      {traceable && onClick ? (
+        <button type="button" onClick={onClick} className="group mt-0.5 flex w-full items-center justify-between gap-1 text-left">
+          <span className="text-sm font-bold tabular-nums text-slate-900">{value}</span>
+          <Search className="h-3 w-3 shrink-0 text-yellow-600 opacity-0 transition group-hover:opacity-70" aria-hidden />
+        </button>
+      ) : (
+        <p className="mt-0.5 text-sm font-bold tabular-nums text-slate-900">{value}</p>
+      )}
     </div>
   );
 }
@@ -966,7 +1032,7 @@ function MetricTable({ rows, compact, onRowClick }: {
   );
 }
 
-function IncomeStatementTable({ inc }: { inc: IncomeStatement }) {
+function IncomeStatementTable({ inc, onRowClick }: { inc: IncomeStatement; onRowClick?: (label: string) => void }) {
   const lines: Array<{ label: string; value: number | null; bold?: boolean; dim?: boolean; marginLabel?: string; margin?: number | null; indent?: boolean }> = [
     { label: "Revenue", value: inc.revenue, bold: true },
     { label: "Cost of Revenue", value: inc.costOfRevenue ? -inc.costOfRevenue : null, dim: true },
@@ -991,23 +1057,39 @@ function IncomeStatementTable({ inc }: { inc: IncomeStatement }) {
         </tr>
       </thead>
       <tbody>
-        {lines.filter(l => l.value != null).map((l, i) => (
-          <tr key={i} className={cn("border-b border-slate-100", l.bold && "bg-slate-50/50")}>
-            <td className={cn("px-3 py-1.5", l.indent && "pl-6", l.bold ? "font-bold text-slate-800" : l.dim ? "text-slate-400" : "text-slate-600")}>
-              {l.label}
-            </td>
-            <td className={cn(
-              "px-3 py-1.5 text-right tabular-nums",
-              l.bold ? "font-bold text-slate-900" : "text-slate-700",
-              l.value != null && l.value < 0 && "text-red-500"
-            )}>
-              {l.value != null ? (l.value < 0 ? `(${Math.abs(l.value).toLocaleString()})` : l.value.toLocaleString()) : "—"}
-            </td>
-            <td className="px-3 py-1.5 text-right tabular-nums text-slate-500">
-              {l.margin != null ? `${l.margin.toFixed(1)}%` : ""}
-            </td>
-          </tr>
-        ))}
+        {lines.filter(l => l.value != null).map((l, i) => {
+          const clickable = !!onRowClick;
+          return (
+            <tr
+              key={i}
+              onClick={clickable ? () => onRowClick(l.label) : undefined}
+              className={cn(
+                "border-b border-slate-100",
+                l.bold && "bg-slate-50/50",
+                clickable && "cursor-pointer transition hover:bg-yellow-50/60",
+              )}
+            >
+              <td className={cn(
+                "px-3 py-1.5",
+                l.indent && "pl-6",
+                l.bold ? "font-bold text-slate-800" : l.dim ? "text-slate-400" : "text-slate-600",
+              )}>
+                {l.label}
+                {clickable && <Search className="ml-1 inline h-3 w-3 text-yellow-600 opacity-40" aria-hidden />}
+              </td>
+              <td className={cn(
+                "px-3 py-1.5 text-right tabular-nums",
+                l.bold ? "font-bold text-slate-900" : "text-slate-700",
+                l.value != null && l.value < 0 && "text-red-500",
+              )}>
+                {l.value != null ? (l.value < 0 ? `(${Math.abs(l.value).toLocaleString()})` : l.value.toLocaleString()) : "—"}
+              </td>
+              <td className="px-3 py-1.5 text-right tabular-nums text-slate-500">
+                {l.margin != null ? `${l.margin.toFixed(1)}%` : ""}
+              </td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );
@@ -1015,7 +1097,13 @@ function IncomeStatementTable({ inc }: { inc: IncomeStatement }) {
 
 /* ──────────────────── Insights Tab ──────────────────── */
 
-function InsightsTab({ result }: { result: FullAnalysis }) {
+function InsightsTab({
+  result,
+  onMetricTableRowClick,
+}: {
+  result: FullAnalysis;
+  onMetricTableRowClick?: (label: string, extra?: Record<string, MetricTraceSpec>) => void;
+}) {
   const { balanceSheet: bs, debtStructure: debt, cashFlow: cf, ratios, incomeStatement: inc } = result;
   const cfItems = result.cfItems ?? [];
 
@@ -1105,6 +1193,25 @@ function InsightsTab({ result }: { result: FullAnalysis }) {
       roa: ni != null && latest.totalAssets ? Math.round((ni / latest.totalAssets) * 1000) / 10 : null,
     };
   }, [historyRows]);
+
+  const ttmTraceExtra = useMemo((): Record<string, MetricTraceSpec> | undefined => {
+    if (!ttm) return undefined;
+    return {
+      "Revenue TTM": { value: ttm.revenue, tags: ["Revenues", "NetRevenues"] },
+      "EBITDA TTM": { value: ttm.ebitda, tags: ["EBITDA"] },
+      "Net Income TTM": { value: ttm.netIncome, tags: ["NetIncome"] },
+      "OCF TTM": { value: ttm.operatingCashFlow, tags: ["OperatingCashFlow"] },
+      "FCF TTM": { value: ttm.freeCashFlow, tags: ["FreeCashFlow"] },
+      "CapEx TTM": { value: ttm.capex, tags: ["CapitalExpenditure"] },
+      "Gross Margin": { value: ttm.grossMargin, tags: ["GrossProfit", "Revenues"] },
+      "OP Margin": { value: ttm.operatingMargin, tags: ["OperatingIncome", "Revenues"] },
+      "EBITDA Margin": { value: ttm.ebitdaMargin, tags: ["EBITDA", "Revenues"] },
+      "Net Margin": { value: ttm.netMargin, tags: ["NetIncome", "Revenues"] },
+      "ROE (TTM)": { value: ttm.roe, tags: ["NetIncome", "StockholdersEquity"] },
+      "ROA (TTM)": { value: ttm.roa, tags: ["NetIncome", "Assets"] },
+      "FCF Margin": { value: ttm.fcfMargin, tags: ["FreeCashFlow", "Revenues"] },
+    };
+  }, [ttm]);
 
   // ── Peer comparison: compute latest-quarter metrics per company
   interface PeerSummary {
@@ -1937,21 +2044,21 @@ function InsightsTab({ result }: { result: FullAnalysis }) {
             )}
             <p className="text-xs text-slate-500">Trailing 12 months computed from last 4 quarters. Flow metrics are summed; balance sheet metrics use the latest quarter.</p>
             <div className="grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-slate-200 bg-slate-200 sm:grid-cols-6">
-              <KpiCell label="Revenue TTM" value={fmt(ttm.revenue)} />
-              <KpiCell label="EBITDA TTM" value={fmt(ttm.ebitda)} />
-              <KpiCell label="Net Income TTM" value={fmt(ttm.netIncome)} highlight={ttm.netIncome} />
-              <KpiCell label="OCF TTM" value={fmt(ttm.operatingCashFlow)} />
-              <KpiCell label="FCF TTM" value={fmt(ttm.freeCashFlow)} highlight={ttm.freeCashFlow} />
-              <KpiCell label="CapEx TTM" value={fmt(ttm.capex != null ? -Math.abs(ttm.capex) : null)} />
+              <KpiCell label="Revenue TTM" value={fmt(ttm.revenue)} traceable={!!onMetricTableRowClick} onClick={onMetricTableRowClick && ttmTraceExtra ? () => onMetricTableRowClick("Revenue TTM", ttmTraceExtra) : undefined} />
+              <KpiCell label="EBITDA TTM" value={fmt(ttm.ebitda)} traceable={!!onMetricTableRowClick} onClick={onMetricTableRowClick && ttmTraceExtra ? () => onMetricTableRowClick("EBITDA TTM", ttmTraceExtra) : undefined} />
+              <KpiCell label="Net Income TTM" value={fmt(ttm.netIncome)} highlight={ttm.netIncome} traceable={!!onMetricTableRowClick} onClick={onMetricTableRowClick && ttmTraceExtra ? () => onMetricTableRowClick("Net Income TTM", ttmTraceExtra) : undefined} />
+              <KpiCell label="OCF TTM" value={fmt(ttm.operatingCashFlow)} traceable={!!onMetricTableRowClick} onClick={onMetricTableRowClick && ttmTraceExtra ? () => onMetricTableRowClick("OCF TTM", ttmTraceExtra) : undefined} />
+              <KpiCell label="FCF TTM" value={fmt(ttm.freeCashFlow)} highlight={ttm.freeCashFlow} traceable={!!onMetricTableRowClick} onClick={onMetricTableRowClick && ttmTraceExtra ? () => onMetricTableRowClick("FCF TTM", ttmTraceExtra) : undefined} />
+              <KpiCell label="CapEx TTM" value={fmt(ttm.capex != null ? -Math.abs(ttm.capex) : null)} traceable={!!onMetricTableRowClick} onClick={onMetricTableRowClick && ttmTraceExtra ? () => onMetricTableRowClick("CapEx TTM", ttmTraceExtra) : undefined} />
             </div>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
-              <RatioCard label="Gross Margin" value={fmtPct(ttm.grossMargin)} />
-              <RatioCard label="OP Margin" value={fmtPct(ttm.operatingMargin)} />
-              <RatioCard label="EBITDA Margin" value={fmtPct(ttm.ebitdaMargin)} />
-              <RatioCard label="Net Margin" value={fmtPct(ttm.netMargin)} />
-              <RatioCard label="ROE (TTM)" value={fmtPct(ttm.roe)} />
-              <RatioCard label="ROA (TTM)" value={fmtPct(ttm.roa)} />
-              <RatioCard label="FCF Margin" value={fmtPct(ttm.fcfMargin)} />
+              <RatioCard label="Gross Margin" value={fmtPct(ttm.grossMargin)} traceable={!!onMetricTableRowClick} onClick={onMetricTableRowClick && ttmTraceExtra ? () => onMetricTableRowClick("Gross Margin", ttmTraceExtra) : undefined} />
+              <RatioCard label="OP Margin" value={fmtPct(ttm.operatingMargin)} traceable={!!onMetricTableRowClick} onClick={onMetricTableRowClick && ttmTraceExtra ? () => onMetricTableRowClick("OP Margin", ttmTraceExtra) : undefined} />
+              <RatioCard label="EBITDA Margin" value={fmtPct(ttm.ebitdaMargin)} traceable={!!onMetricTableRowClick} onClick={onMetricTableRowClick && ttmTraceExtra ? () => onMetricTableRowClick("EBITDA Margin", ttmTraceExtra) : undefined} />
+              <RatioCard label="Net Margin" value={fmtPct(ttm.netMargin)} traceable={!!onMetricTableRowClick} onClick={onMetricTableRowClick && ttmTraceExtra ? () => onMetricTableRowClick("Net Margin", ttmTraceExtra) : undefined} />
+              <RatioCard label="ROE (TTM)" value={fmtPct(ttm.roe)} traceable={!!onMetricTableRowClick} onClick={onMetricTableRowClick && ttmTraceExtra ? () => onMetricTableRowClick("ROE (TTM)", ttmTraceExtra) : undefined} />
+              <RatioCard label="ROA (TTM)" value={fmtPct(ttm.roa)} traceable={!!onMetricTableRowClick} onClick={onMetricTableRowClick && ttmTraceExtra ? () => onMetricTableRowClick("ROA (TTM)", ttmTraceExtra) : undefined} />
+              <RatioCard label="FCF Margin" value={fmtPct(ttm.fcfMargin)} traceable={!!onMetricTableRowClick} onClick={onMetricTableRowClick && ttmTraceExtra ? () => onMetricTableRowClick("FCF Margin", ttmTraceExtra) : undefined} />
             </div>
           </div>
         </Section>
@@ -2283,8 +2390,8 @@ function InsightsTab({ result }: { result: FullAnalysis }) {
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
-              <RatioCard label="OCF / Net Income" value={earningsQuality.ocfToNI != null ? `${earningsQuality.ocfToNI}x` : "—"} />
-              <RatioCard label="FCF / Net Income" value={earningsQuality.fcfToNI != null ? `${earningsQuality.fcfToNI}x` : "—"} />
+              <RatioCard label="OCF / Net Income" value={earningsQuality.ocfToNI != null ? `${earningsQuality.ocfToNI}x` : "—"} traceable={!!onMetricTableRowClick} onClick={onMetricTableRowClick ? () => onMetricTableRowClick("OCF / Net Income") : undefined} />
+              <RatioCard label="FCF / Net Income" value={earningsQuality.fcfToNI != null ? `${earningsQuality.fcfToNI}x` : "—"} traceable={!!onMetricTableRowClick} onClick={onMetricTableRowClick ? () => onMetricTableRowClick("FCF / Net Income") : undefined} />
               <RatioCard label="Accrual Ratio" value={earningsQuality.accrualRatio != null ? `${earningsQuality.accrualRatio}%` : "—"} />
               <RatioCard label="Accruals ($M)" value={earningsQuality.accruals != null ? `$${earningsQuality.accruals.toLocaleString()}M` : "—"} />
             </div>
@@ -2346,16 +2453,19 @@ function InsightsTab({ result }: { result: FullAnalysis }) {
       {/* ── Capital Allocation ── */}
       <Section title="Capital Allocation">
         <div className="grid gap-4 lg:grid-cols-2">
-          <MetricTable rows={[
-            { label: "Operating Cash Flow", value: fmt(cf.operatingCashFlow), bold: true },
-            { label: "CapEx (Reinvestment)", value: fmt(cf.capitalExpenditures != null ? -Math.abs(cf.capitalExpenditures) : null), dim: true },
-            { label: "Reinvestment Rate", value: capAlloc.reinvestmentRate != null ? `${capAlloc.reinvestmentRate}%` : "—", sub: "CapEx / OCF" },
-            { label: "Dividends Paid", value: fmt(cf.dividendsPaid != null ? -Math.abs(cf.dividendsPaid) : null), dim: true },
-            { label: "Share Repurchases", value: fmt(capAlloc.buyback != null ? -Math.abs(capAlloc.buyback) : null), dim: true },
-            { label: "Total Shareholder Returns", value: fmt(capAlloc.totalReturn != null ? -Math.abs(capAlloc.totalReturn) : null), bold: true },
-            { label: "Return Yield on Equity", value: capAlloc.returnYieldOnEquity != null ? `${Math.abs(capAlloc.returnYieldOnEquity).toFixed(1)}%` : "—" },
-            { label: "Stock-Based Comp", value: fmt(capAlloc.sbc) },
-          ]} />
+          <MetricTable
+            onRowClick={onMetricTableRowClick ?? undefined}
+            rows={[
+              { label: "Operating Cash Flow", value: fmt(cf.operatingCashFlow), bold: true, traceable: true },
+              { label: "CapEx (Reinvestment)", value: fmt(cf.capitalExpenditures != null ? -Math.abs(cf.capitalExpenditures) : null), dim: true, traceable: true },
+              { label: "Reinvestment Rate", value: capAlloc.reinvestmentRate != null ? `${capAlloc.reinvestmentRate}%` : "—", sub: "CapEx / OCF" },
+              { label: "Dividends Paid", value: fmt(cf.dividendsPaid != null ? -Math.abs(cf.dividendsPaid) : null), dim: true, traceable: true },
+              { label: "Share Repurchases", value: fmt(capAlloc.buyback != null ? -Math.abs(capAlloc.buyback) : null), dim: true, traceable: true },
+              { label: "Total Shareholder Returns", value: fmt(capAlloc.totalReturn != null ? -Math.abs(capAlloc.totalReturn) : null), bold: true, traceable: true },
+              { label: "Return Yield on Equity", value: capAlloc.returnYieldOnEquity != null ? `${Math.abs(capAlloc.returnYieldOnEquity).toFixed(1)}%` : "—" },
+              { label: "Stock-Based Comp", value: fmt(capAlloc.sbc), traceable: true },
+            ]}
+          />
           <div className="rounded-lg border border-slate-100 p-3">
             <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Allocation Insight</p>
             <div className="space-y-1.5 text-xs text-slate-600">
@@ -2721,7 +2831,15 @@ function FootnoteCard({ fn, compact }: { fn: import("@/types/analysis").Footnote
   );
 }
 
-function LineItemTable({ title, items }: { title: string; items: BSItem[] }) {
+function LineItemTable({
+  title,
+  items,
+  onRowClick,
+}: {
+  title: string;
+  items: BSItem[];
+  onRowClick?: (item: BSItem) => void;
+}) {
   if (items.length === 0) return null;
   return (
     <div className="flex max-h-[300px] flex-col overflow-hidden rounded-lg border border-slate-200">
@@ -2738,17 +2856,27 @@ function LineItemTable({ title, items }: { title: string; items: BSItem[] }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-50">
-            {items.map((item, i) => (
-              <tr key={i} className="hover:bg-slate-50/50">
-                <td className="px-3 py-1">
-                  <span className="block font-medium text-slate-700">{item.label}</span>
-                  <span className="block max-w-[150px] truncate text-[9px] text-slate-400" title={item.source}>{item.source}</span>
-                </td>
-                <td className={cn("px-3 py-1 text-right tabular-nums font-semibold", item.value < 0 ? "text-red-500" : "text-slate-800")}>
-                  {item.value < 0 ? `(${Math.abs(item.value).toLocaleString()})` : item.value.toLocaleString()}
-                </td>
-              </tr>
-            ))}
+            {items.map((item, i) => {
+              const clickable = !!onRowClick;
+              return (
+                <tr
+                  key={i}
+                  onClick={clickable ? () => onRowClick(item) : undefined}
+                  className={cn(
+                    clickable ? "cursor-pointer transition hover:bg-yellow-50/60" : "hover:bg-slate-50/50",
+                  )}
+                >
+                  <td className="px-3 py-1">
+                    <span className="block font-medium text-slate-700">{item.label}</span>
+                    <span className="block max-w-[150px] truncate text-[9px] text-slate-400" title={item.source}>{item.source}</span>
+                  </td>
+                  <td className={cn("px-3 py-1 text-right tabular-nums font-semibold", item.value < 0 ? "text-red-500" : "text-slate-800")}>
+                    {item.value < 0 ? `(${Math.abs(item.value).toLocaleString()})` : item.value.toLocaleString()}
+                    {clickable && <Search className="ml-1 inline h-3 w-3 text-yellow-600 opacity-40" aria-hidden />}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
