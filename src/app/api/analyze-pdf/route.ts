@@ -1,6 +1,8 @@
 ﻿import { NextResponse } from "next/server";
 import { assembleAnalysis } from "@/lib/analysisEngine";
 import { extractNonRecurringItems } from "@/lib/filingTextExtractor";
+import { shouldRunExtraction } from "@/lib/llmExtractionGuards";
+import { extractPdfFinancialValue, type PdfFinancialMetric } from "@/lib/pdfFinancialValueExtractor";
 import type { BSItem, FootnoteItem, EarningsNarrative } from "@/types/analysis";
 
 export const runtime = "nodejs";
@@ -77,6 +79,7 @@ RULES:
 - Validation: confirm Assets is approximately equal to Liabilities + Equity. If mismatch, re-check StockholdersEquity and choose the line that best reconciles.
 - RedeemableNoncontrollingInterestEquityCarryingAmount appears between Liabilities and Equity sections. Always extract it when present.
 - If "Total liabilities and equity" exists, include it as LiabilitiesAndStockholdersEquity.
+- Ignore standalone superscript/footnote markers (e.g., 1, 2, 3) after labels. They are not dollar values.
 - Do NOT invent numbers. Only extract what is in the text.`;
 
 const IS_CF_PROMPT = `You are a financial data extraction engine. Extract INCOME STATEMENT and CASH FLOW STATEMENT data from this 10-Q/10-K text.
@@ -118,7 +121,7 @@ CASH FLOW STATEMENT TAGS:
 - AmortizationOfIntangibleAssets â†’ Amortization of intangibles (if shown separately)
 - ShareBasedCompensation â†’ Stock-based compensation / share-based compensation / stock compensation expense. NOTE: some filers (especially recently-IPO'd companies) show SBC in the Shareholders' Equity statement rather than the Cash Flow Statement â€” look in both sections.
 - NetCashProvidedByOperatingActivities â†’ Net cash from operating activities / net cash provided by operating activities / net cash flows from operating activities / net cash flows from operating activities of continuing operations. NOTE: if the filing separates "continuing" and "discontinued" operations, use the "continuing operations" value.
-- PaymentsToAcquirePropertyPlantAndEquipment â†’ Capital expenditures / purchases of property / capital additions / additions to property, plant and equipment (POSITIVE number)
+- PaymentsToAcquirePropertyPlantAndEquipment â†’ Capital expenditures / purchases of property / purchases of property and equipment / payments for property, plant and equipment / capital additions / additions to property, plant and equipment (POSITIVE number)
 - NetCashProvidedByInvestingActivities â†’ Net cash from investing activities / net cash used in investing activities / net cash flows from investing activities
 - ProceedsFromIssuanceOfLongTermDebt â†’ Proceeds from issuance of long-term debt / borrowings / proceeds from debt (POSITIVE number)
 - RepaymentsOfLongTermDebt â†’ Repayments of long-term debt ONLY when the label explicitly names long-term debt, term loan, or non-current notes (e.g., "Repayment of term loan", "Principal payments on long-term debt"). Do NOT use this tag for "Payments on debt" or any label that does not explicitly say "long-term". (POSITIVE number)
@@ -141,6 +144,7 @@ RULES:
 - Free Cash Flow (FCF) is NOT a required tag â€” it is computed downstream as (NetCashProvidedByOperatingActivities minus PaymentsToAcquirePropertyPlantAndEquipment). Just extract those two values accurately.
 - For debt repayment: "Payments on debt" â†’ RepaymentsOfDebt (mixed). "Repayments of long-term debt" â†’ RepaymentsOfLongTermDebt. "Repayments of commercial paper" â†’ RepaymentsOfCommercialPaper. Do NOT use RepaymentsOfLongTermDebt for ambiguous labels.
 - For share repurchases: do NOT require the exact phrase "share repurchases" â€” any stock purchase line in the financing section qualifies. Check equity notes if not in cash flow.
+- Ignore standalone superscript/footnote markers (e.g., 1, 2, 3) after labels. They are not dollar values.
 - Do NOT invent numbers. Only extract what is in the text.`;
 
 const QUALITATIVE_PROMPT = `You are a financial analyst reading an SEC filing. Extract qualitative insights.
@@ -237,11 +241,11 @@ interface BsExtraction {
   companyName?: string | null;
   periodEnd?: string | null;
   scaleNote?: string;
-  items?: { tag: string; label: string; value: number | string }[];
+  items?: { tag: string; label: string; value: number | string | null }[];
 }
 
 interface IsCfExtraction {
-  items?: { tag: string; label: string; value: number | string }[];
+  items?: { tag: string; label: string; value: number | string | null }[];
 }
 
 interface QualExtraction {
@@ -433,14 +437,97 @@ async function callOpenAI(
 // Convert AI value to number
 // ---------------------------------------------------------------------------
 
-function toNum(v: number | string | undefined | null): number {
-  if (v == null) return 0;
+function toNumOrNull(v: number | string | undefined | null): number | null {
+  if (v == null) return null;
   if (typeof v === "string") {
-    if (v === "â€“" || v === "â€”" || v === "-" || v === "N/A" || v === "n/a") return 0;
-    const n = Number(v.replace(/[,$\s]/g, ""));
-    return isNaN(n) ? 0 : Math.round(n);
+    const trimmed = v.trim();
+    if (
+      trimmed === "" ||
+      trimmed === "-" ||
+      trimmed === "\u2013" ||
+      trimmed === "\u2014" ||
+      trimmed === "\u00e2\u20ac\u201c" ||
+      trimmed === "\u00e2\u20ac\u201d" ||
+      /^n\/?a$/i.test(trimmed)
+    ) {
+      return null;
+    }
+
+    let normalized = trimmed.replace(/[,$\s]/g, "");
+    let negative = false;
+    if (normalized.startsWith("(") && normalized.endsWith(")")) {
+      normalized = normalized.slice(1, -1);
+      negative = true;
+    }
+
+    const n = Number(normalized);
+    if (Number.isNaN(n)) return null;
+    return Math.round(negative ? -n : n);
   }
-  return Math.round(v);
+  return Number.isFinite(v) ? Math.round(v) : null;
+}
+
+function toBsItems(
+  items: { tag: string; label: string; value: number | string | null }[] | undefined,
+  period: string,
+  sourcePrefix: string
+): BSItem[] {
+  const out: BSItem[] = [];
+  for (const item of items ?? []) {
+    const value = toNumOrNull(item.value);
+    if (value == null) continue;
+    out.push({
+      tag: item.tag,
+      label: item.label,
+      value,
+      period,
+      source: `${sourcePrefix}:${item.tag}`,
+    });
+  }
+  return out;
+}
+
+function repairCriticalFinancialValue(
+  items: BSItem[],
+  metric: PdfFinancialMetric,
+  text: string,
+  scaleNote: string | undefined,
+  period: string
+): void {
+  const repaired = extractPdfFinancialValue(text, metric, scaleNote);
+  if (!repaired || Math.abs(repaired.value) <= 1) return;
+
+  const existing = items.find((item) => item.tag === repaired.tag);
+  const existingValue = existing?.value ?? null;
+  if (existingValue != null && Math.abs(existingValue) > 1) return;
+
+  if (existing) {
+    console.log("[analyze-pdf:repair]", {
+      metric,
+      previous: existing.value,
+      repaired: repaired.value,
+      confidence: repaired.confidence,
+      raw: repaired.raw,
+    });
+    existing.value = repaired.value;
+    existing.label = repaired.label;
+    existing.source = repaired.source;
+  } else {
+    console.log("[analyze-pdf:repair]", {
+      metric,
+      previous: null,
+      repaired: repaired.value,
+      confidence: repaired.confidence,
+      raw: repaired.raw,
+    });
+    items.push({
+      tag: repaired.tag,
+      label: repaired.label,
+      value: repaired.value,
+      period,
+      source: repaired.source,
+    });
+  }
 }
 
 type RdMethod =
@@ -983,24 +1070,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const text = body.text?.trim();
-  if (!text || text.length < 200) {
-    return NextResponse.json(
-      { error: "Extracted text too short or empty" },
-      { status: 400 }
-    );
+  const filingText = body.text?.trim() ?? "";
+  if (!shouldRunExtraction(filingText)) {
+    return NextResponse.json({ error: "NO_VALID_FILING_TEXT" }, { status: 400 });
   }
 
   const model = process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini";
 
-  // Split text into sections
-  const { bsText, isCfText, qualText, segmentText } = extractSections(text);
+  // Split text into sections (≥500 chars, financial keywords passed guard)
+  const { bsText, isCfText, qualText, segmentText } = extractSections(filingText);
 
   // Fallback: if section detection found nothing, use the full text (truncated)
-  const bsInput = bsText.length > 500 ? bsText : text.slice(0, 80_000);
-  const isCfInput = isCfText.length > 500 ? isCfText : text.slice(0, 80_000);
-  const qualInput = qualText.length > 500 ? qualText : text.slice(0, 60_000);
-  const segInput = segmentText.length > 300 ? segmentText : text.slice(0, 60_000);
+  const bsInput = bsText.length > 500 ? bsText : filingText.slice(0, 80_000);
+  const isCfInput = isCfText.length > 500 ? isCfText : filingText.slice(0, 80_000);
+  const qualInput = qualText.length > 500 ? qualText : filingText.slice(0, 60_000);
+  const segInput = segmentText.length > 300 ? segmentText : filingText.slice(0, 60_000);
 
   try {
     // Run 5 AI calls in parallel (4 extraction + 1 non-recurring)
@@ -1009,7 +1093,7 @@ export async function POST(request: Request) {
       callOpenAI(apiKey, model, IS_CF_PROMPT, `Extract income statement and cash flow data:\n\n${isCfInput}`, 4000),
       callOpenAI(apiKey, model, QUALITATIVE_PROMPT, `Extract qualitative insights:\n\n${qualInput}`, 4000),
       callOpenAI(apiKey, model, SEGMENT_PROMPT, `Extract segment data:\n\n${segInput}`, 3000),
-      extractNonRecurringItems(text, apiKey, model),
+      extractNonRecurringItems(filingText, apiKey, model),
     ]);
 
     const aiErrors = [bsCall, isCfCall, qualCall, segCall]
@@ -1047,16 +1131,24 @@ export async function POST(request: Request) {
     const period = bsExtraction.periodEnd ?? new Date().toISOString().slice(0, 10);
 
     // Build BSItem arrays with exact tags
-    const bsItems: BSItem[] = (bsExtraction.items ?? []).map((item) => ({
-      tag: item.tag,
-      label: item.label,
-      value: toNum(item.value),
-      period,
-      source: `AI:bs:${item.tag}`,
-    }));
+    const bsItems: BSItem[] = toBsItems(bsExtraction.items, period, "AI:bs");
+    repairCriticalFinancialValue(
+      bsItems,
+      "totalAssets",
+      filingText,
+      bsExtraction.scaleNote,
+      period
+    );
+    repairCriticalFinancialValue(
+      bsItems,
+      "cashAndEquivalents",
+      filingText,
+      bsExtraction.scaleNote,
+      period
+    );
 
     const equityCandidate = extractTotalEquityHeuristic(
-      text,
+      filingText,
       bsExtraction.scaleNote
     );
     if (equityCandidate.totalEquity != null) {
@@ -1120,13 +1212,56 @@ export async function POST(request: Request) {
       });
     }
 
-    const cfItems: BSItem[] = (isCfExtraction.items ?? []).map((item) => ({
-      tag: item.tag,
-      label: item.label,
-      value: toNum(item.value),
-      period,
-      source: `AI:cf:${item.tag}`,
-    }));
+    const cfItems: BSItem[] = toBsItems(isCfExtraction.items, period, "AI:cf");
+    repairCriticalFinancialValue(
+      cfItems,
+      "revenue",
+      filingText,
+      bsExtraction.scaleNote,
+      period
+    );
+    repairCriticalFinancialValue(
+      cfItems,
+      "costOfRevenue",
+      filingText,
+      bsExtraction.scaleNote,
+      period
+    );
+    repairCriticalFinancialValue(
+      cfItems,
+      "grossProfit",
+      filingText,
+      bsExtraction.scaleNote,
+      period
+    );
+    repairCriticalFinancialValue(
+      cfItems,
+      "operatingIncome",
+      filingText,
+      bsExtraction.scaleNote,
+      period
+    );
+    repairCriticalFinancialValue(
+      cfItems,
+      "netIncome",
+      filingText,
+      bsExtraction.scaleNote,
+      period
+    );
+    repairCriticalFinancialValue(
+      cfItems,
+      "operatingCashFlow",
+      filingText,
+      bsExtraction.scaleNote,
+      period
+    );
+    repairCriticalFinancialValue(
+      cfItems,
+      "capitalExpenditures",
+      filingText,
+      bsExtraction.scaleNote,
+      period
+    );
 
     // Heuristic fallback: run when the AI either missed repurchases entirely or
     // extracted a zero/invalid value (e.g. model returned 0 for a non-zero buyback).
@@ -1141,7 +1276,7 @@ export async function POST(request: Request) {
     );
     if (!hasValidRepurchase) {
       const heuristicValue = extractShareRepurchasesHeuristic(
-        text,
+        filingText,
         bsExtraction.scaleNote
       );
       console.log("[repurchase:heuristic] heuristicValue:", heuristicValue);
@@ -1252,7 +1387,7 @@ export async function POST(request: Request) {
       ].includes(i.tag)
     );
     const rdResolution = resolveRnDExpense({
-      text,
+      text: filingText,
       scaleNote: bsExtraction.scaleNote,
       companyName: bsExtraction.companyName,
       existingRd: hasValidRd ? existingRdItem!.value : null,
@@ -1260,10 +1395,11 @@ export async function POST(request: Request) {
     });
     console.log("[rd:resolution]", rdResolution);
 
+    const rdExpense = rdResolution.rAndDExpense;
     const shouldBackfillRd =
       !hasValidRd &&
-      rdResolution.rAndDExpense != null &&
-      rdResolution.rAndDExpense > 0 &&
+      rdExpense != null &&
+      rdExpense > 0 &&
       rdResolution.method === "extracted";
 
     if (shouldBackfillRd) {
@@ -1273,14 +1409,14 @@ export async function POST(request: Request) {
       const source = `heuristic:rd:extracted${basisPart}`;
 
       if (existingRdItem) {
-        existingRdItem.value = rdResolution.rAndDExpense;
+        existingRdItem.value = rdExpense;
         existingRdItem.label = "R&D expense";
         existingRdItem.source = source;
       } else {
         cfItems.push({
           tag: "ResearchAndDevelopmentExpense",
           label: "R&D expense",
-          value: rdResolution.rAndDExpense,
+          value: rdExpense,
           period,
           source,
         });
@@ -1336,7 +1472,7 @@ export async function POST(request: Request) {
       companyName: bsExtraction.companyName ?? undefined,
       fileName: body.fileName,
       pagesRead: body.pages,
-      charsExtracted: body.chars ?? text.length,
+      charsExtracted: body.chars ?? filingText.length,
       periodEnd: period,
       confidence: "medium",
       extractionMethod: "pdf-ai",

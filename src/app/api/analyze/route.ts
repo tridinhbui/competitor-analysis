@@ -20,6 +20,7 @@ import {
   extractSegments,
   extractNonRecurringItems,
 } from "@/lib/filingTextExtractor";
+import { shouldRunExtraction } from "@/lib/llmExtractionGuards";
 import type { StepEvent, FullAnalysis } from "@/types/analysis";
 import { PIPELINE_STEPS } from "@/types/analysis";
 
@@ -305,39 +306,55 @@ export async function GET(request: Request) {
           try {
             const filingDoc = await fetchLatestFilingText(cik);
             if (filingDoc) {
-              const model = process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini";
-              // Run all 4 AI extractions in parallel
-              const [footnotesResult, earningsNarrative, segments, nonRecurring] = await Promise.all([
-                extractFootnotesAndAdjusted(filingDoc.text, apiKey, model),
-                extractEarningsNarrative(filingDoc.text, ticker, apiKey, model),
-                extractSegments(filingDoc.text, apiKey, model),
-                extractNonRecurringItems(filingDoc.text, apiKey, model),
-              ]);
-              const { footnotes, adjustedMetrics } = footnotesResult;
-              result.footnotes = footnotes;
-              result.adjustedMetrics = adjustedMetrics;
-              result.earningsNarrative = earningsNarrative ?? undefined;
-              if (segments.length > 0) {
-                result.segments = segments;
+              if (!shouldRunExtraction(filingDoc.text)) {
+                send({
+                  step: "extract_footnotes",
+                  label: labelFor("extract_footnotes"),
+                  status: "skipped",
+                  message: "NO_VALID_FILING_TEXT",
+                  durationMs: Date.now() - tFn,
+                  detail: {
+                    error: "NO_VALID_FILING_TEXT",
+                    form: filingDoc.form,
+                    reportDate: filingDoc.reportDate,
+                  },
+                });
+              } else {
+                const model = process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini";
+                // Run all 4 AI extractions in parallel
+                const [footnotesResult, earningsNarrative, segments, nonRecurring] =
+                  await Promise.all([
+                    extractFootnotesAndAdjusted(filingDoc.text, apiKey, model),
+                    extractEarningsNarrative(filingDoc.text, ticker, apiKey, model),
+                    extractSegments(filingDoc.text, apiKey, model),
+                    extractNonRecurringItems(filingDoc.text, apiKey, model),
+                  ]);
+                const { footnotes, adjustedMetrics } = footnotesResult;
+                result.footnotes = footnotes;
+                result.adjustedMetrics = adjustedMetrics;
+                result.earningsNarrative = earningsNarrative ?? undefined;
+                if (segments.length > 0) {
+                  result.segments = segments;
+                }
+                if (nonRecurring.length > 0) {
+                  result.nonRecurringItems = nonRecurring;
+                }
+                send({
+                  step: "extract_footnotes",
+                  label: labelFor("extract_footnotes"),
+                  status: "done",
+                  message: `Extracted ${footnotes.length} footnotes, ${adjustedMetrics.length} adjusted metrics, ${segments.length} segments, ${nonRecurring.length} adjustments`,
+                  durationMs: Date.now() - tFn,
+                  detail: {
+                    footnotes: footnotes.length,
+                    adjustedMetrics: adjustedMetrics.length,
+                    segments: segments.length,
+                    nonRecurringItems: nonRecurring.length,
+                    form: filingDoc.form,
+                    reportDate: filingDoc.reportDate,
+                  },
+                });
               }
-              if (nonRecurring.length > 0) {
-                result.nonRecurringItems = nonRecurring;
-              }
-              send({
-                step: "extract_footnotes",
-                label: labelFor("extract_footnotes"),
-                status: "done",
-                message: `Extracted ${footnotes.length} footnotes, ${adjustedMetrics.length} adjusted metrics, ${segments.length} segments, ${nonRecurring.length} adjustments`,
-                durationMs: Date.now() - tFn,
-                detail: {
-                  footnotes: footnotes.length,
-                  adjustedMetrics: adjustedMetrics.length,
-                  segments: segments.length,
-                  nonRecurringItems: nonRecurring.length,
-                  form: filingDoc.form,
-                  reportDate: filingDoc.reportDate,
-                },
-              });
             } else {
               send({
                 step: "extract_footnotes",
