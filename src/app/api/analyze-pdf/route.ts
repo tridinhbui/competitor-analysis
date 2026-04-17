@@ -1301,13 +1301,19 @@ export async function POST(request: Request) {
       bsExtraction.companyName ??
       null;
 
-    // Build BSItem arrays with exact tags + PDF provenance when model provides it
-    const bsItems: BSItem[] = dedupeByTagPreferPdf(
-      bsParsed.items
-        .filter((it) => BS_TAG_SET.has(String(it.tag ?? "")))
-        .map((it) => rawAiToBSItem(it, period, "bs"))
-        .filter((x): x is BSItem => x != null)
+    // Build BSItem arrays with exact tags + PDF provenance when model provides it.
+    // Keep compatibility with legacy model JSON shape (`items: [{tag,label,value}]`).
+    const bsFromParsed = bsParsed.items
+      .filter((it) => BS_TAG_SET.has(String(it.tag ?? "")))
+      .map((it) => rawAiToBSItem(it, period, "bs"))
+      .filter((x): x is BSItem => x != null);
+    const bsFromLegacy = toBsItems(
+      (bsExtraction.items as Array<{ tag: string; label: string; value: number | string | null }> | undefined)
+        ?.filter((it) => BS_TAG_SET.has(String(it.tag ?? ""))),
+      period,
+      "AI:bs"
     );
+    const bsItems: BSItem[] = dedupeByTagPreferPdf([...bsFromParsed, ...bsFromLegacy]);
 
     const equityCandidate = extractTotalEquityHeuristic(filingText, scaleForHeuristics);
     if (equityCandidate.totalEquity != null) {
@@ -1371,12 +1377,33 @@ export async function POST(request: Request) {
       });
     }
 
-    const cfItems: BSItem[] = dedupeByTagPreferPdf(
-      isCfParsed.items
-        .filter((it) => CF_TAG_SET.has(String(it.tag ?? "")))
-        .map((it) => rawAiToBSItem(it, period, "cf"))
-        .filter((x): x is BSItem => x != null)
+    const cfFromParsed = isCfParsed.items
+      .filter((it) => CF_TAG_SET.has(String(it.tag ?? "")))
+      .map((it) => rawAiToBSItem(it, period, "cf"))
+      .filter((x): x is BSItem => x != null);
+    const cfFromLegacy = toBsItems(
+      (isCfExtraction.items as Array<{ tag: string; label: string; value: number | string | null }> | undefined)
+        ?.filter((it) => CF_TAG_SET.has(String(it.tag ?? ""))),
+      period,
+      "AI:cf"
     );
+    const cfItems: BSItem[] = dedupeByTagPreferPdf([...cfFromParsed, ...cfFromLegacy]);
+
+    // Hard backfill for core dashboard fields when AI coverage is weak in production.
+    for (const metric of ["totalAssets", "cashAndEquivalents"] as const) {
+      repairCriticalFinancialValue(bsItems, metric, filingText, scaleForHeuristics, period);
+    }
+    for (const metric of [
+      "revenue",
+      "costOfRevenue",
+      "grossProfit",
+      "operatingIncome",
+      "netIncome",
+      "operatingCashFlow",
+      "capitalExpenditures",
+    ] as const) {
+      repairCriticalFinancialValue(cfItems, metric, filingText, scaleForHeuristics, period);
+    }
 
     // Heuristic fallback: run when the AI either missed repurchases entirely or
     // extracted a zero/invalid value (e.g. model returned 0 for a non-zero buyback).
