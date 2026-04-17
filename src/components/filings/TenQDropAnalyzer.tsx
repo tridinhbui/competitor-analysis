@@ -17,7 +17,6 @@ import {
 import { RotateCcw, FileText } from "lucide-react";
 import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import { normalizeCompanyName, resolveTicker } from "@/lib/filingIdentity";
-
 type Phase = "idle" | "analyzing" | "done" | "error";
 
 export function TenQDropAnalyzer() {
@@ -30,49 +29,87 @@ export function TenQDropAnalyzer() {
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [showPdf, setShowPdf] = useState(true);
   const [pdfWidthPct, setPdfWidthPct] = useState(50);
+  const [persistNotice, setPersistNotice] = useState<{
+    kind: "ok" | "warn";
+    text: string;
+  } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const resizeContainerRef = useRef<HTMLDivElement>(null);
+  const savedResultKeyRef = useRef<string | null>(null);
   const [traceTarget, setTraceTarget] = useState<TraceTarget | null>(null);
 
-  // Auto-save filing when analysis completes (for competitor workspace)
+  // Auto-save: Supabase via /api/filings/save for PDF; SEC saved server-side too.
   useEffect(() => {
     if (phase !== "done" || !result) return;
-    // SEC-based analyses are saved server-side in the API route.
-    // PDF-based analyses need to be saved from the client.
-    if (result.meta.source === "pdf") {
-      fetch("/api/filings/save", {
+    const resultKey = `${result.meta.source}:${result.meta.ticker ?? ""}:${result.meta.periodEnd ?? ""}`;
+    if (savedResultKeyRef.current === resultKey) return;
+    savedResultKeyRef.current = resultKey;
+
+    void (async () => {
+      if (result.meta.source === "pdf") {
+        try {
+          const saveResp = await fetch("/api/filings/save", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ticker: result.meta.ticker,
+              periodEnd: result.meta.periodEnd,
+              source: "pdf",
+              analysis: result,
+            }),
+          });
+          const body = (await saveResp.json().catch(() => ({}))) as {
+            analysis?: FullAnalysis;
+            error?: string;
+          };
+          if (!saveResp.ok) {
+            setPersistNotice({
+              kind: "warn",
+              text:
+                body.error ??
+                `Cloud save failed (HTTP ${saveResp.status}). Fix Supabase or .env.local and try saving again.`,
+            });
+          } else {
+            setPersistNotice({
+              kind: "ok",
+              text: "Filing saved to the database.",
+            });
+            if (body.analysis) setResult(body.analysis);
+          }
+        } catch (saveErr) {
+          console.warn("[filings/save] failed to persist PDF analysis", saveErr);
+          setPersistNotice({
+            kind: "warn",
+            text: "Could not reach the server to save. Try again when you are online and the API is reachable.",
+          });
+        }
+      } else {
+        setPersistNotice({
+          kind: "ok",
+          text: "Analysis complete. SEC filing should be on the server if Supabase is configured.",
+        });
+      }
+
+      const companyName = result.meta.companyName ?? result.meta.ticker ?? "Unknown";
+      const quarter = result.meta.periodEnd ? result.meta.periodEnd.slice(0, 7) : "";
+      const title = result.meta.source === "pdf"
+        ? `PDF Analysis — ${companyName} ${quarter}`
+        : `${companyName} ${quarter} Analysis`;
+      fetchWithAuth("/api/history", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ticker: result.meta.ticker,
-          periodEnd: result.meta.periodEnd,
-          source: "pdf",
+          ticker: result.meta.ticker ?? null,
+          companyName,
+          source: result.meta.source ?? "sec",
+          periodEnd: result.meta.periodEnd ?? null,
+          quarterLabel: quarter,
+          title,
           analysis: result,
+          events,
         }),
-      }).catch((saveErr) => {
-        console.warn("[filings/save] failed to persist PDF analysis", saveErr);
-      });
-    }
-    // Save to analysis history
-    const companyName = result.meta.companyName ?? result.meta.ticker ?? "Unknown";
-    const quarter = result.meta.periodEnd ? result.meta.periodEnd.slice(0, 7) : "";
-    const title = result.meta.source === "pdf"
-      ? `PDF Analysis — ${companyName} ${quarter}`
-      : `${companyName} ${quarter} Analysis`;
-    fetchWithAuth("/api/history", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ticker: result.meta.ticker ?? null,
-        companyName,
-        source: result.meta.source ?? "sec",
-        periodEnd: result.meta.periodEnd ?? null,
-        quarterLabel: quarter,
-        title,
-        analysis: result,
-        events,
-      }),
-    }).catch(() => {});
+      }).catch(() => {});
+    })();
   }, [phase, result, events]);
 
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
@@ -97,6 +134,8 @@ export function TenQDropAnalyzer() {
   }, []);
 
   const reset = useCallback(() => {
+    savedResultKeyRef.current = null;
+    setPersistNotice(null);
     setPhase("idle");
     setEvents([]);
     setResult(null);
@@ -109,6 +148,8 @@ export function TenQDropAnalyzer() {
   const analyzeViaSec = useCallback(async (t: string) => {
     const clean = t.trim().toUpperCase();
     if (!clean) return;
+    savedResultKeyRef.current = null;
+    setPersistNotice(null);
     setPhase("analyzing");
     setEvents([]);
     setResult(null);
@@ -161,6 +202,8 @@ export function TenQDropAnalyzer() {
   }, []);
 
   const analyzePdfFile = useCallback(async (file: File) => {
+    savedResultKeyRef.current = null;
+    setPersistNotice(null);
     setPdfFile(file);
     setShowPdf(true);
     setPhase("analyzing");
@@ -276,6 +319,18 @@ export function TenQDropAnalyzer() {
             </span>
           </div>
           <AgentWorkflow events={events} isRunning={phase === "analyzing"} horizontal />
+          {persistNotice && (
+            <div
+              className={cn(
+                "rounded-lg border px-3 py-2 text-[11px] leading-snug",
+                persistNotice.kind === "ok"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                  : "border-amber-200 bg-amber-50 text-amber-950"
+              )}
+            >
+              {persistNotice.text}
+            </div>
+          )}
         </div>
 
         {/* Resizable: PDF | Dashboard */}
@@ -335,6 +390,18 @@ export function TenQDropAnalyzer() {
       {phase === "analyzing" && (
         <div className="rounded-2xl border border-primary/20 bg-primary/[0.06] px-4 py-2 text-xs text-primary">
           Processing filing stream: ingesting source, mapping statements, and preparing dashboard blocks.
+        </div>
+      )}
+      {persistNotice && (
+        <div
+          className={cn(
+            "rounded-xl border px-4 py-2.5 text-xs leading-snug",
+            persistNotice.kind === "ok"
+              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+              : "border-amber-200 bg-amber-50 text-amber-950"
+          )}
+        >
+          {persistNotice.text}
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2 sm:gap-3">

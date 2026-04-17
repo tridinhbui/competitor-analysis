@@ -15,6 +15,7 @@ import type {
   ReconcileResult,
   ValidationCheck,
 } from "@/types/analysis";
+import { enforceAccountingIdentity } from "@/lib/financialConsistency";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -34,6 +35,32 @@ function findOrNull(items: BSItem[], ...tags: string[]): number | null {
     if (found) return found.value;
   }
   return null;
+}
+
+/** Prefer the largest consolidated revenue when PDF/AI emits duplicate revenue rows (e.g. segment + total). */
+function pickPrimaryRevenue(items: BSItem[]): number | null {
+  const tags = [
+    "Revenues",
+    "RevenueFromContractWithCustomerExcludingAssessedTax",
+    "SalesRevenueNet",
+    "SalesRevenueGoodsNet",
+  ];
+  const vals = items
+    .filter((i) => tags.includes(i.tag))
+    .map((i) => i.value)
+    .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+  if (vals.length === 0) return null;
+  return vals.reduce((a, b) => (b > a ? b : a));
+}
+
+/** Prefer the line with largest |OI| when multiple OperatingIncomeLoss rows exist (stray 0/segment vs consolidated). */
+function pickPrimaryOperatingIncome(items: BSItem[]): number | null {
+  const vals = items
+    .filter((i) => i.tag === "OperatingIncomeLoss")
+    .map((i) => i.value)
+    .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+  if (vals.length === 0) return null;
+  return vals.reduce((best, v) => (Math.abs(v) > Math.abs(best) ? v : best));
 }
 
 function ratio(a: number | null, b: number | null): number | null {
@@ -76,6 +103,23 @@ export function buildBalanceSheet(bs: BSItem[]): BalanceSheet {
       totalEquity = Math.round(liabilitiesAndEquity - totalLiabilities);
     } else if (totalAssets !== 0) {
       totalEquity = Math.round(totalAssets - totalLiabilities);
+    }
+  }
+
+  // When the L+E total line matches assets, re-derive L from (L+E) − E (fixes mis-tagged liability totals)
+  const hasBindLE = bs.some((i) => i.tag === "LiabilitiesAndStockholdersEquity");
+  if (
+    hasBindLE &&
+    totalAssets > 0 &&
+    liabilitiesAndEquity > 0 &&
+    Math.abs(liabilitiesAndEquity - totalAssets) / totalAssets < 0.03
+  ) {
+    const recomputedL = Math.round(liabilitiesAndEquity - totalEquity);
+    if (
+      Math.abs(recomputedL - totalLiabilities) / totalAssets > 0.02 ||
+      Math.abs(totalLiabilities + totalEquity - totalAssets) / totalAssets > 0.05
+    ) {
+      totalLiabilities = recomputedL;
     }
   }
 
@@ -224,39 +268,121 @@ export function buildRatios(
 // Income Statement
 // ---------------------------------------------------------------------------
 
+/** R&D lines of a few $M on multi‑billion revenue are often footnote noise — exclude from bridges. */
+function rdForOperatingBridge(
+  rd: number | null,
+  revenue: number | null
+): number {
+  if (rd == null || revenue == null) return 0;
+  const a = Math.abs(rd);
+  if (revenue > 500 && a < 15) return 0;
+  return a;
+}
+
+/** Hide clearly spurious R&D (e.g. "3" from a footnote) from the UI. */
+function rdExpenseDisplay(
+  rd: number | null,
+  revenue: number | null
+): number | null {
+  if (rd == null) return null;
+  if (revenue == null) return Math.abs(rd);
+  const a = Math.abs(rd);
+  if (revenue > 500 && a < 15) return null;
+  return a;
+}
+
 export function buildIncomeStatement(cf: BSItem[], bs: BSItem[]): IncomeStatement {
   const allItems = [...cf, ...bs];
 
-  const revenue = findOrNull(
-    cf,
-    "Revenues",
-    "RevenueFromContractWithCustomerExcludingAssessedTax",
-    "SalesRevenueNet",
-    "SalesRevenueGoodsNet"
-  );
+  const revenue = pickPrimaryRevenue(cf);
   const cogs = findOrNull(cf, "CostOfGoodsAndServicesSold", "CostOfRevenue", "CostOfGoodsSold");
   const grossProfitRaw = findOrNull(cf, "GrossProfit");
   const grossProfit = grossProfitRaw ?? (revenue != null && cogs != null ? revenue - Math.abs(cogs) : null);
   const sga = findOrNull(cf, "SellingGeneralAndAdministrativeExpense");
   const rd = findOrNull(cf, "ResearchAndDevelopmentExpense");
   const opExpenses = findOrNull(cf, "OperatingExpenses");
-  const operatingIncome = findOrNull(cf, "OperatingIncomeLoss");
-  const interestExpense = findOrNull(cf, "InterestExpense", "InterestExpenseNet");
+  let operatingIncome = pickPrimaryOperatingIncome(cf);
+  let interestExpense = findOrNull(
+    cf,
+    "InterestExpense",
+    "InterestExpenseNet",
+    "InterestExpenseDebt",
+    "InterestAndDebtExpense"
+  );
   const incomeTax = findOrNull(cf, "IncomeTaxExpenseBenefit");
   const netIncome = findOrNull(cf, "NetIncomeLoss");
   const epsBasic = findOrNull(cf, "EarningsPerShareBasic");
   const epsDiluted = findOrNull(cf, "EarningsPerShareDiluted");
 
-  const dep = findOrNull(cf, "DepreciationDepletionAndAmortization", "DepreciationAndAmortization", "Depreciation");
+  const pretax = findOrNull(
+    cf,
+    "IncomeLossFromContinuingOperationsBeforeIncomeTaxes",
+    "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+    "IncomeBeforeIncomeTaxes"
+  );
+
+  const dep = findOrNull(
+    cf,
+    "DepreciationDepletionAndAmortization",
+    "DepreciationAndAmortization",
+    "Depreciation",
+    "CostDepreciationAmortizationAndDepletion"
+  );
   const amort = findOrNull(cf, "AmortizationOfIntangibleAssets");
 
-  const ebit = operatingIncome;
-  const totalDA = dep != null ? Math.abs(dep) + (amort != null ? Math.abs(amort) : 0) : (amort != null ? Math.abs(amort) : null);
-  const ebitda = ebit != null && totalDA != null ? ebit + totalDA
-    : ebit != null && interestExpense != null ? ebit + Math.abs(interestExpense)
-    : null;
+  const rdBridge = rdForOperatingBridge(rd, revenue);
 
-  const r2 = (v: number | null) => v != null ? Math.round(v * 10) / 10 : null;
+  let sgaOut = sga != null ? Math.abs(sga) : null;
+  const oiMeaningful = operatingIncome != null && Math.abs(operatingIncome) > 1e-3;
+  if (sgaOut == null && grossProfit != null && oiMeaningful) {
+    const implied = grossProfit - operatingIncome! - rdBridge;
+    if (implied > 0 && implied < grossProfit * 1.01) {
+      sgaOut = Math.round(implied * 100) / 100;
+    }
+  }
+
+  // If OI is still missing or a stray zero while GP and SGA exist, infer OI = GP - SGA - R&D (bridge).
+  if (
+    (operatingIncome == null || Math.abs(operatingIncome) < 1e-3) &&
+    grossProfit != null &&
+    sgaOut != null
+  ) {
+    const inferredOi = grossProfit - sgaOut - rdBridge;
+    if (
+      Number.isFinite(inferredOi) &&
+      Math.abs(inferredOi) > 1 &&
+      (revenue == null || Math.abs(inferredOi) <= Math.abs(revenue) * 0.55)
+    ) {
+      operatingIncome = Math.round(inferredOi * 100) / 100;
+    }
+  }
+
+  const ebit = operatingIncome;
+  const totalDA =
+    dep != null
+      ? Math.abs(dep) + (amort != null ? Math.abs(amort) : 0)
+      : amort != null
+        ? Math.abs(amort)
+        : null;
+  // EBITDA = EBIT + D&A only (never interest)
+  let ebitda = ebit != null && totalDA != null ? ebit + totalDA : null;
+
+  if (
+    interestExpense == null &&
+    operatingIncome != null &&
+    pretax != null &&
+    revenue != null
+  ) {
+    const gap = operatingIncome - pretax;
+    if (
+      gap > 1 &&
+      gap < Math.abs(operatingIncome) * 0.35 &&
+      gap < revenue * 0.08
+    ) {
+      interestExpense = gap;
+    }
+  }
+
   const margin = (num: number | null, den: number | null) => {
     if (num == null || den == null || den === 0) return null;
     return Math.round((num / den) * 1000) / 10;
@@ -267,8 +393,8 @@ export function buildIncomeStatement(cf: BSItem[], bs: BSItem[]): IncomeStatemen
     costOfRevenue: cogs != null ? Math.abs(cogs) : null,
     grossProfit,
     grossMargin: margin(grossProfit, revenue),
-    sgaExpense: sga != null ? Math.abs(sga) : null,
-    rdExpense: rd != null ? Math.abs(rd) : null,
+    sgaExpense: sgaOut,
+    rdExpense: rdExpenseDisplay(rd, revenue),
     operatingExpenses: opExpenses != null ? Math.abs(opExpenses) : null,
     operatingIncome,
     operatingMargin: margin(operatingIncome, revenue),
@@ -306,22 +432,50 @@ export function buildRatiosFull(
 
   const ebitda = income?.ebitda ?? null;
   const operatingIncome = income?.operatingIncome ?? findOrNull(allItems, "OperatingIncomeLoss");
-  const interestExpense =
+  const revenue = income?.revenue ?? null;
+  let interestExpense =
     income?.interestExpense ??
-    findOrNull(allItems, "InterestExpense", "InterestExpenseNet");
+    findOrNull(
+      allItems,
+      "InterestExpense",
+      "InterestExpenseNet",
+      "InterestExpenseDebt",
+      "InterestAndDebtExpense"
+    );
 
-  // Fallback EBITDA if income statement couldn't derive it
-  const ebitdaFinal = ebitda ?? (cf.netIncome != null ? cf.netIncome * 1.35 : null);
+  const ebitdaFinal = ebitda;
 
   const netDebtToEbitda = ratio(debt.netDebt, ebitdaFinal);
-  const interestCoverage = ratio(operatingIncome ?? ebitdaFinal, interestExpense);
+  let interestCoverage = ratio(operatingIncome, interestExpense);
+  if (
+    interestCoverage == null &&
+    operatingIncome != null &&
+    interestExpense == null &&
+    revenue != null
+  ) {
+    const pretax = findOrNull(
+      allItems,
+      "IncomeLossFromContinuingOperationsBeforeIncomeTaxes",
+      "IncomeBeforeIncomeTaxes"
+    );
+    if (pretax != null) {
+      const implied = operatingIncome - pretax;
+      if (
+        implied > 1 &&
+        implied < Math.abs(operatingIncome) * 0.35 &&
+        implied < revenue * 0.08
+      ) {
+        interestExpense = implied;
+        interestCoverage = ratio(operatingIncome, implied);
+      }
+    }
+  }
 
   const currentAssets = findOrNull(allItems, "AssetsCurrent");
   const currentLiab = findOrNull(allItems, "LiabilitiesCurrent");
   const currentRatio = ratio(currentAssets, currentLiab);
 
   // Profitability
-  const revenue = income?.revenue ?? null;
   const grossMarginR = income?.grossMargin ?? null;
   const opMarginR = income?.operatingMargin ?? null;
   const netMarginR = income?.netMargin ?? null;
@@ -329,14 +483,20 @@ export function buildRatiosFull(
 
   // Returns
   const netIncome = cf.netIncome;
-  const roe = ratio(netIncome, bs.totalEquity);
+  let roe = ratio(netIncome, bs.totalEquity);
+  if (roe != null && (roe > 5 || roe < -5)) {
+    roe = null;
+  }
   const roa = ratio(netIncome, bs.totalAssets);
   // ROIC = NOPAT / (Equity + Debt - Cash)
   const nopat = operatingIncome != null && income?.incomeTax != null && income?.netIncome != null && operatingIncome !== 0
     ? operatingIncome * (1 - (income.incomeTax / Math.max(Math.abs(operatingIncome), 1)))
     : null;
   const investedCapital = bs.totalEquity + debt.totalDebt - bs.cashAndEquivalents;
-  const roic = ratio(nopat, investedCapital > 0 ? investedCapital : null);
+  const roic = ratio(
+    nopat,
+    investedCapital > 1e-6 ? investedCapital : null
+  );
 
   // Efficiency
   const assetTurnover = ratio(revenue, bs.totalAssets);
@@ -640,7 +800,13 @@ export function assembleAnalysis(
   meta: FullAnalysis["meta"]
 ): FullAnalysis {
   const allItems = [...bs, ...cf];
-  const balanceSheet = buildBalanceSheet(bs);
+  let balanceSheet = buildBalanceSheet(bs);
+  const identity = enforceAccountingIdentity(balanceSheet, bs);
+  balanceSheet = identity.balanceSheet;
+  const metaMerged: FullAnalysis["meta"] = { ...meta };
+  if (identity.hadLargeMismatch) {
+    metaMerged.confidence = "low";
+  }
   const debtStructure = buildDebtStructure(bs);
   const cashFlow = buildCashFlow(cf);
   const incomeStatement = buildIncomeStatement(cf, bs);
@@ -655,7 +821,7 @@ export function assembleAnalysis(
   const reconcile = buildReconcile(balanceSheet);
 
   return {
-    meta,
+    meta: metaMerged,
     balanceSheet,
     debtStructure,
     cashFlow,

@@ -49,7 +49,18 @@ function coerceMeta(u: Record<string, unknown> | undefined, key: string): string
 
 function normalizeProfile(data: Record<string, unknown>): UserProfile {
   return {
-    ...(data as unknown as UserProfile),
+    id: String(data.id ?? ""),
+    email: typeof data.email === "string" ? data.email : null,
+    full_name: typeof data.full_name === "string" ? data.full_name : null,
+    avatar_url: typeof data.avatar_url === "string" ? data.avatar_url : null,
+    provider: typeof data.provider === "string" ? data.provider : "email",
+    role:
+      data.role === "analyst" || data.role === "investor" || data.role === "founder" || data.role === "student"
+        ? data.role
+        : null,
+    timezone: typeof data.timezone === "string" ? data.timezone : null,
+    created_at: typeof data.created_at === "string" ? data.created_at : new Date(0).toISOString(),
+    updated_at: typeof data.updated_at === "string" ? data.updated_at : new Date().toISOString(),
     favorite_modules: Array.isArray(data.favorite_modules)
       ? (data.favorite_modules as string[])
       : [],

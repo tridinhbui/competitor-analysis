@@ -6,14 +6,34 @@
  */
 
 import { saveFiling } from "@/lib/filingStorage";
+import { applyDataSourceOverridesToAnalysis } from "@/lib/dataSourceOverrides";
 import {
   extractFiscalQuarterHint,
   normalizeCompanyName,
   resolveTicker,
 } from "@/lib/filingIdentity";
+import { supabase } from "@/lib/supabase";
 import type { FullAnalysis } from "@/types/analysis";
 
 export const runtime = "nodejs";
+
+async function loadDataSourceOverrides(
+  ticker: string,
+  periodEnd: string
+): Promise<Record<string, number | null>> {
+  const { data, error } = await supabase
+    .from("adjustments")
+    .select("data")
+    .eq("ticker", ticker)
+    .maybeSingle();
+
+  if (error || !data?.data) return {};
+
+  const payload = data.data as {
+    dataSourceOverrides?: Record<string, Record<string, number | null>>;
+  };
+  return payload.dataSourceOverrides?.[periodEnd] ?? {};
+}
 
 export async function POST(request: Request) {
   try {
@@ -45,7 +65,7 @@ export async function POST(request: Request) {
       analysis.meta.companyName
     );
 
-    const normalizedAnalysis: FullAnalysis = {
+    const baseAnalysis: FullAnalysis = {
       ...analysis,
       meta: {
         ...analysis.meta,
@@ -59,6 +79,21 @@ export async function POST(request: Request) {
       analysis.meta.periodEnd ||
       new Date().toISOString().split("T")[0];
     const resolvedSource = source || analysis.meta.source || "pdf";
+    const dataSourceOverrides = await loadDataSourceOverrides(
+      resolvedTicker,
+      resolvedPeriod
+    );
+    const normalizedAnalysis = applyDataSourceOverridesToAnalysis(
+      {
+        ...baseAnalysis,
+        meta: {
+          ...baseAnalysis.meta,
+          periodEnd: resolvedPeriod,
+        },
+      },
+      dataSourceOverrides,
+      "data-source-override"
+    );
 
     const filing = await saveFiling(
       resolvedTicker,
@@ -72,6 +107,8 @@ export async function POST(request: Request) {
       ok: true,
       ticker: filing.ticker,
       periodEnd: filing.periodEnd,
+      analysis: filing.analysis,
+      appliedOverrideCount: Object.keys(dataSourceOverrides).length,
     });
   } catch (e) {
     return Response.json(

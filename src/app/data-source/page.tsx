@@ -5,15 +5,26 @@ import type { DataSourceRow } from "@/types/dataSource";
 import { METRIC_COLUMNS } from "@/types/dataSource";
 import { Download, Save, Loader2, RotateCcw, Search } from "lucide-react";
 import { HistoricalBackfillPanel } from "@/components/data-source/HistoricalBackfillPanel";
+import { AnalysisCalculationsExplainer } from "@/components/data-source/AnalysisCalculationsExplainer";
 import { RequireAuth } from "@/components/auth/RequireAuth";
-
 // ---------------------------------------------------------------------------
 // Formatting
 // ---------------------------------------------------------------------------
 
+/** Stored currency fields are USD millions; show $XM or $XB when ≥ 1,000M. */
+function fmtCurrencyUsdMillions(value: number): string {
+  const sign = value < 0 ? "-" : "";
+  const abs = Math.abs(value);
+  if (abs >= 1000) {
+    const billions = abs / 1000;
+    return `${sign}$${billions.toLocaleString(undefined, { maximumFractionDigits: 3 })}B`;
+  }
+  return `${sign}$${abs.toLocaleString(undefined, { maximumFractionDigits: 1 })}M`;
+}
+
 function fmtCell(value: number | null, format: string): string {
   if (value == null) return "—";
-  if (format === "currency") return `$${value.toLocaleString(undefined, { maximumFractionDigits: 1 })}`;
+  if (format === "currency") return fmtCurrencyUsdMillions(value);
   if (format === "percent") return `${value.toFixed(1)}%`;
   if (format === "ratio") return value.toFixed(2);
   return value.toLocaleString();
@@ -171,7 +182,11 @@ export default function DataSourcePage() {
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h1 className="text-lg font-bold text-slate-900">Centralized Data Source</h1>
-          <p className="text-xs text-slate-500">{rows.length} filings from {tickers.length} companies · Double-click any cell to edit</p>
+          <p className="text-xs text-slate-500">
+            {rows.length} filings from {tickers.length} companies · Double-click any cell to edit · Dollar columns are{" "}
+            <span className="font-medium text-slate-700">USD millions ($M)</span>; totals <span className="font-medium text-slate-700">≥ $1B</span> show as{" "}
+            <span className="font-medium text-slate-700">$XB</span>
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <div className="relative">
@@ -215,7 +230,9 @@ export default function DataSourcePage() {
           <span className="ml-2 text-sm text-slate-500">Loading data source…</span>
         </div>
       ) : (
-        <div className="overflow-auto rounded-xl border border-slate-200 bg-white shadow-sm" style={{ maxHeight: "calc(100vh - 10rem)" }}>
+        <div
+          className="max-h-[38vh] overflow-y-auto overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm"
+        >
           <table className="w-full text-xs">
             <thead className="sticky top-0 z-10">
               <tr className="bg-slate-800 text-white">
@@ -268,6 +285,10 @@ export default function DataSourcePage() {
           </table>
         </div>
       )}
+
+      <div className="mt-4 space-y-4">
+        <AnalysisCalculationsExplainer />
+      </div>
     </div>
     </RequireAuth>
   );
