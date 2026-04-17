@@ -432,6 +432,7 @@ export function buildRatiosFull(
 
   const ebitda = income?.ebitda ?? null;
   const operatingIncome = income?.operatingIncome ?? findOrNull(allItems, "OperatingIncomeLoss");
+  const revenue = income?.revenue ?? null;
   let interestExpense =
     income?.interestExpense ??
     findOrNull(
@@ -475,7 +476,6 @@ export function buildRatiosFull(
   const currentRatio = ratio(currentAssets, currentLiab);
 
   // Profitability
-  const revenue = income?.revenue ?? null;
   const grossMarginR = income?.grossMargin ?? null;
   const opMarginR = income?.operatingMargin ?? null;
   const netMarginR = income?.netMargin ?? null;
