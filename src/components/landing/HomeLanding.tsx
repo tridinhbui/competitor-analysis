@@ -25,6 +25,19 @@ export function HomeLanding() {
     demoTimers.current = [];
   }, []);
 
+  useEffect(() => {
+    const sessionKey = "landing-initial-entry-seen";
+    const isInitialEntry = sessionStorage.getItem(sessionKey) !== "1";
+    if (!isInitialEntry) return;
+
+    sessionStorage.setItem(sessionKey, "1");
+    if (window.location.hash !== "#pricing") return;
+
+    const cleanUrl = `${window.location.pathname}${window.location.search}`;
+    window.history.replaceState(null, "", cleanUrl);
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, []);
+
   const resetDemo = useCallback(() => {
     clearDemoTimers();
     setDemoRunState("idle");
@@ -100,25 +113,25 @@ export function HomeLanding() {
       </section>
 
       {/* Rhythm block 2: Problem/solution + core features */}
-      <section className="mt-6 border-t border-slate-200/70 pt-4 sm:mt-8 sm:pt-6">
+      <section className="mt-6 border-t border-border/80 pt-6 sm:mt-8 sm:pt-8">
         <ProblemSolutionSection />
         <FeatureGrid />
       </section>
 
       {/* Rhythm block 3: How-it-works + monetization + trust/disclaimer */}
-      <section className="mt-2 border-t border-slate-200/70 pt-4 sm:mt-4 sm:pt-6">
+      <section className="mt-2 border-t border-border/80 pt-6 sm:mt-4 sm:pt-8">
         <HowItWorksSection />
         <PricingSection />
         <PaymentSection />
 
         <div className="mx-auto max-w-2xl px-4 py-12">
-          <div className="flex items-start gap-3 rounded-2xl border border-slate-200/80 bg-white/70 p-4 text-xs text-slate-600 shadow-subtle">
-            <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" aria-hidden />
+          <div className="flex items-start gap-3 rounded-2xl border border-border bg-white/90 p-4 text-xs text-muted-foreground shadow-subtle">
+            <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden />
             <div>
-              <p className="font-semibold text-slate-800">Built for real filings</p>
+              <p className="font-semibold text-foreground">Built for real operations</p>
               <p className="mt-1 leading-relaxed">
-                The strip at the top is <span className="font-medium text-slate-800">demo-only</span>. SEC calls use a proper User-Agent on the server; PDFs
-                parse in the browser on the Analyze page.
+                This front-end theme is tuned for a Smithfield-style corporate narrative with clear hierarchy, clean
+                spacing, and production-ready interactions.
               </p>
             </div>
           </div>

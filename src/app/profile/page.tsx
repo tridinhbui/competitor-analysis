@@ -224,7 +224,7 @@ export default function ProfilePage() {
       setSaveError(err);
     } else {
       setSaveStatus("success");
-      setTimeout(() => setSaveStatus("idle"), 3000);
+      router.replace("/analyze");
     }
   };
 

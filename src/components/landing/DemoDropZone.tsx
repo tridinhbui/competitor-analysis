@@ -49,7 +49,7 @@ export function DemoDropZone({
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,280px)] lg:items-stretch">
         <motion.div
           layout
-          className="relative overflow-hidden rounded-3xl border border-slate-200/90 bg-white/70 shadow-elevation backdrop-blur-sm"
+          className="relative overflow-hidden rounded-3xl border border-border bg-white/85 shadow-elevation backdrop-blur-sm"
         >
           <div
             role="button"
@@ -67,7 +67,7 @@ export function DemoDropZone({
             className={cn(
               "relative cursor-pointer p-8 transition-all duration-300 sm:p-10",
               dragOver && "bg-primary/[0.04]",
-              demoRunState === "running" && "bg-slate-50/80"
+              demoRunState === "running" && "bg-secondary/85"
             )}
             aria-label={demoOnly ? "Interactive demo: simulate 10-Q extraction" : "Upload a 10-Q PDF for analysis"}
           >
@@ -84,20 +84,20 @@ export function DemoDropZone({
                   <div
                     className={cn(
                       "mb-4 flex h-14 w-14 items-center justify-center rounded-2xl transition-all duration-300 sm:h-16 sm:w-16",
-                      "bg-gradient-to-br from-slate-100 to-slate-50 text-slate-500 ring-1 ring-slate-200/80"
+                      "bg-gradient-to-br from-secondary to-white text-muted-foreground ring-1 ring-border"
                     )}
                   >
                     <FileUp className="h-7 w-7 sm:h-8 sm:w-8" aria-hidden />
                   </div>
-                  <p className="text-base font-bold text-slate-900 sm:text-lg">
+                  <p className="text-base font-bold text-foreground sm:text-lg">
                     {demoOnly ? "See how a 10-Q flows through extraction" : "Drop your 10-Q PDF here"}
                   </p>
-                  <p className="mt-2 max-w-sm text-xs leading-relaxed text-slate-500 sm:text-sm">
+                  <p className="mt-2 max-w-sm text-xs leading-relaxed text-muted-foreground sm:text-sm">
                     {demoOnly
                       ? "Simulated pipeline for this page only. Upload real filings on Analyze."
                       : "Live analysis runs in the app—this zone accepts your filing and opens the extraction pipeline."}
                   </p>
-                  <span className="mt-5 inline-flex rounded-full bg-slate-100 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  <span className="mt-5 inline-flex rounded-full bg-secondary px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                     {demoOnly ? "Or click to run demo" : "Or click to browse"}
                   </span>
                 </motion.div>
@@ -113,19 +113,19 @@ export function DemoDropZone({
                   <div
                     className={cn(
                       "mb-4 flex h-14 w-14 items-center justify-center rounded-2xl transition-all duration-300 sm:h-16 sm:w-16",
-                      dropActive ? "bg-primary/15 text-primary ring-2 ring-primary/25" : "bg-slate-100 text-slate-500"
+                      dropActive ? "bg-primary/15 text-primary ring-2 ring-primary/25" : "bg-secondary text-muted-foreground"
                     )}
                   >
                     <FileUp className="h-7 w-7 sm:h-8 sm:w-8" aria-hidden />
                   </div>
                   {demoFileLabel ? (
-                    <p className="text-sm font-semibold text-slate-900 sm:text-base">{demoFileLabel}</p>
+                    <p className="text-sm font-semibold text-foreground sm:text-base">{demoFileLabel}</p>
                   ) : (
-                    <p className="text-sm font-semibold text-slate-900 sm:text-base">
+                    <p className="text-sm font-semibold text-foreground sm:text-base">
                       {demoOnly ? "Release to simulate" : "Release to analyze"}
                     </p>
                   )}
-                  <p className="mt-2 text-xs text-slate-500">
+                  <p className="mt-2 text-xs text-muted-foreground">
                     {demoRunState === "running"
                       ? demoOnly
                         ? "Demo only — same stages run on real uploads in Analyze."
@@ -141,7 +141,7 @@ export function DemoDropZone({
                         e.stopPropagation();
                         onResetDemo();
                       }}
-                      className="mt-5 inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 shadow-subtle transition hover:bg-slate-50"
+                      className="mt-5 inline-flex items-center gap-1.5 rounded-full border border-border bg-white px-4 py-2 text-xs font-semibold text-foreground shadow-subtle transition hover:bg-secondary"
                     >
                       <RotateCcw className="h-3.5 w-3.5" aria-hidden />
                       Reset demo
@@ -153,7 +153,7 @@ export function DemoDropZone({
 
             {demoRunState === "running" && (
               <div
-                className="pointer-events-none absolute inset-x-0 bottom-0 h-1 overflow-hidden bg-slate-100"
+                className="pointer-events-none absolute inset-x-0 bottom-0 h-1 overflow-hidden bg-secondary"
                 aria-hidden
               >
                 <motion.div
@@ -194,17 +194,17 @@ export function DemoDropZone({
         <div className="flex flex-col gap-4">
           <div
             className={cn(
-              "rounded-3xl border border-slate-200/90 bg-white/80 p-5 shadow-subtle backdrop-blur-sm transition-opacity duration-300",
+              "rounded-3xl border border-border bg-white/90 p-5 shadow-subtle backdrop-blur-sm transition-opacity duration-300",
               !showTimeline && "opacity-60"
             )}
           >
-            <p className="mb-4 text-[11px] font-bold uppercase tracking-wide text-slate-500">Extraction timeline</p>
+            <p className="mb-4 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Extraction timeline</p>
             {showTimeline ? (
               <ExtractionTimeline activeIndex={demoTimelineIndex} />
             ) : (
               <div className="space-y-3" aria-hidden>
                 {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="h-9 animate-pulse rounded-lg bg-slate-100/90" style={{ animationDelay: `${i * 100}ms` }} />
+                  <div key={i} className="h-9 animate-pulse rounded-lg bg-secondary/90" style={{ animationDelay: `${i * 100}ms` }} />
                 ))}
               </div>
             )}

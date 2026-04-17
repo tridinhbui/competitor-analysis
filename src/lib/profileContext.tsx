@@ -49,7 +49,7 @@ function coerceMeta(u: Record<string, unknown> | undefined, key: string): string
 
 function normalizeProfile(data: Record<string, unknown>): UserProfile {
   return {
-    ...(data as UserProfile),
+    ...(data as unknown as UserProfile),
     favorite_modules: Array.isArray(data.favorite_modules)
       ? (data.favorite_modules as string[])
       : [],
