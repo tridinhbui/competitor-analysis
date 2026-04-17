@@ -1,7 +1,8 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import type { TimelineSlot } from "@/types/competitor";
-import { Upload, RefreshCw } from "lucide-react";
+import { Upload, RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
 
 interface Props {
   slots: TimelineSlot[];
@@ -12,18 +13,34 @@ interface Props {
 export function QuarterTimeline({ slots, onSelectSlot, activeSlotLabel }: Props) {
   const years = [...new Set(slots.map((slot) => slot.fiscalYear))].sort((a, b) => b - a);
   const visibleYears = years;
+  const [isOpen, setIsOpen] = useState(true);
+  const [collapsedYears, setCollapsedYears] = useState<Record<number, boolean>>({});
+
+  const yearStats = useMemo(() => {
+    const total = slots.length;
+    const complete = slots.filter((slot) => slot.present).length;
+    return { total, complete };
+  }, [slots]);
 
   if (slots.length === 0) return null;
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-subtle">
-      <div className="mb-3 flex items-end justify-between gap-3">
-        <div>
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Quarter Coverage
-          </h4>
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <button
+            type="button"
+            onClick={() => setIsOpen((current) => !current)}
+            className="flex items-center gap-1 text-left"
+          >
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Quarter Coverage</h4>
+            {isOpen ? <ChevronUp className="h-3.5 w-3.5 text-slate-400" /> : <ChevronDown className="h-3.5 w-3.5 text-slate-400" />}
+          </button>
           <p className="mt-1 text-[11px] text-slate-400">
             Upload quarter-by-quarter. The selected slot determines the saved period.
+          </p>
+          <p className="mt-1 text-[10px] text-slate-400">
+            {yearStats.complete}/{yearStats.total} complete
           </p>
         </div>
         <div className="hidden items-center gap-3 text-[10px] text-slate-400 sm:flex">
@@ -37,11 +54,12 @@ export function QuarterTimeline({ slots, onSelectSlot, activeSlotLabel }: Props)
           </span>
         </div>
       </div>
-      <div className="space-y-3">
+      {isOpen ? <div className="space-y-3">
         {visibleYears.map((year) => {
           const yearSlots = slots
             .filter((slot) => slot.fiscalYear === year)
             .sort((a, b) => a.fiscalQuarter - b.fiscalQuarter);
+          const isYearCollapsed = collapsedYears[year] ?? false;
 
           return (
             <div
@@ -50,7 +68,23 @@ export function QuarterTimeline({ slots, onSelectSlot, activeSlotLabel }: Props)
             >
               <div className="mb-2 flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-bold text-slate-900">{year}</p>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCollapsedYears((current) => ({
+                        ...current,
+                        [year]: !(current[year] ?? false),
+                      }))
+                    }
+                    className="flex items-center gap-1"
+                  >
+                    <p className="text-sm font-bold text-slate-900">{year}</p>
+                    {isYearCollapsed ? (
+                      <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
+                    ) : (
+                      <ChevronUp className="h-3.5 w-3.5 text-slate-400" />
+                    )}
+                  </button>
                   <p className="text-[10px] uppercase tracking-wide text-slate-400">
                     Quarterly upload slots
                   </p>
@@ -60,7 +94,7 @@ export function QuarterTimeline({ slots, onSelectSlot, activeSlotLabel }: Props)
                 </div>
               </div>
 
-              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              {isYearCollapsed ? null : <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                 {yearSlots.map((slot) => (
                   <div
                     key={slot.label}
@@ -113,12 +147,12 @@ export function QuarterTimeline({ slots, onSelectSlot, activeSlotLabel }: Props)
                     ) : null}
                   </div>
                 ))}
-              </div>
+              </div>}
             </div>
           );
         })}
-      </div>
-      <div className="mt-2 flex items-center gap-3 text-[10px] text-slate-400">
+      </div> : null}
+      {isOpen ? <div className="mt-2 flex items-center gap-3 text-[10px] text-slate-400">
         <span className="flex items-center gap-1">
           <span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-100 ring-1 ring-emerald-200" />
           On file
@@ -127,7 +161,7 @@ export function QuarterTimeline({ slots, onSelectSlot, activeSlotLabel }: Props)
           <span className="inline-block h-2.5 w-2.5 rounded-sm bg-slate-50 ring-1 ring-slate-100" />
           Missing
         </span>
-      </div>
+      </div> : null}
     </div>
   );
 }

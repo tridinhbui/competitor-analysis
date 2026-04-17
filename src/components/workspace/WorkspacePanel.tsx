@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, type ReactNode } from "react";
 import type {
   WorkspaceReadiness,
   PeerType,
@@ -16,7 +16,6 @@ import {
   Users,
   CheckCircle2,
   XCircle,
-  ChevronDown,
   ChevronRight,
   Loader2,
   AlertTriangle,
@@ -50,7 +49,7 @@ function ModuleRow({ m }: { m: ModuleReadiness }) {
     <div className="border-b border-slate-100 last:border-0">
       <button
         onClick={() => !m.ready && m.reasons.length > 0 && setOpen(!open)}
-        className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm transition hover:bg-slate-50"
+        className="workspace-interactive flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-slate-50"
       >
         {m.ready ? (
           <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
@@ -66,11 +65,11 @@ function ModuleRow({ m }: { m: ModuleReadiness }) {
         </span>
         {!m.ready && m.reasons.length > 0 && (
           <span className="ml-auto">
-            {open ? (
-              <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
-            ) : (
-              <ChevronRight className="h-3.5 w-3.5 text-slate-400" />
-            )}
+            <ChevronRight
+              className={`h-3.5 w-3.5 text-slate-400 transition-transform duration-200 ${
+                open ? "rotate-90" : "rotate-0"
+              }`}
+            />
           </span>
         )}
         {m.ready && (
@@ -79,8 +78,13 @@ function ModuleRow({ m }: { m: ModuleReadiness }) {
           </span>
         )}
       </button>
-      {open && m.reasons.length > 0 && (
-        <div className="px-3 pb-2.5 pl-9">
+      <div
+        className={`grid transition-all duration-300 ease-out ${
+          open && m.reasons.length > 0 ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+        }`}
+      >
+        <div className="overflow-hidden">
+          <div className="px-3 pb-2.5 pl-9">
           <ul className="space-y-1">
             {m.reasons.map((r, i) => (
               <li key={i} className="flex items-start gap-1.5 text-xs text-slate-500">
@@ -89,8 +93,52 @@ function ModuleRow({ m }: { m: ModuleReadiness }) {
               </li>
             ))}
           </ul>
+          </div>
         </div>
-      )}
+      </div>
+    </div>
+  );
+}
+
+function CollapsiblePanel({
+  title,
+  summary,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  summary?: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="workspace-interactive workspace-card-hover workspace-section-enter rounded-xl border border-slate-200 bg-white shadow-subtle">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between px-4 py-3 text-left"
+      >
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</p>
+          {summary ? <p className="mt-1 text-[11px] text-slate-400">{summary}</p> : null}
+        </div>
+        <ChevronRight
+          className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${
+            open ? "rotate-90" : "rotate-0"
+          }`}
+        />
+      </button>
+      <div
+        className={`grid transition-all duration-300 ease-out ${
+          open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+        }`}
+      >
+        <div className="overflow-hidden">
+          <div className="border-t border-slate-100 px-4 py-3">{children}</div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -186,6 +234,13 @@ export function WorkspacePanel({ ticker }: Props) {
   const [autoOpenPicker, setAutoOpenPicker] = useState(false);
   const [resettingUploads, setResettingUploads] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [openBlocks, setOpenBlocks] = useState({
+    setup: false,
+    quarterCoverage: true,
+    quarterHistory: false,
+    peerCoverage: false,
+    analysisModules: true,
+  });
   const appendFlowRef = useRef<HTMLDivElement | null>(null);
 
   const fetchReadiness = useCallback(async (t: string) => {
@@ -216,6 +271,13 @@ export function WorkspacePanel({ ticker }: Props) {
     setActiveSlot(null);
     setAutoOpenPicker(false);
     setActionError(null);
+    setOpenBlocks({
+      setup: false,
+      quarterCoverage: true,
+      quarterHistory: false,
+      peerCoverage: false,
+      analysisModules: true,
+    });
   }, [ticker]);
 
   useEffect(() => {
@@ -320,7 +382,7 @@ export function WorkspacePanel({ ticker }: Props) {
   return (
     <div className="space-y-4">
       {/* Header card */}
-      <div className="rounded-xl border border-slate-200 bg-white shadow-subtle">
+      <div className="workspace-card-hover workspace-section-enter workspace-stagger-1 rounded-xl border border-slate-200 bg-white shadow-subtle">
         <div className="flex items-start justify-between border-b border-slate-100 px-4 py-3">
           <div>
             <h3 className="text-base font-bold text-slate-900">
@@ -335,7 +397,7 @@ export function WorkspacePanel({ ticker }: Props) {
                 setActiveSlot(firstMissing);
                 setAutoOpenPicker(false);
               }}
-              className="inline-flex items-center gap-1 rounded-md bg-primary px-2.5 py-1.5 text-[11px] font-semibold text-white shadow-subtle transition hover:opacity-90"
+              className="workspace-interactive workspace-press inline-flex items-center gap-1 rounded-md bg-primary px-2.5 py-1.5 text-[11px] font-semibold text-white shadow-subtle hover:opacity-90"
             >
               <Plus className="h-3.5 w-3.5" />
               Upload Quarter
@@ -344,7 +406,7 @@ export function WorkspacePanel({ ticker }: Props) {
               type="button"
               onClick={handleResetUploads}
               disabled={resettingUploads}
-              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              className="workspace-interactive workspace-press inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
               title="Clear workspace upload history for this company only"
             >
               {resettingUploads ? (
@@ -356,7 +418,7 @@ export function WorkspacePanel({ ticker }: Props) {
             </button>
             <button
               onClick={() => fetchReadiness(company.ticker)}
-              className="rounded-md p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+              className="workspace-interactive workspace-press rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
               title="Refresh"
             >
               <RefreshCw className="h-4 w-4" />
@@ -398,7 +460,7 @@ export function WorkspacePanel({ ticker }: Props) {
       </div>
 
       {/* Peer type selector */}
-      <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-subtle">
+      <div className="workspace-card-hover workspace-section-enter workspace-stagger-2 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-subtle">
         <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">
           Peer Type
         </label>
@@ -416,13 +478,20 @@ export function WorkspacePanel({ ticker }: Props) {
         </select>
       </div>
 
-      <ComparisonSetup company={company} peerCoverage={peerCoverage} />
+      <CollapsiblePanel
+        title="Comparison Setup"
+        summary={`${peerCoverage.length + 1} companies linked`}
+        open={openBlocks.setup}
+        onToggle={() => setOpenBlocks((prev) => ({ ...prev, setup: !prev.setup }))}
+      >
+        <ComparisonSetup company={company} peerCoverage={peerCoverage} />
+      </CollapsiblePanel>
 
       {/* Append flow */}
       {activeSlot && (
         <div
           ref={appendFlowRef}
-          className="rounded-xl border border-primary/20 bg-primary/[0.02] p-4"
+          className="workspace-card-hover workspace-section-enter workspace-stagger-3 rounded-xl border border-primary/20 bg-primary/[0.02] p-4"
         >
           <QuarterAppendFlow
             key={`${company.ticker}-${activeSlot.label}`}
@@ -445,23 +514,32 @@ export function WorkspacePanel({ ticker }: Props) {
 
       {/* Quarter coverage timeline */}
       {readiness.timeline && readiness.timeline.length > 0 && (
-        <QuarterTimeline
-          key={company.ticker}
-          slots={readiness.timeline}
-          onSelectSlot={(slot) => {
-            setActiveSlot(slot);
-            setAutoOpenPicker(true);
-          }}
-          activeSlotLabel={activeSlot?.label ?? null}
-        />
+        <CollapsiblePanel
+          title="Quarter Coverage"
+          summary={`${readiness.timeline.filter((slot) => slot.present).length}/${readiness.timeline.length} complete`}
+          open={openBlocks.quarterCoverage}
+          onToggle={() => setOpenBlocks((prev) => ({ ...prev, quarterCoverage: !prev.quarterCoverage }))}
+        >
+          <QuarterTimeline
+            key={company.ticker}
+            slots={readiness.timeline}
+            onSelectSlot={(slot) => {
+              setActiveSlot(slot);
+              setAutoOpenPicker(true);
+            }}
+            activeSlotLabel={activeSlot?.label ?? null}
+          />
+        </CollapsiblePanel>
       )}
 
       {/* Quarter history (period-end dates) */}
       {quartersOnFile.length > 0 && (
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-subtle">
-          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Quarters on File
-          </h4>
+        <CollapsiblePanel
+          title="Quarters on File"
+          summary={`${quartersOnFile.length} quarter-end dates`}
+          open={openBlocks.quarterHistory}
+          onToggle={() => setOpenBlocks((prev) => ({ ...prev, quarterHistory: !prev.quarterHistory }))}
+        >
           <div className="flex flex-wrap gap-1.5">
             {quartersOnFile.map((q) => (
               <span
@@ -472,15 +550,17 @@ export function WorkspacePanel({ ticker }: Props) {
               </span>
             ))}
           </div>
-        </div>
+        </CollapsiblePanel>
       )}
 
       {/* Peer coverage */}
       {peerCoverage.length > 0 && (
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-subtle">
-          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Peer Coverage
-          </h4>
+        <CollapsiblePanel
+          title="Peer Coverage"
+          summary={`${peerCoverage.length} peers`}
+          open={openBlocks.peerCoverage}
+          onToggle={() => setOpenBlocks((prev) => ({ ...prev, peerCoverage: !prev.peerCoverage }))}
+        >
           <div className="space-y-1.5">
             {peerCoverage.map((p) => (
               <div
@@ -507,31 +587,22 @@ export function WorkspacePanel({ ticker }: Props) {
               </div>
             ))}
           </div>
-        </div>
+        </CollapsiblePanel>
       )}
 
       {/* Analysis modules */}
-      <div className="rounded-xl border border-slate-200 bg-white shadow-subtle">
-        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Analysis Modules
-          </h4>
-          <span
-            className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
-              canBeginAnalysis
-                ? "bg-emerald-50 text-emerald-700"
-                : "bg-slate-100 text-slate-500"
-            }`}
-          >
-            {readyCount}/{modules.length} ready
-          </span>
-        </div>
-        <div>
+      <CollapsiblePanel
+        title="Analysis Modules"
+        summary={`${readyCount}/${modules.length} ready`}
+        open={openBlocks.analysisModules}
+        onToggle={() => setOpenBlocks((prev) => ({ ...prev, analysisModules: !prev.analysisModules }))}
+      >
+        <div className="rounded-lg border border-slate-100">
           {modules.map((m) => (
             <ModuleRow key={m.moduleId} m={m} />
           ))}
         </div>
-      </div>
+      </CollapsiblePanel>
     </div>
   );
 }

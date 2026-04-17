@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, type ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import {
   ResponsiveContainer,
   BarChart,
@@ -19,6 +19,9 @@ import {
   AlertTriangle,
   ChevronRight,
   Database,
+  ChevronDown,
+  ChevronUp,
+  Eye,
   Presentation,
   RotateCcw,
 } from "lucide-react";
@@ -33,6 +36,7 @@ import type {
 } from "@/lib/companyComparison";
 
 export type CompareTab = "overview" | "margin-gaps" | "financials" | "trends";
+type ViewMode = "summary" | "detailed";
 
 const SECTION_ORDER: ComparisonSection[] = [
   "Context",
@@ -86,6 +90,11 @@ function fmtDiff(row: ComparisonRow): string {
   if (row.format === "multiple") return `${sign}${row.difference.toFixed(2)}x`;
   if (row.format === "number") return `${sign}${row.difference.toFixed(2)}`;
   return "N/A";
+}
+
+function metricDiffByKey(rows: ComparisonRow[], key: string): string {
+  const match = rows.find((row) => row.key === key);
+  return match ? fmtDiff(match) : "N/A";
 }
 
 type AdaptiveScale = {
@@ -179,6 +188,48 @@ function Card({
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</p>
       {sub ? <p className="mb-3 mt-0.5 text-[11px] text-slate-400">{sub}</p> : <div className="mb-3" />}
       {children}
+    </div>
+  );
+}
+
+function ModuleCard({
+  id,
+  title,
+  sub,
+  open,
+  onToggle,
+  children,
+}: {
+  id: string;
+  title: string;
+  sub?: string;
+  open: boolean;
+  onToggle: (id: string) => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white shadow-subtle">
+      <button
+        type="button"
+        onClick={() => onToggle(id)}
+        className="flex w-full items-center justify-between px-4 py-3 text-left"
+      >
+        <div>
+          <p className="text-sm font-semibold text-slate-900">{title}</p>
+          {sub ? <p className="mt-0.5 text-xs text-slate-400">{sub}</p> : null}
+        </div>
+        {open ? <ChevronUp className="h-4 w-4 text-slate-500" /> : <ChevronDown className="h-4 w-4 text-slate-500" />}
+      </button>
+      {open ? <div className="border-t border-slate-100 p-4">{children}</div> : null}
+    </div>
+  );
+}
+
+function TopMetricCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-1 text-sm font-bold text-slate-900">{value}</p>
     </div>
   );
 }
@@ -402,10 +453,18 @@ function TrendCard({
 function FinancialsTable({
   rowsBySection,
   result,
+  condensed = false,
 }: {
   rowsBySection: Map<ComparisonSection, ComparisonRow[]>;
   result: CompanyComparisonPayload;
+  condensed?: boolean;
 }) {
+  const previewLimits: Partial<Record<ComparisonSection, number>> = {
+    Context: 3,
+    "Income Statement": 6,
+    "Cash Flow": 4,
+    "Balance Sheet / Capital Structure": 4,
+  };
   return (
     <div className="comparison-card overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-subtle">
       <table className="min-w-full text-xs">
@@ -423,6 +482,7 @@ function FinancialsTable({
         <tbody>
           {SECTION_ORDER.map((section) => {
             const rows = rowsBySection.get(section) ?? [];
+            const displayRows = condensed ? rows.slice(0, previewLimits[section] ?? 4) : rows;
             return (
               <Fragment key={section}>
                 <tr>
@@ -433,7 +493,7 @@ function FinancialsTable({
                     {section}
                   </td>
                 </tr>
-                {rows.map((row) => (
+                {displayRows.map((row) => (
                   <tr key={row.key} className="border-b border-slate-100">
                     <td className="px-3 py-2 text-slate-700">{row.label}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-slate-900">
@@ -470,6 +530,13 @@ function FinancialsTable({
                     </td>
                   </tr>
                 ))}
+                {condensed && rows.length > displayRows.length ? (
+                  <tr className="border-b border-slate-100">
+                    <td colSpan={5} className="px-3 py-2 text-center text-[11px] text-slate-400">
+                      + {rows.length - displayRows.length} more rows in {section}
+                    </td>
+                  </tr>
+                ) : null}
               </Fragment>
             );
           })}
@@ -688,11 +755,19 @@ function MultiTrendCard({
 function MultiFinancialsTable({
   rowsBySection,
   tickers,
+  condensed = false,
 }: {
   rowsBySection: Map<ComparisonSection, MultiComparisonRow[]>;
   tickers: string[];
+  condensed?: boolean;
 }) {
   const colCount = tickers.length + 2;
+  const previewLimits: Partial<Record<ComparisonSection, number>> = {
+    Context: 3,
+    "Income Statement": 6,
+    "Cash Flow": 4,
+    "Balance Sheet / Capital Structure": 4,
+  };
 
   return (
     <div className="comparison-card overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-subtle">
@@ -715,6 +790,7 @@ function MultiFinancialsTable({
         <tbody>
           {SECTION_ORDER.map((section) => {
             const rows = rowsBySection.get(section) ?? [];
+            const displayRows = condensed ? rows.slice(0, previewLimits[section] ?? 4) : rows;
             return (
               <Fragment key={section}>
                 <tr>
@@ -725,7 +801,7 @@ function MultiFinancialsTable({
                     {section}
                   </td>
                 </tr>
-                {rows.map((row) => (
+                {displayRows.map((row) => (
                   <tr key={row.key} className="border-b border-slate-100">
                     <td className="sticky left-0 z-10 bg-white px-3 py-2 text-slate-700">{row.label}</td>
                     {tickers.map((ticker, colIndex) => (
@@ -745,6 +821,13 @@ function MultiFinancialsTable({
                     </td>
                   </tr>
                 ))}
+                {condensed && rows.length > displayRows.length ? (
+                  <tr className="border-b border-slate-100">
+                    <td colSpan={colCount} className="px-3 py-2 text-center text-[11px] text-slate-400">
+                      + {rows.length - displayRows.length} more rows in {section}
+                    </td>
+                  </tr>
+                ) : null}
               </Fragment>
             );
           })}
@@ -840,6 +923,47 @@ export function ComparisonReportContent({
     month: "short",
     day: "numeric",
   });
+  const [viewMode, setViewMode] = useState<ViewMode>("summary");
+  const [openModules, setOpenModules] = useState<string[]>([
+    "performance",
+    "profitability",
+    "financials",
+    "comparison",
+  ]);
+  const [showFullFinancialTable, setShowFullFinancialTable] = useState(false);
+
+  const toggleModule = (id: string) => {
+    setOpenModules((current) => {
+      if (current.includes(id)) return current.filter((item) => item !== id);
+      return [...current, id];
+    });
+  };
+
+  const summaryMetrics = useMemo(() => {
+    if (isMulti && result.multiCompanies?.length) {
+      return [
+        { label: "Companies", value: `${result.multiCompanies.length}` },
+        { label: "Benchmark", value: result.multiCompanies[0]?.ticker ?? "N/A" },
+        { label: "Top Revenue", value: fmt("currency", Math.max(...result.multiCompanies.map((c) => c.metrics.revenue ?? 0))) },
+        {
+          label: "Top Op Margin",
+          value: fmt(
+            "percent",
+            Math.max(...result.multiCompanies.map((c) => c.metrics.operatingMargin ?? Number.NEGATIVE_INFINITY))
+          ),
+        },
+        { label: "Generated", value: generatedLabel },
+      ];
+    }
+
+    return [
+      { label: "Revenue Gap", value: metricDiffByKey(result.rows, "revenue") },
+      { label: "Operating Margin Gap", value: metricDiffByKey(result.rows, "operatingMarginPct") },
+      { label: "Net Income Gap", value: metricDiffByKey(result.rows, "netIncome") },
+      { label: "FCF Gap", value: metricDiffByKey(result.rows, "freeCashFlow") },
+      { label: "Generated", value: generatedLabel },
+    ];
+  }, [generatedLabel, isMulti, result]);
 
   const showOverview = printMode || activeTab === "overview";
   const showMarginGaps = printMode || activeTab === "margin-gaps";
@@ -943,7 +1067,74 @@ export function ComparisonReportContent({
         )}
       </div>
 
-      {result.warnings.length > 0 ? (
+      {!printMode && showOverview ? (
+        <section className="space-y-4">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-subtle">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="space-y-1">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Company comparison</p>
+                <p className="text-lg font-bold text-slate-900">
+                  {isMulti && result.multiCompanies
+                    ? `${result.multiCompanies.map((c) => c.ticker).join(" vs ")}`
+                    : `${tA} vs ${tB}`}
+                </p>
+                <p className="text-xs text-slate-500">
+                  Time range: {isMulti && result.multiCompanies ? "Latest available quarter per company" : result.companyA.quarterLabel}
+                </p>
+              </div>
+              <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("summary")}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
+                    viewMode === "summary" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
+                  }`}
+                >
+                  Summary mode
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("detailed")}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
+                    viewMode === "detailed" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
+                  }`}
+                >
+                  Detailed mode
+                </button>
+              </div>
+            </div>
+            <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+              {summaryMetrics.map((item) => (
+                <TopMetricCard key={item.label} label={item.label} value={item.value} />
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-subtle">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">AI Executive Summary</p>
+                <p className="text-xs text-slate-500">Bullet insights first, deeper narrative optional</p>
+              </div>
+            </div>
+            <ul className="mt-3 list-disc space-y-1.5 pl-5">
+              {n.executiveSummary.slice(0, 4).map((item, index) => (
+                <li key={`${item}-${index}`} className="text-xs leading-relaxed text-slate-700">
+                  {item}
+                </li>
+              ))}
+            </ul>
+            <details className="mt-3">
+              <summary className="cursor-pointer text-xs font-semibold text-slate-600">Expand full executive narrative</summary>
+              <div className="mt-2">
+                <PlainBullets items={n.executiveSummary} />
+              </div>
+            </details>
+          </div>
+        </section>
+      ) : null}
+
+      {result.warnings.length > 0 && showOverview ? (
         <div className="comparison-card rounded-xl border border-amber-200 bg-amber-50 p-3">
           <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-800">Warnings</p>
           <ul className="space-y-1 text-xs text-amber-800">
@@ -958,12 +1149,15 @@ export function ComparisonReportContent({
       ) : null}
 
       {showOverview ? (
+        printMode ? (
         <section className="comparison-report-section space-y-4">
           {printMode ? <PrintSectionTitle title="Overview" /> : null}
 
-          <Card title="Executive Summary" sub="[Insight] -> [Cause] -> [Implication]">
-            <PlainBullets items={n.executiveSummary} />
-          </Card>
+          {printMode ? (
+            <Card title="Executive Summary" sub="[Insight] -> [Cause] -> [Implication]">
+              <PlainBullets items={n.executiveSummary} />
+            </Card>
+          ) : null}
 
           <Card title="True Performance Diagnosis" sub="Reported vs adjusted - separating real from accounting-driven performance">
             <ArrowBullets items={n.truePerformanceDiagnosis} accent />
@@ -1069,9 +1263,94 @@ export function ComparisonReportContent({
             </Card>
           ) : null}
         </section>
+        ) : (
+          <ModuleCard
+            id="performance"
+            title="Performance"
+            sub="Core signals and strategic interpretation"
+            open={openModules.includes("performance")}
+            onToggle={toggleModule}
+          >
+            <section className="comparison-report-section space-y-4">
+              <Card title="True Performance Diagnosis" sub="Reported vs adjusted - separating real from accounting-driven performance">
+                <ArrowBullets items={viewMode === "summary" ? n.truePerformanceDiagnosis.slice(0, 3) : n.truePerformanceDiagnosis} accent />
+                {!isMulti &&
+                viewMode === "detailed" &&
+                (result.methodologyComparison.companyAVariants.length > 0 ||
+                  result.methodologyComparison.companyBVariants.length > 0) ? (
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    {[
+                      { ticker: tA, variants: result.methodologyComparison.companyAVariants },
+                      { ticker: tB, variants: result.methodologyComparison.companyBVariants },
+                    ].map(({ ticker, variants }) =>
+                      variants.length > 0 ? (
+                        <div key={ticker} className="rounded-lg border border-slate-200 bg-slate-50/60 p-3 text-xs">
+                          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">{ticker} Variants</p>
+                          {variants.map((variant) => (
+                            <div key={variant.label} className="mb-1">
+                              <span className="font-medium text-slate-800">{variant.label}</span>
+                              <span className="ml-1 text-slate-500">
+                                Corp alloc: {variant.corporateAllocation != null ? `$${Math.abs(variant.corporateAllocation).toFixed(0)}M` : "N/A"} | % Rev:{" "}
+                                {variant.corporateAsPercentOfRevenue != null ? `${variant.corporateAsPercentOfRevenue.toFixed(1)}%` : "N/A"} | Amort:{" "}
+                                {variant.amortizationExpense != null ? `$${Math.abs(variant.amortizationExpense).toFixed(0)}M` : "N/A"}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null
+                    )}
+                  </div>
+                ) : null}
+              </Card>
+              <Card title="Investment Interpretation" sub="Outperformance signal | Hidden risk | Misleading metric warnings | FCF signal">
+                <div className="space-y-2">
+                  {(viewMode === "summary" ? n.investmentInterpretation.slice(0, 2) : n.investmentInterpretation).map((item, index) => (
+                    <div key={`${index}-${item}`} className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+                      <span className="mt-0.5 rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+                        {index === 0 ? "Lead" : index === 1 ? "Risk" : "Signal"}
+                      </span>
+                      <p className="text-xs leading-relaxed text-slate-700">{item}</p>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+              {viewMode === "detailed" && !isMulti && result.relativePerformance.length > 0 ? (
+                <Card title="Historical Outperformance" sub="Outperformance count over overlapping quarters">
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50">
+                          <th className="px-3 py-2 text-left font-semibold text-slate-600">Metric</th>
+                          <th className="px-3 py-2 text-right font-semibold text-slate-600">
+                            <span className="rounded bg-primary/10 px-1.5 py-0.5 text-primary">{tA}</span> Outperformance
+                          </th>
+                          <th className="px-3 py-2 text-right font-semibold text-slate-600">{tB} Outperformance</th>
+                          <th className="px-3 py-2 text-right font-semibold text-slate-600">Ties</th>
+                          <th className="px-3 py-2 text-right font-semibold text-slate-600">Qtrs</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {result.relativePerformance.map((row) => (
+                          <tr key={row.metric} className="border-b border-slate-100">
+                            <td className="px-3 py-2 text-slate-700">{row.metric}</td>
+                            <td className="px-3 py-2 text-right tabular-nums font-medium text-slate-900">{row.companyAWins}</td>
+                            <td className="px-3 py-2 text-right tabular-nums text-slate-900">{row.companyBWins}</td>
+                            <td className="px-3 py-2 text-right tabular-nums text-slate-500">{row.ties}</td>
+                            <td className="px-3 py-2 text-right tabular-nums text-slate-500">{row.sampleSize}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+              ) : null}
+            </section>
+          </ModuleCard>
+        )
       ) : null}
 
       {showMarginGaps ? (
+        printMode ? (
         <section className="comparison-report-section space-y-4">
           {printMode ? <PrintSectionTitle title="Margin Gaps" /> : null}
 
@@ -1261,9 +1540,50 @@ export function ComparisonReportContent({
             </Card>
           ) : null}
         </section>
+        ) : (
+          <ModuleCard
+            id="profitability"
+            title="Profitability"
+            sub="Margins, cost structure, and decomposition"
+            open={openModules.includes("profitability")}
+            onToggle={toggleModule}
+          >
+            <section className="comparison-report-section space-y-4">
+              <Card title="Margin Gap Decomposition" sub="Total gap attributed to: COGS | SG&A | Allocation distortion | Scale">
+                <ArrowBullets items={viewMode === "summary" ? n.marginGapDecomposition.slice(0, 3) : n.marginGapDecomposition} accent />
+              </Card>
+              {viewMode === "detailed" || !isMulti ? (
+                <>
+                  {isMulti && result.multiMarginGapBars && result.multiMarginBars && multiTickers.length > 0 ? (
+                    <>
+                      <MultiBarCard
+                        title="Margin levels"
+                        data={result.multiMarginBars}
+                        tickers={multiTickers}
+                        isPercent
+                        periodWarning={hasPeriodWarn}
+                      />
+                      {peerTickersForGap.length > 0 ? (
+                        <MultiPeerGapBarCard
+                          title="Peer margin gaps"
+                          rows={result.multiMarginGapBars}
+                          peerTickers={peerTickersForGap}
+                          periodWarning={hasPeriodWarn}
+                        />
+                      ) : null}
+                    </>
+                  ) : (
+                    <MarginGapChart data={result.charts.marginGapBars} labelA={tA} labelB={tB} periodWarning={hasPeriodWarn} />
+                  )}
+                </>
+              ) : null}
+            </section>
+          </ModuleCard>
+        )
       ) : null}
 
       {showFinancials ? (
+        printMode ? (
         <section className="comparison-report-section space-y-4">
           {printMode ? <PrintSectionTitle title="Financials" /> : null}
 
@@ -1320,9 +1640,59 @@ export function ComparisonReportContent({
             <FinancialsTable rowsBySection={rowsBySection} result={result} />
           )}
         </section>
+        ) : (
+          <ModuleCard
+            id="financials"
+            title="Financials"
+            sub="Key metrics first, full statements on demand"
+            open={openModules.includes("financials")}
+            onToggle={toggleModule}
+          >
+            <section className="comparison-report-section space-y-4">
+              <Card title="Capital Allocation & Strategy" sub="CapEx intensity | M&A signals | Buybacks | Debt posture consequences">
+                <ArrowBullets items={viewMode === "summary" ? n.capitalAllocationStory.slice(0, 3) : n.capitalAllocationStory} />
+              </Card>
+              {isMulti &&
+              result.multiFinancialBars &&
+              result.multiMarginBars &&
+              result.multiCashFlowBars &&
+              result.multiDriverBars &&
+              rowsBySectionMulti ? (
+                <div className="grid gap-4 xl:grid-cols-2">
+                  <MultiBarCard title="Revenue, EBITDA, Net Income, FCF" data={result.multiFinancialBars} tickers={multiTickers} periodWarning={hasPeriodWarn} />
+                  <MultiBarCard title="Gross / Op / Net Margin" data={result.multiMarginBars} tickers={multiTickers} isPercent periodWarning={hasPeriodWarn} />
+                </div>
+              ) : (
+                <div className="grid gap-4 xl:grid-cols-2">
+                  <BarCard title="Revenue, EBITDA, Net Income, FCF" data={result.charts.financialBars} labelA={tA} labelB={tB} periodWarning={hasPeriodWarn} />
+                  <BarCard title="Gross / Op / Net Margin" data={result.charts.marginBars} labelA={tA} labelB={tB} isPercent periodWarning={hasPeriodWarn} />
+                </div>
+              )}
+              <div className="space-y-2">
+                <div className="flex justify-between">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Comparison table</p>
+                  <button
+                    type="button"
+                    onClick={() => setShowFullFinancialTable(true)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:border-slate-300 hover:text-slate-900"
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                    View full table
+                  </button>
+                </div>
+                {isMulti && rowsBySectionMulti ? (
+                  <MultiFinancialsTable rowsBySection={rowsBySectionMulti} tickers={multiTickers} condensed={viewMode === "summary"} />
+                ) : (
+                  <FinancialsTable rowsBySection={rowsBySection} result={result} condensed={viewMode === "summary"} />
+                )}
+              </div>
+            </section>
+          </ModuleCard>
+        )
       ) : null}
 
       {showTrends ? (
+        printMode ? (
         <section className="comparison-report-section space-y-4">
           {printMode ? <PrintSectionTitle title="Trends" /> : null}
 
@@ -1362,6 +1732,71 @@ export function ComparisonReportContent({
             </div>
           </Card>
         </section>
+        ) : (
+          <ModuleCard
+            id="comparison"
+            title="Comparison"
+            sub="Trends, board view, and data quality"
+            open={openModules.includes("comparison")}
+            onToggle={toggleModule}
+          >
+            <section className="comparison-report-section space-y-4">
+              <Card title="What Changed (Period-over-Period)" sub="Inflection points | margin changes | cost spikes | revenue trajectory">
+                <ArrowBullets items={viewMode === "summary" ? n.whatChanged.slice(0, 3) : n.whatChanged} accent />
+              </Card>
+
+              {isMulti && result.multiTrends ? (
+                <div className="grid gap-4 xl:grid-cols-2">
+                  <MultiTrendCard title="Revenue Trend" data={result.multiTrends.revenue} tickers={multiTickers} />
+                  <MultiTrendCard title="Operating Margin Trend" data={result.multiTrends.operatingMargin} tickers={multiTickers} isPercent />
+                  <MultiTrendCard title="Gross Margin Trend" data={result.multiTrends.grossMargin} tickers={multiTickers} isPercent />
+                  <MultiTrendCard title="Net Margin Trend" data={result.multiTrends.netMargin} tickers={multiTickers} isPercent />
+                  <MultiTrendCard title="Free Cash Flow Trend" data={result.multiTrends.freeCashFlow} tickers={multiTickers} />
+                  <MultiTrendCard title="SG&A Expense Trend" data={result.multiTrends.sgaExpense} tickers={multiTickers} />
+                </div>
+              ) : (
+                <div className="grid gap-4 xl:grid-cols-2">
+                  <TrendCard title="Revenue Trend" data={result.trends.revenue} labelA={tA} labelB={tB} />
+                  <TrendCard title="Operating Margin Trend" data={result.trends.operatingMargin} labelA={tA} labelB={tB} isPercent />
+                  <TrendCard title="Gross Margin Trend" data={result.trends.grossMargin} labelA={tA} labelB={tB} isPercent />
+                  <TrendCard title="Net Margin Trend" data={result.trends.netMargin} labelA={tA} labelB={tB} isPercent />
+                  <TrendCard title="Free Cash Flow Trend" data={result.trends.freeCashFlow} labelA={tA} labelB={tB} />
+                  <TrendCard title="SG&A Expense Trend" data={result.trends.sgaExpense} labelA={tA} labelB={tB} />
+                </div>
+              )}
+
+              {!isMulti && viewMode === "detailed" ? <BoardScorecard result={result} /> : null}
+              <Card title="Data Quality & Adjustments Applied" sub="What is missing | what was inferred | what may distort conclusions">
+                <div className="flex items-start gap-2">
+                  <Database className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+                  <ArrowBullets items={viewMode === "summary" ? n.dataQuality.slice(0, 3) : n.dataQuality} />
+                </div>
+              </Card>
+            </section>
+          </ModuleCard>
+        )
+      ) : null}
+
+      {!printMode && showFullFinancialTable ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="max-h-[90vh] w-full max-w-6xl overflow-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-sm font-semibold text-slate-900">Full financial comparison table</p>
+              <button
+                type="button"
+                onClick={() => setShowFullFinancialTable(false)}
+                className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:border-slate-300 hover:text-slate-900"
+              >
+                Close
+              </button>
+            </div>
+            {isMulti && rowsBySectionMulti ? (
+              <MultiFinancialsTable rowsBySection={rowsBySectionMulti} tickers={multiTickers} />
+            ) : (
+              <FinancialsTable rowsBySection={rowsBySection} result={result} />
+            )}
+          </div>
+        </div>
       ) : null}
     </div>
   );

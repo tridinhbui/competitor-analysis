@@ -13,7 +13,7 @@ import { SmithfieldCorporateLogo } from "@/components/branding/SmithfieldCorpora
 const NAV_ITEMS = [
   { href: "/analyze", label: "Analyze" },
   { href: "/data-source", label: "Data Source" },
-  { href: "/workspace", label: "Workspace" },
+  { href: "/workspace", label: "Competitor Analysis" },
   { href: "/#pricing", label: "Pricing" },
   { href: "/history", label: "History" },
 ] as const;
