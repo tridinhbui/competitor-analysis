@@ -1,6 +1,8 @@
 ﻿import { NextResponse } from "next/server";
 import { assembleAnalysis } from "@/lib/analysisEngine";
 import { extractNonRecurringItems } from "@/lib/filingTextExtractor";
+import { shouldRunExtraction } from "@/lib/llmExtractionGuards";
+import { extractPdfFinancialValue, type PdfFinancialMetric } from "@/lib/pdfFinancialValueExtractor";
 import type { BSItem, FootnoteItem, EarningsNarrative } from "@/types/analysis";
 import { STRICT_PROVENANCE_EXTRACTOR_SYSTEM } from "@/lib/prompts/strictProvenanceExtractor";
 
@@ -586,14 +588,97 @@ async function callOpenAI(
 // Convert AI value to number
 // ---------------------------------------------------------------------------
 
-function toNum(v: number | string | undefined | null): number {
-  if (v == null) return 0;
+function toNumOrNull(v: number | string | undefined | null): number | null {
+  if (v == null) return null;
   if (typeof v === "string") {
-    if (v === "â€“" || v === "â€”" || v === "-" || v === "N/A" || v === "n/a") return 0;
-    const n = Number(v.replace(/[,$\s]/g, ""));
-    return isNaN(n) ? 0 : Math.round(n);
+    const trimmed = v.trim();
+    if (
+      trimmed === "" ||
+      trimmed === "-" ||
+      trimmed === "\u2013" ||
+      trimmed === "\u2014" ||
+      trimmed === "\u00e2\u20ac\u201c" ||
+      trimmed === "\u00e2\u20ac\u201d" ||
+      /^n\/?a$/i.test(trimmed)
+    ) {
+      return null;
+    }
+
+    let normalized = trimmed.replace(/[,$\s]/g, "");
+    let negative = false;
+    if (normalized.startsWith("(") && normalized.endsWith(")")) {
+      normalized = normalized.slice(1, -1);
+      negative = true;
+    }
+
+    const n = Number(normalized);
+    if (Number.isNaN(n)) return null;
+    return Math.round(negative ? -n : n);
   }
-  return Math.round(v);
+  return Number.isFinite(v) ? Math.round(v) : null;
+}
+
+function toBsItems(
+  items: { tag: string; label: string; value: number | string | null }[] | undefined,
+  period: string,
+  sourcePrefix: string
+): BSItem[] {
+  const out: BSItem[] = [];
+  for (const item of items ?? []) {
+    const value = toNumOrNull(item.value);
+    if (value == null) continue;
+    out.push({
+      tag: item.tag,
+      label: item.label,
+      value,
+      period,
+      source: `${sourcePrefix}:${item.tag}`,
+    });
+  }
+  return out;
+}
+
+function repairCriticalFinancialValue(
+  items: BSItem[],
+  metric: PdfFinancialMetric,
+  text: string,
+  scaleNote: string | undefined,
+  period: string
+): void {
+  const repaired = extractPdfFinancialValue(text, metric, scaleNote);
+  if (!repaired || Math.abs(repaired.value) <= 1) return;
+
+  const existing = items.find((item) => item.tag === repaired.tag);
+  const existingValue = existing?.value ?? null;
+  if (existingValue != null && Math.abs(existingValue) > 1) return;
+
+  if (existing) {
+    console.log("[analyze-pdf:repair]", {
+      metric,
+      previous: existing.value,
+      repaired: repaired.value,
+      confidence: repaired.confidence,
+      raw: repaired.raw,
+    });
+    existing.value = repaired.value;
+    existing.label = repaired.label;
+    existing.source = repaired.source;
+  } else {
+    console.log("[analyze-pdf:repair]", {
+      metric,
+      previous: null,
+      repaired: repaired.value,
+      confidence: repaired.confidence,
+      raw: repaired.raw,
+    });
+    items.push({
+      tag: repaired.tag,
+      label: repaired.label,
+      value: repaired.value,
+      period,
+      source: repaired.source,
+    });
+  }
 }
 
 type RdMethod =
@@ -1136,24 +1221,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const text = body.text?.trim();
-  if (!text || text.length < 200) {
-    return NextResponse.json(
-      { error: "Extracted text too short or empty" },
-      { status: 400 }
-    );
+  const filingText = body.text?.trim() ?? "";
+  if (!shouldRunExtraction(filingText)) {
+    return NextResponse.json({ error: "NO_VALID_FILING_TEXT" }, { status: 400 });
   }
 
   const model = process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini";
 
-  // Split text into sections
-  const { bsText, isCfText, qualText, segmentText } = extractSections(text);
+  // Split text into sections (≥500 chars, financial keywords passed guard)
+  const { bsText, isCfText, qualText, segmentText } = extractSections(filingText);
 
   // Fallback: if section detection found nothing, use the full text (truncated)
-  const bsInput = bsText.length > 500 ? bsText : text.slice(0, 80_000);
-  const isCfInput = isCfText.length > 500 ? isCfText : text.slice(0, 80_000);
-  const qualInput = qualText.length > 500 ? qualText : text.slice(0, 60_000);
-  const segInput = segmentText.length > 300 ? segmentText : text.slice(0, 60_000);
+  const bsInput = bsText.length > 500 ? bsText : filingText.slice(0, 80_000);
+  const isCfInput = isCfText.length > 500 ? isCfText : filingText.slice(0, 80_000);
+  const qualInput = qualText.length > 500 ? qualText : filingText.slice(0, 60_000);
+  const segInput = segmentText.length > 300 ? segmentText : filingText.slice(0, 60_000);
 
   try {
     // Run 5 AI calls in parallel (4 extraction + 1 non-recurring)
@@ -1162,7 +1244,7 @@ export async function POST(request: Request) {
       callOpenAI(apiKey, model, IS_CF_PROMPT, `Extract income statement and cash flow data:\n\n${isCfInput}`, 4000),
       callOpenAI(apiKey, model, QUALITATIVE_PROMPT, `Extract qualitative insights:\n\n${qualInput}`, 4000),
       callOpenAI(apiKey, model, SEGMENT_PROMPT, `Extract segment data:\n\n${segInput}`, 3000),
-      extractNonRecurringItems(text, apiKey, model),
+      extractNonRecurringItems(filingText, apiKey, model),
     ]);
 
     const aiErrors = [bsCall, isCfCall, qualCall, segCall]
@@ -1227,7 +1309,7 @@ export async function POST(request: Request) {
         .filter((x): x is BSItem => x != null)
     );
 
-    const equityCandidate = extractTotalEquityHeuristic(text, scaleForHeuristics);
+    const equityCandidate = extractTotalEquityHeuristic(filingText, scaleForHeuristics);
     if (equityCandidate.totalEquity != null) {
       const assetsValue =
         bsItems.find((item) => item.tag === "Assets")?.value ?? null;
@@ -1309,7 +1391,7 @@ export async function POST(request: Request) {
     );
     if (!hasValidRepurchase) {
       const heuristicValue = extractShareRepurchasesHeuristic(
-        text,
+        filingText,
         scaleForHeuristics
       );
       console.log("[repurchase:heuristic] heuristicValue:", heuristicValue);
@@ -1420,7 +1502,7 @@ export async function POST(request: Request) {
       ].includes(i.tag)
     );
     const rdResolution = resolveRnDExpense({
-      text,
+      text: filingText,
       scaleNote: scaleForHeuristics,
       companyName: mergedCompanyName,
       existingRd: hasValidRd ? existingRdItem!.value : null,
@@ -1496,7 +1578,7 @@ export async function POST(request: Request) {
         companyName: mergedCompanyName ?? undefined,
         fileName: body.fileName,
         pagesRead: body.pages,
-        charsExtracted: body.chars ?? text.length,
+        charsExtracted: body.chars ?? filingText.length,
         periodEnd: period,
         confidence: "low",
         extractionMethod: "pdf-ai-partial",
@@ -1517,7 +1599,7 @@ export async function POST(request: Request) {
       companyName: mergedCompanyName ?? undefined,
       fileName: body.fileName,
       pagesRead: body.pages,
-      charsExtracted: body.chars ?? text.length,
+      charsExtracted: body.chars ?? filingText.length,
       periodEnd: period,
       confidence: "medium",
       extractionMethod: "pdf-ai",

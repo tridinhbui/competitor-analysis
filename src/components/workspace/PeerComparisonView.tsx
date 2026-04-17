@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Search, TrendingUp } from "lucide-react";
+import { Loader2, Plus, Search, TrendingUp, X } from "lucide-react";
 import type { CompanyComparisonPayload } from "@/lib/companyComparison";
 import {
   ComparisonReportContent,
@@ -18,10 +18,15 @@ interface RegistryResponse {
   companies: Array<{ ticker: string; name: string }>;
 }
 
+const MAX_COMPANIES = 7;
+
+function uniqueTickers(list: string[]): string[] {
+  return [...new Set(list.map((t) => t.trim().toUpperCase()).filter(Boolean))];
+}
+
 export function PeerComparisonView() {
   const [options, setOptions] = useState<CompanyOption[]>([]);
-  const [companyA, setCompanyA] = useState("");
-  const [companyB, setCompanyB] = useState("");
+  const [selectedTickers, setSelectedTickers] = useState<string[]>([]);
   const [loadingOpts, setLoadingOpts] = useState(true);
   const [comparing, setComparing] = useState(false);
   const [error, setError] = useState("");
@@ -41,8 +46,11 @@ export function PeerComparisonView() {
 
         setOptions(nextOptions);
         if (nextOptions.length > 0) {
-          setCompanyA((current) => current || nextOptions[0].ticker);
-          setCompanyB((current) => current || (nextOptions.length > 1 ? nextOptions[1].ticker : nextOptions[0].ticker));
+          setSelectedTickers((current) => {
+            if (current.length > 0) return current;
+            if (nextOptions.length === 1) return [nextOptions[0].ticker];
+            return [nextOptions[0].ticker, nextOptions[1].ticker];
+          });
         }
       } catch (nextError) {
         setError(nextError instanceof Error ? nextError.message : "Failed to load companies");
@@ -52,8 +60,14 @@ export function PeerComparisonView() {
     })();
   }, []);
 
+  const canAdd =
+    selectedTickers.length < MAX_COMPANIES &&
+    options.some((option) => !selectedTickers.includes(option.ticker));
+  const hasDuplicateSelection = new Set(selectedTickers).size !== selectedTickers.length;
+
   const compare = useCallback(async () => {
-    if (!companyA || !companyB) return;
+    const tickers = uniqueTickers(selectedTickers);
+    if (tickers.length < 2) return;
 
     setComparing(true);
     setError("");
@@ -61,7 +75,8 @@ export function PeerComparisonView() {
     setActiveTab("overview");
 
     try {
-      const response = await fetch(`/api/company-comparison?companyA=${companyA}&companyB=${companyB}`);
+      const params = new URLSearchParams({ tickers: tickers.join(",") });
+      const response = await fetch(`/api/company-comparison?${params.toString()}`);
       if (!response.ok) {
         const payload = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
         throw new Error(payload.error || `HTTP ${response.status}`);
@@ -73,7 +88,29 @@ export function PeerComparisonView() {
     } finally {
       setComparing(false);
     }
-  }, [companyA, companyB]);
+  }, [selectedTickers]);
+
+  const updateRow = useCallback((index: number, ticker: string) => {
+    setSelectedTickers((rows) => {
+      const next = [...rows];
+      next[index] = ticker;
+      return next;
+    });
+  }, []);
+
+  const removeRow = useCallback((index: number) => {
+    setSelectedTickers((rows) => rows.filter((_, i) => i !== index));
+  }, []);
+
+  const addRow = useCallback(() => {
+    setSelectedTickers((rows) => {
+      if (rows.length >= MAX_COMPANIES) return rows;
+      const used = new Set(rows);
+      const pick = options.find((o) => !used.has(o.ticker))?.ticker;
+      if (!pick) return rows;
+      return [...rows, pick];
+    });
+  }, [options]);
 
   if (!result) {
     return (
@@ -94,55 +131,79 @@ export function PeerComparisonView() {
           </p>
         ) : (
           <>
-            <p className="mb-5 text-sm text-slate-500">
-              Compare financial metrics across companies side-by-side. Load historical quarters first via the Analyze page.
+            <p className="mb-2 text-sm text-slate-500">
+              Compare financial metrics across up to {MAX_COMPANIES} companies side-by-side. Load historical quarters first via the
+              Analyze page.
             </p>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold text-slate-600">Subject Company</label>
-                <select
-                  value={companyA}
-                  onChange={(event) => setCompanyA(event.target.value)}
-                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
-                >
-                  {options.map((option) => (
-                    <option key={option.ticker} value={option.ticker}>
-                      {option.ticker}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold text-slate-600">Comparison Company</label>
-                <select
-                  value={companyB}
-                  onChange={(event) => setCompanyB(event.target.value)}
-                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
-                >
-                  {options.map((option) => (
-                    <option key={option.ticker} value={option.ticker}>
-                      {option.ticker}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            <p className="mb-4 text-xs text-slate-400">
+              The first company is the margin benchmark (gaps vs that ticker). Add or remove rows below.
+            </p>
+
+            <div className="space-y-3">
+              {selectedTickers.map((ticker, index) => (
+                <div key={`${index}-${ticker}`} className="flex flex-wrap items-end gap-2">
+                  <div className="min-w-[200px] flex-1">
+                    <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                      {index === 0 ? "Company 1 (benchmark)" : `Company ${index + 1}`}
+                    </label>
+                    <select
+                      value={ticker}
+                      onChange={(event) => updateRow(index, event.target.value)}
+                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
+                    >
+                      {options.map((option) => (
+                        <option key={option.ticker} value={option.ticker}>
+                          {option.ticker}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {selectedTickers.length > 2 ? (
+                    <button
+                      type="button"
+                      onClick={() => removeRow(index)}
+                      className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                      aria-label={`Remove company ${index + 1}`}
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  ) : null}
+                </div>
+              ))}
             </div>
+
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={addRow}
+                disabled={!canAdd}
+                className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Plus className="h-4 w-4" />
+                Add company
+              </button>
+              <span className="text-xs text-slate-400">
+                {selectedTickers.length}/{MAX_COMPANIES} selected
+              </span>
+            </div>
+
             <button
               type="button"
               onClick={compare}
-              disabled={comparing || !companyA || !companyB || companyA === companyB}
+              disabled={comparing || uniqueTickers(selectedTickers).length < 2 || hasDuplicateSelection}
               className="mt-4 inline-flex h-10 items-center gap-2 rounded-xl bg-slate-700 px-5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {comparing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
               {comparing ? "Comparing..." : "Compare"}
             </button>
+            {hasDuplicateSelection ? (
+              <p className="mt-2 text-xs text-amber-700">Each ticker must be unique.</p>
+            ) : null}
           </>
         )}
 
         {error ? (
-          <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-            {error}
-          </div>
+          <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>
         ) : null}
       </div>
     );

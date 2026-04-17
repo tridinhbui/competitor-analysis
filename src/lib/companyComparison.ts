@@ -203,6 +203,52 @@ export interface CompanyComparisonPayload {
   boardInsights: BoardInsightRow[];
   narrative: ComparisonNarrative;
   generatedAt: string;
+  /** Present when comparing 3–7 companies in one request */
+  comparisonMode?: "pair" | "multi";
+  multiCompanies?: NormalizedCompanyMetrics[];
+  multiRows?: MultiComparisonRow[];
+  multiTrends?: MultiComparisonTrends;
+  /** Recharts-friendly rows: `{ metric, [TICKER]: value }` */
+  multiFinancialBars?: Array<Record<string, string | number | null>>;
+  multiMarginBars?: Array<Record<string, string | number | null>>;
+  multiMarginGapBars?: MultiMarginGapBarRow[];
+  multiCashFlowBars?: Array<Record<string, string | number | null>>;
+  multiDriverBars?: Array<Record<string, string | number | null>>;
+  multiMethodologyNotes?: string[];
+}
+
+export interface MultiComparisonRow {
+  section: ComparisonSection;
+  key: string;
+  label: string;
+  format: MetricFormat;
+  values: Array<number | string | null>;
+  derived: boolean[];
+  /** Best column index for numeric metrics with a directional preference; null for context rows or ties */
+  bestIndex: number | null;
+}
+
+export interface MultiTrendPoint {
+  periodEnd: string;
+  quarterLabel: string;
+  byTicker: Record<string, number | null>;
+}
+
+export interface MultiComparisonTrends {
+  revenue: MultiTrendPoint[];
+  grossMargin: MultiTrendPoint[];
+  operatingMargin: MultiTrendPoint[];
+  netMargin: MultiTrendPoint[];
+  freeCashFlow: MultiTrendPoint[];
+  sgaExpense: MultiTrendPoint[];
+}
+
+export interface MultiMarginGapBarRow {
+  metric: string;
+  /** Level in % for each ticker */
+  byTicker: Record<string, number | null>;
+  /** pp vs first ticker (benchmark); benchmark ticker maps to null */
+  gapVsBenchmarkPp: Record<string, number | null>;
 }
 
 interface BaseComparableMetrics {
@@ -241,6 +287,24 @@ interface BaseComparableMetrics {
 function toNumber(value: unknown): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
   return value;
+}
+
+/**
+ * Match analysisEngine: EBITDA = EBIT/operating income + D&A when headline ebitda is missing.
+ * Fills peer-comparison charts (e.g. EBITDA margin) when filings only have OI + depreciation lines.
+ */
+function coerceEbitdaFromIncome(is: FullAnalysis["incomeStatement"] | undefined): number | null {
+  if (!is) return null;
+  const headline = toNumber(is.ebitda);
+  if (headline != null) return headline;
+  const oi = toNumber(is.operatingIncome);
+  const ebit = toNumber(is.ebit);
+  const base = oi ?? ebit;
+  const dep = toNumber(is.depreciation);
+  const amort = toNumber(is.amortization);
+  if (base == null || dep == null) return null;
+  const da = Math.abs(dep) + (amort != null ? Math.abs(amort) : 0);
+  return round(base + da, 2);
 }
 
 function round(value: number, decimals = 4): number {
@@ -388,17 +452,21 @@ export function normalizeMetrics(
   const confidence = analysis.meta.confidence ?? "unknown";
   const extractionMethod = analysis.meta.extractionMethod ?? null;
 
+  const inc = analysis.incomeStatement;
+  const ebitdaResolved = coerceEbitdaFromIncome(inc);
+  const ebitdaMarginHeadline = toNumber(inc?.ebitdaMargin ?? analysis.ratios?.ebitdaMargin);
+
   const { metrics, derivedMetrics } = computeComparableMetrics({
-    revenue: toNumber(analysis.incomeStatement?.revenue),
-    grossProfit: toNumber(analysis.incomeStatement?.grossProfit),
-    grossMargin: toNumber(analysis.incomeStatement?.grossMargin),
-    sga: toNumber(analysis.incomeStatement?.sgaExpense),
-    operatingIncome: toNumber(analysis.incomeStatement?.operatingIncome),
-    operatingMargin: toNumber(analysis.incomeStatement?.operatingMargin),
-    ebitda: toNumber(analysis.incomeStatement?.ebitda),
-    ebitdaMargin: toNumber(analysis.incomeStatement?.ebitdaMargin),
-    netIncome: toNumber(analysis.incomeStatement?.netIncome ?? analysis.cashFlow?.netIncome),
-    netMargin: toNumber(analysis.incomeStatement?.netMargin),
+    revenue: toNumber(inc?.revenue),
+    grossProfit: toNumber(inc?.grossProfit),
+    grossMargin: toNumber(inc?.grossMargin),
+    sga: toNumber(inc?.sgaExpense),
+    operatingIncome: toNumber(inc?.operatingIncome),
+    operatingMargin: toNumber(inc?.operatingMargin),
+    ebitda: ebitdaResolved,
+    ebitdaMargin: ebitdaMarginHeadline,
+    netIncome: toNumber(inc?.netIncome ?? analysis.cashFlow?.netIncome),
+    netMargin: toNumber(inc?.netMargin),
     operatingCashFlow: toNumber(analysis.cashFlow?.operatingCashFlow),
     capex: toNumber(analysis.cashFlow?.capitalExpenditures),
     freeCashFlow: toNumber(analysis.cashFlow?.freeCashFlow),
@@ -418,7 +486,7 @@ export function normalizeMetrics(
     roa: toNumber(analysis.ratios?.returnOnAssets),
     roe: toNumber(analysis.ratios?.returnOnEquity),
     roic: toNumber(analysis.ratios?.returnOnInvestedCapital),
-    interestExpense: toNumber(analysis.incomeStatement?.interestExpense),
+    interestExpense: toNumber(inc?.interestExpense),
   });
 
   const keyCoverage: ComparableMetricKey[] = [
@@ -1618,4 +1686,279 @@ export function buildComparisonWarnings(
   }
 
   return warnings;
+}
+
+function bestIndexForMulti(
+  values: Array<number | null>,
+  direction: BetterDirection | undefined
+): number | null {
+  if (direction == null || direction === "neutral") return null;
+  const scored = values
+    .map((value, index) => ({ value, index }))
+    .filter((entry): entry is { value: number; index: number } => typeof entry.value === "number" && Number.isFinite(entry.value));
+  if (scored.length < 2) return null;
+  if (direction === "higher") {
+    return scored.reduce((best, cur) => (cur.value > best.value ? cur : best)).index;
+  }
+  return scored.reduce((best, cur) => (cur.value < best.value ? cur : best)).index;
+}
+
+export function buildMultiComparisonRows(companies: NormalizedCompanyMetrics[]): MultiComparisonRow[] {
+  return ROW_DEFINITIONS.map((rowDef) => {
+    if (rowDef.contextField) {
+      const field = rowDef.contextField;
+      const values = companies.map((company) => {
+        const raw = company[field];
+        if (raw == null) return null;
+        if (typeof raw === "string" || typeof raw === "number") return raw;
+        return String(raw);
+      });
+      return {
+        section: rowDef.section,
+        key: rowDef.key,
+        label: rowDef.label,
+        format: rowDef.format,
+        values,
+        derived: companies.map(() => false),
+        bestIndex: null,
+      };
+    }
+
+    const metricKey = rowDef.metricKey as ComparableMetricKey;
+    const values = companies.map((company) => company.metrics[metricKey]);
+    const derived = companies.map((company) => Boolean(company.derivedMetrics[metricKey]));
+    const numericValues = values.map((v) => (typeof v === "number" && Number.isFinite(v) ? v : null));
+
+    return {
+      section: rowDef.section,
+      key: rowDef.key,
+      label: rowDef.label,
+      format: rowDef.format,
+      values,
+      derived,
+      bestIndex: bestIndexForMulti(numericValues, rowDef.betterDirection),
+    };
+  });
+}
+
+function buildMultiTrendMetric(
+  histories: Array<{ ticker: string; history: NormalizedCompanyMetrics[] }>,
+  metric: ComparableMetricKey
+): MultiTrendPoint[] {
+  const maps = new Map(
+    histories.map(({ ticker, history }) => [ticker, new Map(history.map((entry) => [entry.periodEnd, entry]))])
+  );
+
+  const periodEnds = Array.from(
+    new Set(histories.flatMap(({ history }) => history.map((entry) => entry.periodEnd)))
+  )
+    .sort((a, b) => a.localeCompare(b))
+    .slice(-12);
+
+  return periodEnds.map((periodEnd) => {
+    const byTicker: Record<string, number | null> = {};
+    let quarterLabel = periodEnd;
+    for (const { ticker, history } of histories) {
+      const entry = maps.get(ticker)?.get(periodEnd);
+      byTicker[ticker] = entry?.metrics[metric] ?? null;
+      if (entry?.quarterLabel) quarterLabel = entry.quarterLabel;
+    }
+    return { periodEnd, quarterLabel, byTicker };
+  });
+}
+
+export function buildMultiComparisonTrends(
+  histories: Array<{ ticker: string; history: NormalizedCompanyMetrics[] }>
+): MultiComparisonTrends {
+  return {
+    revenue: buildMultiTrendMetric(histories, "revenue"),
+    grossMargin: buildMultiTrendMetric(histories, "grossMargin"),
+    operatingMargin: buildMultiTrendMetric(histories, "operatingMargin"),
+    netMargin: buildMultiTrendMetric(histories, "netMargin"),
+    freeCashFlow: buildMultiTrendMetric(histories, "freeCashFlow"),
+    sgaExpense: buildMultiTrendMetric(histories, "sga"),
+  };
+}
+
+export function buildMultiComparisonWarnings(companies: NormalizedCompanyMetrics[]): ComparisonWarning[] {
+  const warnings: ComparisonWarning[] = [];
+  if (companies.length < 2) return warnings;
+
+  const periodTypes = new Set(companies.map((c) => c.periodType));
+  if (periodTypes.size > 1) {
+    warnings.push({
+      code: "period_type_mismatch",
+      severity: "warning",
+      message: "Selected companies use different reporting period types. Interpret comparisons carefully.",
+    });
+  }
+
+  const periodEnds = new Set(companies.map((c) => c.periodEnd));
+  if (periodEnds.size > 1) {
+    const detail = companies.map((c) => `${c.ticker}: ${c.periodEnd}`).join("; ");
+    warnings.push({
+      code: "period_end_mismatch",
+      severity: "warning",
+      message: `Period end dates differ across tickers: ${detail}`,
+    });
+  }
+
+  const first = companies[0];
+  for (let i = 1; i < companies.length; i++) {
+    const dayDiff = Math.abs(new Date(first.periodEnd).getTime() - new Date(companies[i].periodEnd).getTime());
+    if (Number.isFinite(dayDiff) && dayDiff > 45 * 24 * 60 * 60 * 1000) {
+      warnings.push({
+        code: "period_distance",
+        severity: "warning",
+        message: "Some reporting dates are more than 45 days apart, so period comparability is limited.",
+      });
+      break;
+    }
+  }
+
+  const coverageParts = companies.map((c) => `${c.ticker}: ${c.quarterCount}`);
+  if (new Set(companies.map((c) => c.quarterCount)).size > 1) {
+    warnings.push({
+      code: "coverage_mismatch",
+      severity: "info",
+      message: `Filing coverage differs — ${coverageParts.join(", ")}.`,
+    });
+  }
+
+  if (companies.some((c) => c.confidence === "low")) {
+    warnings.push({
+      code: "low_confidence",
+      severity: "warning",
+      message: "One or more companies include low-confidence extracted data.",
+    });
+  }
+
+  if (companies.some((c) => !c.validationPassed)) {
+    warnings.push({
+      code: "validation_issues",
+      severity: "warning",
+      message: "Validation checks failed for one or more companies. Some metrics may be incomplete or inconsistent.",
+    });
+  }
+
+  if (companies.some((c) => c.reconcileStatus === "fail")) {
+    warnings.push({
+      code: "reconcile_fail",
+      severity: "warning",
+      message: "Balance-sheet reconciliation failed for at least one company (Assets vs Liabilities + Equity).",
+    });
+  }
+
+  for (const company of companies) {
+    if (company.missingMetricKeys.length > 0) {
+      warnings.push({
+        code: `missing_${company.ticker}`,
+        severity: "info",
+        message: `${company.ticker} is missing: ${company.missingMetricKeys.join(", ")}.`,
+      });
+    }
+  }
+
+  return warnings;
+}
+
+function multiBarRow(
+  metric: string,
+  companies: NormalizedCompanyMetrics[],
+  key: ComparableMetricKey
+): Record<string, string | number | null> {
+  const row: Record<string, string | number | null> = { metric };
+  for (const company of companies) {
+    row[company.ticker] = company.metrics[key];
+  }
+  return row;
+}
+
+export function buildMultiComparisonBarData(companies: NormalizedCompanyMetrics[]) {
+  return {
+    financialBars: [
+      multiBarRow("Revenue", companies, "revenue"),
+      multiBarRow("EBITDA", companies, "ebitda"),
+      multiBarRow("Net Income", companies, "netIncome"),
+      multiBarRow("Free Cash Flow", companies, "freeCashFlow"),
+    ],
+    marginBars: [
+      multiBarRow("Gross Margin", companies, "grossMargin"),
+      multiBarRow("Operating Margin", companies, "operatingMargin"),
+      multiBarRow("Net Margin", companies, "netMargin"),
+    ],
+    cashFlowBars: [
+      multiBarRow("Operating Cash Flow", companies, "operatingCashFlow"),
+      multiBarRow("CapEx", companies, "capex"),
+      multiBarRow("Free Cash Flow", companies, "freeCashFlow"),
+    ],
+    driverBars: [
+      multiBarRow("Revenue", companies, "revenue"),
+      multiBarRow("Gross Profit", companies, "grossProfit"),
+      multiBarRow("SG&A", companies, "sga"),
+      multiBarRow("Op. Income", companies, "operatingIncome"),
+    ],
+  };
+}
+
+export function buildMultiMarginGapBarRows(companies: NormalizedCompanyMetrics[]): MultiMarginGapBarRow[] {
+  if (companies.length === 0) return [];
+  const benchmark = companies[0];
+  const specs: Array<{ metric: string; key: ComparableMetricKey }> = [
+    { metric: "Gross Margin", key: "grossMargin" },
+    { metric: "Operating Margin", key: "operatingMargin" },
+    { metric: "Net Margin", key: "netMargin" },
+    { metric: "EBITDA Margin", key: "ebitdaMargin" },
+  ];
+
+  return specs.map(({ metric, key }) => {
+    const byTicker: Record<string, number | null> = {};
+    const gapVsBenchmarkPp: Record<string, number | null> = {};
+    const base = benchmark.metrics[key];
+
+    for (const company of companies) {
+      const v = company.metrics[key];
+      byTicker[company.ticker] = v;
+      if (company.ticker === benchmark.ticker) {
+        gapVsBenchmarkPp[company.ticker] = null;
+      } else if (base != null && v != null) {
+        gapVsBenchmarkPp[company.ticker] = round(v - base, 2);
+      } else {
+        gapVsBenchmarkPp[company.ticker] = null;
+      }
+    }
+
+    return { metric, byTicker, gapVsBenchmarkPp };
+  });
+}
+
+export function buildMinimalMultiNarrative(companies: NormalizedCompanyMetrics[]): ComparisonNarrative {
+  const tickers = companies.map((c) => c.ticker).join(", ");
+  const periodLine = companies.map((c) => `${c.ticker}: ${c.quarterLabel} (${c.periodEnd})`).join(" · ");
+
+  const stub = "Use the Financials and Trends tabs for side-by-side metrics; detailed narrative decomposition is optimized for two-company comparisons.";
+
+  return {
+    executiveSummary: [
+      `Comparing ${companies.length} companies (${tickers}) on the latest (or selected) analyzed filing per ticker.`,
+    ],
+    truePerformanceDiagnosis: [stub],
+    costStructureBridge: [stub],
+    capitalAllocationStory: [stub],
+    marginGapDecomposition: [
+      `Margin gaps in the Margin Gaps tab are shown versus the first ticker (${companies[0]?.ticker}) as benchmark, in percentage points.`,
+    ],
+    whatChanged: [periodLine],
+    investmentInterpretation: [
+      "Rank leaders on operating margin and free cash flow after confirming comparable reporting periods.",
+      "Watch for period-end mismatches and low extraction confidence flags in the warnings strip.",
+    ],
+    dataQuality: [
+      "Verify critical figures in source SEC filings; automated extraction may omit footnoted adjustments.",
+    ],
+    counterfactual: [],
+    driverAnalysis: [],
+    pricingCostDynamics: [],
+    keyRisks: ["Cross-ticker period alignment is not enforced beyond the warnings shown above."],
+  };
 }

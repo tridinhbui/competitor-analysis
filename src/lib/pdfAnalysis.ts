@@ -14,6 +14,7 @@
 import type { BSItem, FullAnalysis, StepEvent } from "@/types/analysis";
 import { PIPELINE_STEPS } from "@/types/analysis";
 import { assembleAnalysis } from "./analysisEngine";
+import { extractPdfFinancialValue, type PdfFinancialMetric } from "./pdfFinancialValueExtractor";
 
 // ---------------------------------------------------------------------------
 // Load pdfjs from /public via native browser ESM import (bypasses webpack).
@@ -171,16 +172,26 @@ async function analyzeWithAI(
 
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
-    throw new Error((err as { error?: string }).error ?? `API returned ${resp.status}`);
+    const e = err as { error?: string; message?: string };
+    const msg =
+      e.message && e.error && e.message !== e.error
+        ? `${e.error}: ${e.message}`
+        : (e.message ?? e.error ?? `API returned ${resp.status}`);
+    throw new Error(msg);
   }
 
   const data = (await resp.json()) as {
     analysis?: FullAnalysis;
     error?: string;
+    message?: string;
     degraded?: boolean;
   };
   if (!data.analysis) {
-    throw new Error(data.error ?? "No analysis result from API");
+    const msg =
+      data.message && data.error && data.message !== data.error
+        ? `${data.error}: ${data.message}`
+        : (data.message ?? data.error ?? "No analysis result from API");
+    throw new Error(msg);
   }
   // Server returns 200 with partial AI data; client must not treat that as success or UI shows $0M.
   if (data.degraded) {
@@ -313,7 +324,14 @@ const NUM_RE = /\([\d,]+(?:\.\d+)?\)|\d{1,3}(?:,\d{3})*(?:\.\d+)?|—|–|-\s*$/
 
 function parseMoneyToken(raw: string): number | null {
   const s0 = raw.trim();
-  if (s0 === "—" || s0 === "–" || s0 === "-") return 0;
+  if (
+    s0 === "\u2014" ||
+    s0 === "\u2013" ||
+    s0 === "\u00e2\u20ac\u201d" ||
+    s0 === "\u00e2\u20ac\u201c" ||
+    s0 === "-"
+  ) return null;
+  if (s0 === "—" || s0 === "–" || s0 === "-") return null;
   // Strip currency symbols and spaces (normalizeRow already removed most, but be safe)
   let s = s0.replace(/[$,\s]/g, "");
   let neg = false;
@@ -328,12 +346,24 @@ function parseMoneyToken(raw: string): number | null {
   return neg ? -n : n;
 }
 
+function dropLeadingFootnoteMarker(numbers: number[]): number[] {
+  if (
+    numbers.length >= 2 &&
+    Number.isInteger(numbers[0]) &&
+    Math.abs(numbers[0]) <= 3 &&
+    Math.abs(numbers[1]) >= 5
+  ) {
+    return numbers.slice(1);
+  }
+  return numbers;
+}
+
 function parseLine(line: PdfLine, idx: number): ParsedLine {
   const matches = line.text.match(NUM_RE) ?? [];
   const numbers: number[] = [];
   for (const m of matches) { const v = parseMoneyToken(m); if (v != null) numbers.push(v); }
   const label = line.text.replace(NUM_RE, "").replace(/\s{2,}/g, " ").trim();
-  return { label, numbers, raw: line.text, page: line.page, lineIdx: idx };
+  return { label, numbers: dropLeadingFootnoteMarker(numbers), raw: line.text, page: line.page, lineIdx: idx };
 }
 
 interface ItemDef {
@@ -441,7 +471,14 @@ const CF_DEFS: ItemDef[] = [
   },
   {
     tag: "PaymentsToAcquirePropertyPlantAndEquipment", label: "Capital expenditures",
-    keywords: [/^(capital\s+expenditures?|purchases?\s+of\s+property)/i, /^additions?\s+to\s+property/i, /^capital\s+additions?/i],
+    keywords: [
+      /^(capital\s+expenditures?|purchases?\s+of\s+property)/i,
+      /^(payments?|acquisitions?)\s+(of|for|to\s+acquire)\s+(property|plant|equipment)/i,
+      /^additions?\s+to\s+(property|plant|equipment)/i,
+      /^(property,\s*plant\s+and\s+equipment|property\s+and\s+equipment)\s+additions?/i,
+      /^capital\s+additions?/i,
+      /^investment\s+in\s+(property|plant|equipment)/i,
+    ],
     abs: true,
   },
   {
@@ -596,6 +633,40 @@ function heuristicExtract(lines: PdfLine[]): { bs: BSItem[]; cf: BSItem[] } {
       cf.push({ tag: def.tag, label: def.label, value: extractValue(def, effective), period: periodLabel, source: `PDF:p${pl.page}:"${pl.label.slice(0, 60)}"` });
     }
   }
+
+  const repairText = lines.map((line) => line.text).join("\n");
+  function repairCriticalValue(metric: PdfFinancialMetric, items: BSItem[]): void {
+    const repaired = extractPdfFinancialValue(repairText, metric);
+    if (!repaired || Math.abs(repaired.value) <= 1) return;
+
+    const existing = items.find((item) => item.tag === repaired.tag);
+    const existingValue = existing?.value ?? null;
+    if (existingValue != null && Math.abs(existingValue) > 1) return;
+
+    if (existing) {
+      existing.value = repaired.value;
+      existing.label = repaired.label;
+      existing.source = repaired.source;
+    } else {
+      items.push({
+        tag: repaired.tag,
+        label: repaired.label,
+        value: repaired.value,
+        period: periodLabel,
+        source: repaired.source,
+      });
+    }
+  }
+
+  repairCriticalValue("totalAssets", bs);
+  repairCriticalValue("cashAndEquivalents", bs);
+  repairCriticalValue("revenue", cf);
+  repairCriticalValue("costOfRevenue", cf);
+  repairCriticalValue("grossProfit", cf);
+  repairCriticalValue("operatingIncome", cf);
+  repairCriticalValue("netIncome", cf);
+  repairCriticalValue("operatingCashFlow", cf);
+  repairCriticalValue("capitalExpenditures", cf);
 
   // Repair path for total equity:
   // Prefer the FINAL total line in the equity section (e.g., "Total shareholders' equity"),
