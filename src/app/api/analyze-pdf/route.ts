@@ -1,13 +1,35 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { assembleAnalysis } from "@/lib/analysisEngine";
 import { extractNonRecurringItems } from "@/lib/filingTextExtractor";
 import { shouldRunExtraction } from "@/lib/llmExtractionGuards";
 import { extractPdfFinancialValue, type PdfFinancialMetric } from "@/lib/pdfFinancialValueExtractor";
 import type { BSItem, FootnoteItem, EarningsNarrative } from "@/types/analysis";
 import { STRICT_PROVENANCE_EXTRACTOR_SYSTEM } from "@/lib/prompts/strictProvenanceExtractor";
+import {
+  resolveRnDExpense,
+  extractShareRepurchasesHeuristic,
+  extractTotalEquityHeuristic,
+  computeBalanceGapPct,
+} from "@/lib/heuristics";
+import { debugLog, warnLog } from "@/lib/debugLogger";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
+
+// ---------------------------------------------------------------------------
+// Helpers: DRY JSON parsing & dynamic token budget
+// ---------------------------------------------------------------------------
+
+/** Safely parse an AI call's JSON content with typed fallback. */
+function parseJsonCall<T>(call: { content: string | null }, fallback: T): T {
+  if (!call.content) return fallback;
+  try { return JSON.parse(call.content) as T; } catch { return fallback; }
+}
+
+/** Scale max_tokens budget based on input text length. */
+function tokensFor(text: string, min = 1500, max = 4000): number {
+  return Math.min(max, Math.max(min, Math.ceil(text.length / 15)));
+}
 
 // ---------------------------------------------------------------------------
 // Exact XBRL tags that assembleAnalysis actually uses via find()/findOrNull()
@@ -371,7 +393,7 @@ function periodTypeFromItem(it: RawAiItem, kind: "bs" | "cf"): BSItem["period_ty
 function itemValueForTag(tag: string, v: number | string | null | undefined): number {
   if (v == null) return 0;
   const s = typeof v === "string" ? v.trim() : String(v);
-  if (s === "" || s === "N/A" || s === "n/a" || s === "-" || s === "—" || s === "–") return 0;
+  if (s === "" || s === "N/A" || s === "n/a" || s === "-" || s === "â€”" || s === "â€“") return 0;
   const cleaned = s.replace(/[,$\s]/g, "");
   const n = Number(cleaned);
   if (Number.isNaN(n)) return 0;
@@ -429,7 +451,7 @@ function normalizeScaleNote(s: string | undefined): string | undefined {
 }
 
 // ---------------------------------------------------------------------------
-// Section detection â€” find the right text for each AI call
+// Section detection Ã¢â‚¬â€ find the right text for each AI call
 // ---------------------------------------------------------------------------
 
 /**
@@ -504,7 +526,7 @@ function extractSections(text: string): {
     /note\s+\d+[\.\:\-\s]+(?:segment|business\s+segment|operating\s+segment)/i,
   ], 25_000);
 
-  // Equity statement â€” SBC is sometimes only shown here (e.g. recently-IPO'd companies)
+  // Equity statement Ã¢â‚¬â€ SBC is sometimes only shown here (e.g. recently-IPO'd companies)
   const equityText = findSection(text, [
     /(?:condensed\s+)?(?:consolidated\s+)?statements?\s+of\s+(changes\s+in\s+)?(stockholders|shareholders).?\s+equity/i,
     /(?:condensed\s+)?(?:consolidated\s+)?statements?\s+of\s+equity/i,
@@ -516,7 +538,7 @@ function extractSections(text: string): {
   // Combine MD&A + Notes for qualitative call
   const qualText = [mdaText, notesText].filter(Boolean).join("\n\n---\n\n");
 
-  // Segment text â€” combine segment section + MD&A (often has segment breakdowns)
+  // Segment text Ã¢â‚¬â€ combine segment section + MD&A (often has segment breakdowns)
   const segmentText = [segText, mdaText].filter(Boolean).join("\n\n---\n\n");
 
   return { bsText, isCfText, qualText, segmentText };
@@ -653,7 +675,7 @@ function repairCriticalFinancialValue(
   if (existingValue != null && Math.abs(existingValue) > 1) return;
 
   if (existing) {
-    console.log("[analyze-pdf:repair]", {
+    debugLog("[analyze-pdf:repair]", {
       metric,
       previous: existing.value,
       repaired: repaired.value,
@@ -664,7 +686,7 @@ function repairCriticalFinancialValue(
     existing.label = repaired.label;
     existing.source = repaired.source;
   } else {
-    console.log("[analyze-pdf:repair]", {
+    debugLog("[analyze-pdf:repair]", {
       metric,
       previous: null,
       repaired: repaired.value,
@@ -681,528 +703,9 @@ function repairCriticalFinancialValue(
   }
 }
 
-type RdMethod =
-  | "extracted"
-  | "derived_from_rd_tax_or_capitalization"
-  | "estimated_from_revenue_ratio";
-
-interface RdResolution {
-  rAndDExpense: number | null;
-  method: RdMethod | null;
-  rAndDPercentUsed: number | null;
-  rAndDPeriodBasis: "quarterly" | "ytd" | "annual" | null;
-}
-
-function resolveRnDExpense(opts: {
-  text: string;
-  scaleNote: string | undefined;
-  companyName: string | null | undefined;
-  existingRd: number | null;
-  currentRevenue: number | null;
-}): RdResolution {
-  const { text, scaleNote, companyName, existingRd, currentRevenue } = opts;
-
-  if (existingRd != null && Math.abs(existingRd) > 0) {
-    return {
-      rAndDExpense: Math.abs(existingRd),
-      method: "extracted",
-      rAndDPercentUsed: null,
-      rAndDPeriodBasis: null,
-    };
-  }
-
-  let scale = 1;
-  if (scaleNote === "thousands") scale = 0.001;
-  else if (scaleNote === "billions") scale = 1000;
-
-  const toMillions = (v: number): number => Math.round(v * scale * 100) / 100;
-  const isYearLike = (n: number): boolean => n >= 1900 && n <= 2100;
-
-  function numsFrom(s: string): number[] {
-    const out: number[] = [];
-    const re = /\(?([\d,]+(?:\.\d+)?)\)?/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(s)) !== null) {
-      const n = parseFloat(m[1].replace(/,/g, ""));
-      if (!isNaN(n) && !isYearLike(n)) out.push(n);
-    }
-    return out;
-  }
-
-  function window(arr: string[], i: number, ahead = 3): string {
-    return arr.slice(i, i + 1 + ahead).join(" ");
-  }
-
-  function detectBasis(s: string): "quarterly" | "ytd" | "annual" {
-    const hasYtd =
-      /(?:nine|six)\s+months?\s+ended|year[-\s]*to[-\s]*date|ytd/i.test(s);
-    const hasQuarter =
-      /three\s+months?\s+ended|quarter(?:ly)?\s+(?:period|ended)?/i.test(s);
-    if (hasYtd) return "ytd";
-    if (hasQuarter) return "quarterly";
-    return "annual";
-  }
-
-  function selectByBasis(
-    nums: number[],
-    basis: "quarterly" | "ytd" | "annual"
-  ): number | null {
-    if (nums.length === 0) return null;
-    if (basis === "ytd") {
-      if (nums.length >= 3) return nums[2];
-      if (nums.length >= 2) return nums[1];
-      return nums[0];
-    }
-    if (basis === "quarterly") {
-      if (nums.length >= 1) return nums[0];
-      return null;
-    }
-    if (nums.length >= 1) return nums[0];
-    return null;
-  }
-
-  function selectPriorByBasis(
-    nums: number[],
-    basis: "quarterly" | "ytd" | "annual"
-  ): number | null {
-    if (nums.length < 2) return null;
-    if (basis === "ytd") {
-      if (nums.length >= 4) return nums[3];
-      return nums[1];
-    }
-    return nums[1];
-  }
-
-  function findRowValues(
-    chunk: string,
-    rowPattern: RegExp,
-    excludePattern?: RegExp
-  ): number[] {
-    const lines = chunk.split(/\n/);
-    for (let i = 0; i < lines.length; i++) {
-      if (!rowPattern.test(lines[i])) continue;
-      const candidate = window(lines, i, 2);
-      if (excludePattern && excludePattern.test(candidate)) continue;
-      const tailMatch = candidate.match(
-        /(?:research\s+and\s+development(?:\s+expense)?|r&d(?:\s+expense)?|product\s+development(?:\s+expense)?|revenues?|sales)(.*)/i
-      );
-      const tail = tailMatch ? tailMatch[1] : candidate;
-      const nums = numsFrom(tail).filter((n) => Math.abs(n) >= 0.1);
-      if (nums.length > 0) return nums;
-    }
-    return [];
-  }
-
-  const incomeSlice =
-    text.match(
-      /(?:condensed\s+)?(?:consolidated\s+)?statements?\s+of\s+(?:operations?|income|earnings)[\s\S]{0,18000}/i
-    )?.[0] ?? "";
-  const notesSlice =
-    text.match(
-      /notes\s+to\s+(?:the\s+)?(?:condensed\s+)?(?:consolidated\s+)?financial\s+statements[\s\S]{0,24000}/i
-    )?.[0] ?? "";
-
-  // Step 1: explicit R&D extraction (highest priority)
-  const directRowPattern =
-    /(?:research\s+and\s+development(?:\s+expense)?|r&d(?:\s+expense)?|product\s+development(?:\s+expense)?)/i;
-  const cluePattern =
-    /(capitaliz|deferred\s+tax|tax\s+benefit|tax\s+credit|capitalized)/i;
-
-  for (const chunk of [incomeSlice, notesSlice, text]) {
-    if (!chunk) continue;
-    const nums = findRowValues(chunk, directRowPattern, cluePattern);
-    if (nums.length > 0) {
-      return {
-        rAndDExpense: toMillions(Math.abs(nums[0])),
-        method: "extracted",
-        rAndDPercentUsed: null,
-        rAndDPeriodBasis: null,
-      };
-    }
-  }
-
-  // Step 2: capitalization / tax clue-derived proxy
-  const derivedPattern =
-    /(?:(?:research\s+and\s+development|r&d).*(?:capitaliz|deferred\s+tax|tax\s+benefit|tax\s+credit))|(?:(?:capitaliz|deferred\s+tax|tax\s+benefit|tax\s+credit).*(?:research\s+and\s+development|r&d))/i;
-  for (const chunk of [notesSlice, text]) {
-    if (!chunk) continue;
-    const nums = findRowValues(chunk, derivedPattern);
-    if (nums.length > 0) {
-      return {
-        rAndDExpense: toMillions(Math.abs(nums[0])),
-        method: "derived_from_rd_tax_or_capitalization",
-        rAndDPercentUsed: null,
-        rAndDPeriodBasis: null,
-      };
-    }
-  }
-
-  // Step 3: estimate from revenue ratio fallback
-  const basis = detectBasis(text);
-  // Only trust injected currentRevenue when basis is not YTD.
-  let revenue =
-    basis !== "ytd" && currentRevenue != null && currentRevenue > 0
-      ? currentRevenue
-      : null;
-  if (revenue == null) {
-    const revenueNums = findRowValues(
-      incomeSlice || text,
-      /^(?:\s*)(?:total\s+)?(?:net\s+)?(?:revenues?|sales)\b/i
-    );
-    const selectedRevenue = selectByBasis(revenueNums, basis);
-    if (selectedRevenue != null && selectedRevenue > 0) {
-      revenue = toMillions(Math.abs(selectedRevenue));
-    }
-  }
-
-  if (revenue == null || revenue <= 0) {
-    return {
-      rAndDExpense: null,
-      method: null,
-      rAndDPercentUsed: null,
-      rAndDPeriodBasis: null,
-    };
-  }
-
-  // Try historical intensity (prior period R&D / prior period revenue)
-  let pctUsed = 0;
-  const rdSeries = findRowValues(incomeSlice || text, directRowPattern, cluePattern);
-  const revSeries = findRowValues(
-    incomeSlice || text,
-    /(?:total\s+)?(?:net\s+)?(?:revenues?|sales)\b/i
-  );
-  const rdPrior = selectPriorByBasis(rdSeries, basis);
-  const revPrior = selectPriorByBasis(revSeries, basis);
-  if (rdPrior != null && revPrior != null && Math.abs(revPrior) > 0) {
-    pctUsed = (Math.abs(rdPrior) / Math.abs(revPrior)) * 100;
-  } else {
-    const name = (companyName ?? "").toLowerCase();
-    if (name.includes("tyson")) pctUsed = 0.2;
-    else if (name.includes("smithfield")) pctUsed = 1.0;
-    else pctUsed = 0.6;
-  }
-
-  const estimated = Math.round((revenue * (pctUsed / 100)) * 100) / 100;
-  if (estimated <= 0) {
-    return {
-      rAndDExpense: null,
-      method: null,
-      rAndDPercentUsed: null,
-      rAndDPeriodBasis: null,
-    };
-  }
-
-  return {
-    rAndDExpense: estimated,
-    method: "estimated_from_revenue_ratio",
-    rAndDPercentUsed: Math.round(pctUsed * 1000) / 1000,
-    rAndDPeriodBasis: basis,
-  };
-}
 
 // ---------------------------------------------------------------------------
-// Heuristic: extract share repurchases from the cash flow statement, equity
-// statement, or equity notes when the AI extraction missed or zeroed the value.
-// ---------------------------------------------------------------------------
-
-function extractShareRepurchasesHeuristic(
-  text: string,
-  scaleNote: string | undefined
-): number | null {
-  let scale = 1;
-  if (scaleNote === "thousands") scale = 0.001;
-  else if (scaleNote === "billions") scale = 1000;
-
-  // All positive decimal/integer values from a string.
-  // Parenthesised values ("(26)") are treated as positive outflows.
-  function numsFrom(s: string): number[] {
-    const out: number[] = [];
-    const re = /\(?([\d,]+(?:\.\d+)?)\)?/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(s)) !== null) {
-      const n = parseFloat(m[1].replace(/,/g, ""));
-      if (!isNaN(n)) out.push(n);
-    }
-    return out;
-  }
-
-  // First parenthesised amount: "(26)" â†’ 26
-  function parseParen(s: string): number | null {
-    const m = s.match(/\(([\d,]+(?:\.\d+)?)\)/);
-    if (!m) return null;
-    const n = parseFloat(m[1].replace(/,/g, ""));
-    return isNaN(n) ? null : n;
-  }
-
-  // Build a lookahead window: the matched line plus up to `ahead` following lines.
-  // PDF table rows are frequently split so the label and value land on different lines.
-  function window(arr: string[], i: number, ahead = 3): string {
-    return arr.slice(i, i + 1 + ahead).join(" ");
-  }
-
-  const lines = text.split(/\n/);
-
-  // --- Priority 1: Cash flow financing section ---
-  // Label: "Purchases of Tyson Class A common stock", "Repurchases of common stock", etc.
-  const cfSectionMatch = text.match(
-    /(?:cash\s+flows?\s+(?:from|used\s+in)\s+financing|financing\s+activities)[\s\S]{0,5000}/i
-  );
-  if (cfSectionMatch) {
-    const cfLines = cfSectionMatch[0].split(/\n/);
-    const cfPattern =
-      /(?:purchases?|repurchases?)\s+of\s+(?:[\w\s]*?\s+)?(?:class\s+[a-z]\s+)?common\s+stock|treasury\s+stock\s+purchase/i;
-    for (let i = 0; i < cfLines.length; i++) {
-      if (cfPattern.test(cfLines[i])) {
-        const candidate = window(cfLines, i);
-        console.log("[repurchase:cf-stmt] label line:", cfLines[i].trim());
-        console.log("[repurchase:cf-stmt] candidate window:", candidate.trim());
-        const amt = parseParen(candidate);
-        if (amt != null && amt >= 1) {
-          console.log("[repurchase:cf-stmt] parsed (paren):", amt);
-          return Math.round(amt * scale * 100) / 100;
-        }
-        const nums = numsFrom(candidate).filter(n => n >= 1);
-        console.log("[repurchase:cf-stmt] nums:", nums);
-        if (nums.length > 0) {
-          return Math.round(nums[0] * scale * 100) / 100;
-        }
-      }
-    }
-  }
-
-  // --- Priority 2: Equity statement "Purchase of Class A common stock  (26)" ---
-  // The amount may be on the same line or on the next 1â€“3 lines.
-  const equityPattern = /purchase\s+of\s+(?:class\s+[a-z]\s+)?common\s+stock/i;
-  for (let i = 0; i < lines.length; i++) {
-    if (equityPattern.test(lines[i])) {
-      const candidate = window(lines, i);
-      console.log("[repurchase:equity-stmt] label line:", lines[i].trim());
-      console.log("[repurchase:equity-stmt] candidate window:", candidate.trim());
-      const amt = parseParen(candidate);
-      console.log("[repurchase:equity-stmt] parsed (paren):", amt);
-      if (amt != null && amt >= 1) {
-        return Math.round(amt * scale * 100) / 100;
-      }
-    }
-  }
-
-  // --- Priority 3: Note table "Total share repurchases  0.4  26  0.2  13" ---
-  // Table layout: [shares_recent, dollars_recent, shares_prior, dollars_prior]
-  // We want dollars_recent = nums[1] after the label.
-  // The numeric row may be on the next line when the PDF wraps.
-  const noteSliceMatch =
-    text.match(/note\s+\d+[^a-z]*equity[\s\S]{0,12000}/i) ??
-    text.match(/share\s+repurchase\s+program[\s\S]{0,6000}/i) ??
-    text.match(/repurchase\s+program[\s\S]{0,6000}/i);
-  const searchText = noteSliceMatch ? noteSliceMatch[0] : text;
-  const searchLines = searchText.split(/\n/);
-
-  const totalRowPattern = /total\s+(?:share\s+)?repurchases?/i;
-  for (let i = 0; i < searchLines.length; i++) {
-    if (totalRowPattern.test(searchLines[i])) {
-      const candidate = window(searchLines, i);
-      console.log("[repurchase:note-table] label line:", searchLines[i].trim());
-      console.log("[repurchase:note-table] candidate window:", candidate.trim());
-      // Extract numbers only from the portion after the matched label
-      const labelMatch = candidate.match(/total\s+(?:share\s+)?repurchases?(.*)/i);
-      const tail = labelMatch ? labelMatch[1] : candidate;
-      const nums = numsFrom(tail);
-      console.log("[repurchase:note-table] nums after label:", nums);
-      // nums[0] = share count (e.g. 0.4), nums[1] = dollar amount (e.g. 26)
-      if (nums.length >= 2 && nums[1] >= 1) {
-        return Math.round(nums[1] * scale * 100) / 100;
-      }
-      if (nums.length === 1 && nums[0] >= 1) {
-        return Math.round(nums[0] * scale * 100) / 100;
-      }
-    }
-  }
-
-  return null;
-}
-
-type EquityConfidence = "high" | "medium" | "low";
-
-interface EquityExtractionResult {
-  totalEquity: number | null;
-  labelUsed: string | null;
-  confidence: EquityConfidence;
-}
-
-function extractTotalEquityHeuristic(
-  text: string,
-  scaleNote: string | undefined
-): EquityExtractionResult {
-  let scale = 1;
-  if (scaleNote === "thousands") scale = 0.001;
-  else if (scaleNote === "billions") scale = 1000;
-
-  const lines = text
-    .split(/\n/)
-    .map((line) => line.replace(/\s+/g, " ").trim())
-    .filter(Boolean);
-
-  const liabilitiesAndEquityPattern =
-    /total\s+liabilities\s+(and|&)\s+((stock|share)holders?['\u2019]?\s+equity|equity)/i;
-  const totalLiabilitiesPattern = /^total\s+liabilities\b/i;
-  const companySpecificPattern =
-    /^company\s+shareholders?['\u2019]?\s+equity\b/i;
-
-  const equityPatterns: Array<{
-    pattern: RegExp;
-    confidence: EquityConfidence;
-    isTotal: boolean;
-  }> = [
-    {
-      pattern: /^total\s+shareholders?['\u2019]?\s+equity\b/i,
-      confidence: "high",
-      isTotal: true,
-    },
-    {
-      pattern: /^total\s+stockholders?['\u2019]?\s+equity\b/i,
-      confidence: "high",
-      isTotal: true,
-    },
-    {
-      pattern: /^total\s+shareholders?['\u2019]?\s+investment\b/i,
-      confidence: "high",
-      isTotal: true,
-    },
-    {
-      pattern: /^total\s+stockholders?['\u2019]?\s+investment\b/i,
-      confidence: "high",
-      isTotal: true,
-    },
-    {
-      pattern: /^total\s+equity\b/i,
-      confidence: "medium",
-      isTotal: true,
-    },
-    {
-      pattern: /^shareholders?['\u2019]?\s+investment\b/i,
-      confidence: "medium",
-      isTotal: false,
-    },
-  ];
-
-  function parseNumbers(input: string): number[] {
-    const out: number[] = [];
-    const re = /\(([\d,]+(?:\.\d+)?)\)|(-?\d{1,3}(?:,\d{3})*(?:\.\d+)?)/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(input)) !== null) {
-      const raw = m[1] ?? m[2];
-      if (!raw) continue;
-      const parsed = parseFloat(raw.replace(/,/g, ""));
-      if (Number.isNaN(parsed)) continue;
-      const value = m[1] ? -parsed : parsed;
-      // Filter likely year headers (e.g. 2025) from OCR/table text.
-      if (
-        value >= 1900 &&
-        value <= 2100 &&
-        !raw.includes(",") &&
-        !raw.includes(".")
-      ) {
-        continue;
-      }
-      out.push(value);
-    }
-    return out;
-  }
-
-  interface Candidate {
-    idx: number;
-    label: string;
-    valueRaw: number;
-    confidence: EquityConfidence;
-    isTotal: boolean;
-    isCompanySpecific: boolean;
-  }
-
-  let finalLiabilitiesAndEquityIdx = -1;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (liabilitiesAndEquityPattern.test(lines[i])) {
-      finalLiabilitiesAndEquityIdx = i;
-      break;
-    }
-  }
-
-  let startIdx = 0;
-  let endIdx = lines.length - 1;
-  if (finalLiabilitiesAndEquityIdx !== -1) {
-    startIdx = Math.max(0, finalLiabilitiesAndEquityIdx - 160);
-    endIdx = finalLiabilitiesAndEquityIdx;
-    for (let i = finalLiabilitiesAndEquityIdx; i >= startIdx; i--) {
-      if (totalLiabilitiesPattern.test(lines[i])) {
-        startIdx = i;
-        break;
-      }
-    }
-  }
-
-  const candidates: Candidate[] = [];
-
-  for (let i = startIdx; i <= endIdx; i++) {
-    const label = lines[i];
-    const matchedPattern = equityPatterns.find((p) => p.pattern.test(label));
-    const isCompanySpecific = companySpecificPattern.test(label);
-    if (!matchedPattern && !isCompanySpecific) continue;
-
-    const context = lines.slice(i, Math.min(lines.length, i + 3)).join(" ");
-    const tail = context.slice(label.length).trim();
-    const values = parseNumbers(tail);
-    const valuesFallback = values.length > 0 ? values : parseNumbers(context);
-    if (valuesFallback.length === 0) continue;
-
-    candidates.push({
-      idx: i,
-      label,
-      valueRaw: valuesFallback[0],
-      confidence: matchedPattern?.confidence ?? "low",
-      isTotal: matchedPattern?.isTotal ?? false,
-      isCompanySpecific,
-    });
-  }
-
-  if (candidates.length === 0) {
-    return { totalEquity: null, labelUsed: null, confidence: "low" };
-  }
-
-  const nonCompanyTotalCandidates = candidates.filter(
-    (c) => c.isTotal && !c.isCompanySpecific
-  );
-  const nonCompanyCandidates = candidates.filter((c) => !c.isCompanySpecific);
-
-  const selected =
-    nonCompanyTotalCandidates[nonCompanyTotalCandidates.length - 1] ??
-    nonCompanyCandidates[nonCompanyCandidates.length - 1] ??
-    candidates[candidates.length - 1];
-
-  const totalEquity = Math.round(selected.valueRaw * scale * 100) / 100;
-  return {
-    totalEquity,
-    labelUsed: selected.label,
-    confidence: selected.confidence,
-  };
-}
-
-function computeBalanceGapPct(
-  assets: number | null,
-  liabilities: number | null,
-  equity: number | null
-): number {
-  if (
-    assets == null ||
-    liabilities == null ||
-    equity == null ||
-    assets === 0
-  ) {
-    return Number.POSITIVE_INFINITY;
-  }
-  return Math.abs(assets - (liabilities + equity)) / Math.abs(assets);
-}
-
-// ---------------------------------------------------------------------------
-// POST handler â€” 3 parallel AI calls
+// POST handler Ã¢â‚¬â€ 3 parallel AI calls
 // ---------------------------------------------------------------------------
 
 export async function POST(request: Request) {
@@ -1228,7 +731,7 @@ export async function POST(request: Request) {
 
   const model = process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini";
 
-  // Split text into sections (≥500 chars, financial keywords passed guard)
+  // Split text into sections (â‰¥500 chars, financial keywords passed guard)
   const { bsText, isCfText, qualText, segmentText } = extractSections(filingText);
 
   // Fallback: if section detection found nothing, use the full text (truncated)
@@ -1240,10 +743,10 @@ export async function POST(request: Request) {
   try {
     // Run 5 AI calls in parallel (4 extraction + 1 non-recurring)
     const [bsCall, isCfCall, qualCall, segCall, nonRecurringItems] = await Promise.all([
-      callOpenAI(apiKey, model, BS_PROMPT, `Extract balance sheet data:\n\n${bsInput}`, 4000),
-      callOpenAI(apiKey, model, IS_CF_PROMPT, `Extract income statement and cash flow data:\n\n${isCfInput}`, 4000),
-      callOpenAI(apiKey, model, QUALITATIVE_PROMPT, `Extract qualitative insights:\n\n${qualInput}`, 4000),
-      callOpenAI(apiKey, model, SEGMENT_PROMPT, `Extract segment data:\n\n${segInput}`, 3000),
+      callOpenAI(apiKey, model, BS_PROMPT, `Extract balance sheet data:\n\n${bsInput}`, tokensFor(bsInput)),
+      callOpenAI(apiKey, model, IS_CF_PROMPT, `Extract income statement and cash flow data:\n\n${isCfInput}`, tokensFor(isCfInput)),
+      callOpenAI(apiKey, model, QUALITATIVE_PROMPT, `Extract qualitative insights:\n\n${qualInput}`, tokensFor(qualInput)),
+      callOpenAI(apiKey, model, SEGMENT_PROMPT, `Extract segment data:\n\n${segInput}`, tokensFor(segInput, 1000, 3000)),
       extractNonRecurringItems(filingText, apiKey, model),
     ]);
 
@@ -1252,32 +755,14 @@ export async function POST(request: Request) {
       .filter((e): e is string => Boolean(e));
 
     if (aiErrors.length > 0) {
-      console.warn("[analyze-pdf] OpenAI extraction warnings:", aiErrors);
+      warnLog("[analyze-pdf] OpenAI extraction warnings:", aiErrors);
     }
 
-    // Parse BS
-    let bsExtraction: BsExtraction = {};
-    if (bsCall.content) {
-      try { bsExtraction = JSON.parse(bsCall.content); } catch { /* ignore */ }
-    }
-
-    // Parse IS/CF
-    let isCfExtraction: IsCfExtraction = {};
-    if (isCfCall.content) {
-      try { isCfExtraction = JSON.parse(isCfCall.content); } catch { /* ignore */ }
-    }
-
-    // Parse Qualitative
-    let qualExtraction: QualExtraction = {};
-    if (qualCall.content) {
-      try { qualExtraction = JSON.parse(qualCall.content); } catch { /* ignore */ }
-    }
-
-    // Parse Segments
-    let segExtraction: SegmentExtraction = {};
-    if (segCall.content) {
-      try { segExtraction = JSON.parse(segCall.content); } catch { /* ignore */ }
-    }
+    // Parse all AI responses (DRY helper replaces 4 repetitive try/catch blocks)
+    const bsExtraction = parseJsonCall<BsExtraction>(bsCall, {});
+    const isCfExtraction = parseJsonCall<IsCfExtraction>(isCfCall, {});
+    const qualExtraction = parseJsonCall<QualExtraction>(qualCall, {});
+    const segExtraction = parseJsonCall<SegmentExtraction>(segCall, {});
 
     const bsParsed = parseAiEnvelope(bsExtraction);
     const isCfParsed = parseAiEnvelope(isCfExtraction);
@@ -1315,66 +800,55 @@ export async function POST(request: Request) {
     );
     const bsItems: BSItem[] = dedupeByTagPreferPdf([...bsFromParsed, ...bsFromLegacy]);
 
-    const equityCandidate = extractTotalEquityHeuristic(filingText, scaleForHeuristics);
-    if (equityCandidate.totalEquity != null) {
-      const assetsValue =
-        bsItems.find((item) => item.tag === "Assets")?.value ?? null;
-      const liabilitiesValue =
-        bsItems.find((item) => item.tag === "Liabilities")?.value ?? null;
-      const existingEquityItem = bsItems.find(
-        (item) => item.tag === "StockholdersEquity"
-      );
-      const existingEquityValue = existingEquityItem?.value ?? null;
-      const existingEquityLooksCompanySpecific = existingEquityItem
-        ? /^company\s+shareholders?['\u2019]?\s+equity/i.test(
-            existingEquityItem.label
-          )
-        : false;
+    // Guard: only run equity heuristic if AI equity is missing or zero
+    const existingEquityItem = bsItems.find((item) => item.tag === "StockholdersEquity");
+    const equityMissing = existingEquityItem == null || Math.abs(existingEquityItem.value) === 0;
+    if (equityMissing) {
+      const equityCandidate = extractTotalEquityHeuristic(filingText, scaleForHeuristics);
+      if (equityCandidate.totalEquity != null) {
+        const assetsValue = bsItems.find((item) => item.tag === "Assets")?.value ?? null;
+        const liabilitiesValue = bsItems.find((item) => item.tag === "Liabilities")?.value ?? null;
+        const existingEquityValue = existingEquityItem?.value ?? null;
+        const existingEquityLooksCompanySpecific = existingEquityItem
+          ? /^company\s+shareholders?['\u2019]?\s+equity/i.test(existingEquityItem.label)
+          : false;
 
-      const currentGap = computeBalanceGapPct(
-        assetsValue,
-        liabilitiesValue,
-        existingEquityValue
-      );
-      const candidateGap = computeBalanceGapPct(
-        assetsValue,
-        liabilitiesValue,
-        equityCandidate.totalEquity
-      );
+        const currentGap = computeBalanceGapPct(assetsValue, liabilitiesValue, existingEquityValue);
+        const candidateGap = computeBalanceGapPct(assetsValue, liabilitiesValue, equityCandidate.totalEquity);
 
-      const shouldUseCandidate =
-        existingEquityItem == null ||
-        existingEquityValue === 0 ||
-        existingEquityLooksCompanySpecific ||
-        (Number.isFinite(candidateGap) &&
-          (!Number.isFinite(currentGap) || candidateGap < currentGap)) ||
-        (equityCandidate.confidence === "high" && !Number.isFinite(currentGap));
+        const shouldUseCandidate =
+          existingEquityItem == null ||
+          existingEquityValue === 0 ||
+          existingEquityLooksCompanySpecific ||
+          (Number.isFinite(candidateGap) &&
+            (!Number.isFinite(currentGap) || candidateGap < currentGap)) ||
+          (equityCandidate.confidence === "high" && !Number.isFinite(currentGap));
 
-      if (shouldUseCandidate) {
-        if (existingEquityItem) {
-          existingEquityItem.value = equityCandidate.totalEquity;
-          existingEquityItem.label =
-            equityCandidate.labelUsed ?? existingEquityItem.label;
-          existingEquityItem.source = `heuristic:equity:${equityCandidate.confidence}`;
-        } else {
-          bsItems.push({
-            tag: "StockholdersEquity",
-            label: equityCandidate.labelUsed ?? "Total equity",
-            value: equityCandidate.totalEquity,
-            period,
-            source: `heuristic:equity:${equityCandidate.confidence}`,
-          });
+        if (shouldUseCandidate) {
+          if (existingEquityItem) {
+            existingEquityItem.value = equityCandidate.totalEquity;
+            existingEquityItem.label = equityCandidate.labelUsed ?? existingEquityItem.label;
+            existingEquityItem.source = `heuristic:equity:${equityCandidate.confidence}`;
+          } else {
+            bsItems.push({
+              tag: "StockholdersEquity",
+              label: equityCandidate.labelUsed ?? "Total equity",
+              value: equityCandidate.totalEquity,
+              period,
+              source: `heuristic:equity:${equityCandidate.confidence}`,
+            });
+          }
         }
-      }
 
-      console.log("[equity:heuristic-candidate]", {
-        selectedLabel: equityCandidate.labelUsed,
-        selectedValue: equityCandidate.totalEquity,
-        confidence: equityCandidate.confidence,
-        shouldUseCandidate,
-        currentGap,
-        candidateGap,
-      });
+        debugLog("[equity:heuristic-candidate]", {
+          selectedLabel: equityCandidate.labelUsed,
+          selectedValue: equityCandidate.totalEquity,
+          confidence: equityCandidate.confidence,
+          shouldUseCandidate,
+          currentGap,
+          candidateGap,
+        });
+      }
     }
 
     const cfFromParsed = isCfParsed.items
@@ -1412,16 +886,13 @@ export async function POST(request: Request) {
     );
     const hasValidRepurchase =
       existingRepurchase != null && Math.abs(existingRepurchase.value) > 0;
-    console.log(
-      "[repurchase:guard] hasValidRepurchase:", hasValidRepurchase,
-      "existing value:", existingRepurchase?.value ?? "none"
-    );
+    debugLog("[repurchase:guard] hasValidRepurchase:", hasValidRepurchase, "existing value:", existingRepurchase?.value ?? "none");
     if (!hasValidRepurchase) {
       const heuristicValue = extractShareRepurchasesHeuristic(
         filingText,
         scaleForHeuristics
       );
-      console.log("[repurchase:heuristic] heuristicValue:", heuristicValue);
+      debugLog("[repurchase:heuristic] heuristicValue:", heuristicValue);
       if (heuristicValue != null && heuristicValue > 0) {
         if (existingRepurchase) {
           // Overwrite the zero AI value in place so deduplication is not needed downstream
@@ -1439,19 +910,7 @@ export async function POST(request: Request) {
         }
       }
     }
-    const finalRepurchaseItem = cfItems.find(
-      (i) => i.tag === "PaymentsForRepurchaseOfCommonStock"
-    );
-    console.log("[repurchase:final-cfItem]", finalRepurchaseItem ?? null);
-    console.log(
-      "[repurchase:cfItems-after-heuristic]",
-      cfItems.map((i) => ({
-        tag: i.tag,
-        label: i.label,
-        value: i.value,
-        source: i.source,
-      }))
-    );
+    debugLog("[repurchase:final-cfItem]", cfItems.find((i) => i.tag === "PaymentsForRepurchaseOfCommonStock") ?? null);
 
     // Debt repayment classification:
     // 1) direct LT repayment line wins
@@ -1505,7 +964,7 @@ export async function POST(request: Request) {
       paymentsOnDebtItem.label = "Total debt repayments (mixed)";
       paymentsOnDebtItem.source = "mixed_debt_repayment";
     }
-    console.log("[debt-repay:classification]", {
+    debugLog("[debt-repay:classification]", {
       label: debtRepaymentLabel,
       directLt: directLtDebtRepayItem?.value ?? null,
       paymentsOnDebt: paymentsOnDebtItem?.value ?? null,
@@ -1515,7 +974,7 @@ export async function POST(request: Request) {
 
     // R&D fallback chain:
     // We only auto-fill when an explicit R&D line is found in the PDF text.
-    // If not explicit, leave missing so UI shows "â€”" instead of forced estimates.
+    // If not explicit, leave missing so UI shows "Ã¢â‚¬â€" instead of forced estimates.
     const existingRdItem = cfItems.find(
       (i) => i.tag === "ResearchAndDevelopmentExpense"
     );
@@ -1535,7 +994,7 @@ export async function POST(request: Request) {
       existingRd: hasValidRd ? existingRdItem!.value : null,
       currentRevenue: revenueItem != null ? Math.abs(revenueItem.value) : null,
     });
-    console.log("[rd:resolution]", rdResolution);
+    debugLog("[rd:resolution]", rdResolution);
 
     // Inline guards (not a precomputed boolean) so TS narrows rAndDExpense to number.
     if (
@@ -1564,13 +1023,13 @@ export async function POST(request: Request) {
         });
       }
     } else if (!hasValidRd) {
-      console.log("[rd:skip-backfill]", {
+      debugLog("[rd:skip-backfill]", {
         reason: "non-explicit or unavailable R&D value",
         method: rdResolution.method,
         candidate: rdResolution.rAndDExpense,
       });
     }
-    console.log(
+    debugLog(
       "[rd:final-cfItem]",
       cfItems.find((i) => i.tag === "ResearchAndDevelopmentExpense") ?? null
     );
@@ -1611,7 +1070,7 @@ export async function POST(request: Request) {
         extractionMethod: "pdf-ai-partial",
       });
 
-      console.warn("[analyze-pdf] Degraded extraction mode:", reasons);
+      warnLog("[analyze-pdf] Degraded extraction mode:", reasons);
 
       return NextResponse.json({
         analysis: degradedAnalysis,
@@ -1631,7 +1090,7 @@ export async function POST(request: Request) {
       confidence: "medium",
       extractionMethod: "pdf-ai",
     });
-    console.log(
+    debugLog(
       "[repurchase:final-render-value]",
       analysis.cashFlow.shareRepurchases
     );
