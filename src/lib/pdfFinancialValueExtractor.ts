@@ -7,7 +7,31 @@ export type PdfFinancialMetric =
   | "cashAndEquivalents"
   | "operatingIncome"
   | "operatingCashFlow"
-  | "capitalExpenditures";
+  | "capitalExpenditures"
+  | "dividendsPaid"
+  /** Equity roll-forward or supplemental — often missing from CF extract */
+  | "stockBasedCompensation"
+  /** Cash flow — largest add-back for EBITDA */
+  | "depreciationDepletionAndAmortization"
+  | "interestExpense"
+  | "incomeTaxExpense"
+  | "incomeBeforeIncomeTaxes"
+  /** Balance sheet — liquidity & leverage */
+  | "totalCurrentAssets"
+  | "totalCurrentLiabilities"
+  | "longTermDebtNoncurrent"
+  | "currentMaturitiesLongTermDebt"
+  | "shortTermBorrowings"
+  | "inventories"
+  | "accountsReceivable"
+  | "propertyPlantAndEquipment"
+  | "retainedEarnings"
+  | "goodwill"
+  | "accountsPayable"
+  /** Supplemental tables (Other Key Financial Measures, debt footnotes) */
+  | "ebitda"
+  | "grossDebt"
+  | "supplementalNetDebt";
 
 type PdfSection =
   | "unknown"
@@ -15,7 +39,8 @@ type PdfSection =
   | "income"
   | "cash_flow"
   | "equity"
-  | "notes";
+  | "notes"
+  | "key_measures";
 
 export interface PdfFinancialValue {
   metric: PdfFinancialMetric;
@@ -25,6 +50,45 @@ export interface PdfFinancialValue {
   source: string;
   raw: string;
   confidence: "high" | "medium" | "low";
+  /** 0-based index into `filingText.split("\n")` for the matched line (provenance / page mapping). */
+  filingLineIndex?: number;
+  /** Normalized label text from the matched line (for `PDF:pN:"..."` quotes). */
+  matchedRowLabel?: string;
+}
+
+/**
+ * Map a line index in the full filing string to a 1-based PDF page when the client
+ * joins pages with `--- Page Break ---` (see `extractPdfLines` in pdfAnalysis.ts).
+ */
+export function pageForFilingLineIndex(
+  filingText: string,
+  lineIndex0: number
+): number | null {
+  if (!filingText.trim()) return null;
+  const lines = filingText.split("\n");
+  if (lineIndex0 < 0 || lineIndex0 >= lines.length) return null;
+  let page = 1;
+  for (let i = 0; i < lineIndex0; i++) {
+    if (/^---\s*Page Break\s*---$/i.test(lines[i].trim())) page++;
+  }
+  return Math.max(1, page);
+}
+
+/** Prefer `PDF:pN:"row label"` when the filing uses `--- Page Break ---` page markers. */
+export function buildHeuristicPdfProvenance(
+  repaired: PdfFinancialValue,
+  filingText: string
+): string {
+  const idx = repaired.filingLineIndex;
+  if (idx == null) return repaired.source;
+  const page = pageForFilingLineIndex(filingText, idx);
+  if (page == null) return repaired.source;
+  const lbl =
+    (repaired.matchedRowLabel && repaired.matchedRowLabel.trim()) ||
+    repaired.label ||
+    "row";
+  const safe = lbl.replace(/"/g, "'").slice(0, 120);
+  return `PDF:p${page}:"${safe}"`;
 }
 
 interface MetricConfig {
@@ -36,6 +100,8 @@ interface MetricConfig {
   fallbackSections?: PdfSection[];
   reject?: RegExp;
   abs?: boolean;
+  /** After scaling: ignore tiny matches (footnote noise vs real CF line). */
+  minAbs?: number;
 }
 
 interface ParsedLine {
@@ -160,9 +226,252 @@ const METRICS: Record<PdfFinancialMetric, MetricConfig> = {
       /\b(proceeds|sale|disposal|depreciation|amortization|impairment|lease|right-of-use|held\s+for\s+sale)\b/i,
     abs: true,
   },
+  dividendsPaid: {
+    tag: "PaymentsOfDividends",
+    label: "Dividends paid",
+    patterns: [
+      /^dividends?\b/i,
+      /^payments?\s+of\s+dividends?\b/i,
+      /^cash\s+dividends?\s+paid\b/i,
+    ],
+    exactLabel: /^dividends?(?:\s+paid)?$/i,
+    preferredSections: ["cash_flow"],
+    reject:
+      /\b(declared|per\s+share|common\s+stock\s+per|rate|yield|policy|restricted|commodity|derivative|contract|income|receivable|payable\s+to)\b/i,
+    abs: true,
+    /** Drop footnote single-digit / per-line noise; financing section row is typically $100M+. */
+    minAbs: 15,
+  },
+  stockBasedCompensation: {
+    tag: "ShareBasedCompensation",
+    label: "Stock-based compensation",
+    patterns: [
+      /^stock[-\s]based\s+compensation\b/i,
+      /^share[-\s]based\s+compensation\b/i,
+      /^stock\s+compensation\b/i,
+    ],
+    exactLabel:
+      /^stock[-\s]based\s+compensation(?:\s+and\s+other)?$/i,
+    preferredSections: ["equity", "cash_flow"],
+    reject:
+      /\b(expense|per\s+share|plan|award|grant|unvested|treasury|purchase\s+of|assuming|diluted)\b/i,
+    abs: true,
+  },
+  depreciationDepletionAndAmortization: {
+    tag: "DepreciationDepletionAndAmortization",
+    label: "Depreciation & amortization (operating activities)",
+    patterns: [
+      /^depreciation\s+and\s+amortization\b/i,
+      /^depreciation\s*,\s*depletion\s+and\s+amortization\b/i,
+      /^depreciation\s+and\s+amortization\s+of\s+right-of-use\s+assets\b/i,
+      /^depreciation\s*$/i,
+    ],
+    exactLabel: /^depreciation\s+and\s+amortization$/i,
+    preferredSections: ["cash_flow"],
+    fallbackSections: ["notes"],
+    reject:
+      /\b(accumulated|less|net\s+of|beginning|ending|asset\s+retirement|reconciliation\s+of|supplemental\s+disclosure\s+of|property,\s*plant|pp&e|held\s+for\s+sale)\b/i,
+    abs: true,
+  },
+  interestExpense: {
+    tag: "InterestExpense",
+    label: "Interest expense",
+    patterns: [
+      /^interest\s+expense\b/i,
+      /^interest\s+expense,\s*net\b/i,
+      /^total\s+interest\s+expense\b/i,
+    ],
+    exactLabel: /^interest\s+expense(?:,\s*net)?$/i,
+    preferredSections: ["income"],
+    fallbackSections: ["notes"],
+    reject:
+      /\b(segment|per\s+share|eps|capitalized|net\s+interest|derivative|fair\s+value|rate\s+swap|reconciliation\s+only)\b/i,
+    abs: true,
+  },
+  incomeTaxExpense: {
+    tag: "IncomeTaxExpenseBenefit",
+    label: "Income tax expense",
+    patterns: [
+      /^income\s+tax\s+expense\b/i,
+      /^provision\s+for\s+income\s+taxes\b/i,
+      /^income\s+tax\s+benefit\b/i,
+    ],
+    exactLabel:
+      /^(?:income\s+tax\s+expense|provision\s+for\s+income\s+taxes|income\s+tax\s+benefit)$/i,
+    preferredSections: ["income"],
+    reject: /\b(segment|per\s+share|deferred\s+only|rate\s+reconciliation)\b/i,
+    abs: true,
+  },
+  incomeBeforeIncomeTaxes: {
+    tag: "IncomeBeforeIncomeTaxes",
+    label: "Income before income taxes",
+    patterns: [
+      /^income\s+before\s+income\s+taxes\b/i,
+      /^income\s*\(?loss\)?\s+before\s+income\s+taxes\b/i,
+      /^earnings\s+before\s+income\s+taxes\b/i,
+    ],
+    exactLabel:
+      /^income\s*\(?loss\)?\s+before\s+income\s+taxes$/i,
+    preferredSections: ["income"],
+    reject: /\b(segment|per\s+share|adjusted|non-gaap)\b/i,
+  },
+  totalCurrentAssets: {
+    tag: "AssetsCurrent",
+    label: "Total current assets",
+    patterns: [/^total\s+current\s+assets\b/i],
+    exactLabel: /^total\s+current\s+assets$/i,
+    preferredSections: ["balance_sheet"],
+    reject: /\b(segment|disclosure|pension|plan)\b/i,
+  },
+  totalCurrentLiabilities: {
+    tag: "LiabilitiesCurrent",
+    label: "Total current liabilities",
+    patterns: [/^total\s+current\s+liabilities\b/i],
+    exactLabel: /^total\s+current\s+liabilities$/i,
+    preferredSections: ["balance_sheet"],
+    reject: /\b(segment|disclosure)\b/i,
+  },
+  longTermDebtNoncurrent: {
+    tag: "LongTermDebtNoncurrent",
+    label: "Long-term debt",
+    patterns: [
+      /^long[-\s]term\s+debt\b/i,
+      /^long[-\s]term\s+debt\s+excluding\b/i,
+    ],
+    exactLabel: /^long[-\s]term\s+debt$/i,
+    preferredSections: ["balance_sheet"],
+    reject:
+      /\b(interest\s+expense|fair\s+value|derivative|net\s+of|current\s+portion|maturities|weighted|average|rate)\b/i,
+    abs: true,
+  },
+  currentMaturitiesLongTermDebt: {
+    tag: "LongTermDebtCurrent",
+    label: "Current maturities of long-term debt",
+    patterns: [
+      /current\s+(?:portion|maturities)\s+of\s+long[-\s]term\s+debt/i,
+      /less:\s*current\s+maturities\s+of\s+long[-\s]term\s+debt/i,
+    ],
+    exactLabel: /current\s+maturities\s+of\s+long[-\s]term\s+debt/i,
+    preferredSections: ["balance_sheet"],
+    abs: true,
+  },
+  shortTermBorrowings: {
+    tag: "ShortTermBorrowings",
+    label: "Short-term borrowings / commercial paper",
+    patterns: [
+      /^commercial\s+paper\b/i,
+      /^short[-\s]term\s+(?:debt|borrowings)\b/i,
+      /^notes\s+payable\s+to\s+banks\b/i,
+    ],
+    exactLabel: /^(?:commercial\s+paper|short[-\s]term\s+borrowings)$/i,
+    preferredSections: ["balance_sheet"],
+    reject: /\b(interest\s+rate|weighted|average|fair\s+value)\b/i,
+    abs: true,
+  },
+  inventories: {
+    tag: "InventoryNet",
+    label: "Inventories",
+    patterns: [/^inventories\b/i, /^inventory\b/i],
+    exactLabel: /^inventories?$/i,
+    preferredSections: ["balance_sheet"],
+    reject:
+      /\b(increase|decrease|hedge|derivative|fair\s+value|change\s+in|carrying\s+amount|classification|commodity|forward)\b/i,
+    abs: true,
+  },
+  accountsReceivable: {
+    tag: "AccountsReceivableNetCurrent",
+    label: "Accounts receivable, net",
+    patterns: [/^accounts\s+receivable\b/i, /^trade\s+receivable\b/i],
+    exactLabel: /^accounts\s+receivable(?:,\s*net)?$/i,
+    preferredSections: ["balance_sheet"],
+    reject: /\b(increase|decrease|change\s+in|allowance|turnover|days|segment)\b/i,
+    abs: true,
+  },
+  propertyPlantAndEquipment: {
+    tag: "PropertyPlantAndEquipmentNet",
+    label: "PP&E, net",
+    patterns: [
+      /^(?:net\s+)?property,?\s*plant\s+and\s+equipment\b/i,
+      /^property\s+and\s+equipment,?\s*net\b/i,
+    ],
+    exactLabel:
+      /^(?:net\s+)?property,?\s*plant\s+and\s+equipment(?:,?\s*net)?$/i,
+    preferredSections: ["balance_sheet"],
+    reject:
+      /\b(additions|depreciation|accumulated|purchase|capital\s+expenditure|impairment|disposal|segment)\b/i,
+    abs: true,
+  },
+  retainedEarnings: {
+    tag: "RetainedEarningsAccumulatedDeficit",
+    label: "Retained earnings",
+    patterns: [/^retained\s+earnings\b/i, /^accumulated\s+deficit\b/i],
+    exactLabel:
+      /^retained\s+earnings(?:\s*\(?accumulated\s+deficit\)?)?$|^accumulated\s+deficit$/i,
+    preferredSections: ["balance_sheet", "equity"],
+    reject:
+      /\b(increase|decrease|change\s+in|beginning|ending|dividends|net\s+income|segment|per\s+share)\b/i,
+  },
+  goodwill: {
+    tag: "Goodwill",
+    label: "Goodwill",
+    patterns: [/^goodwill\b/i],
+    exactLabel: /^goodwill$/i,
+    preferredSections: ["balance_sheet"],
+    reject:
+      /\b(impairment|increase|decrease|change\s+in|acquired|accumulated|roll\s*forward|segment|beginning|ending)\b/i,
+    abs: true,
+  },
+  accountsPayable: {
+    tag: "AccountsPayableCurrent",
+    label: "Accounts payable",
+    patterns: [
+      /^accounts\s+payable\b/i,
+      /^trade\s+payable\b/i,
+      /^trade\s+accounts\s+payable\b/i,
+    ],
+    exactLabel: /^accounts\s+payable(?:\s+and\s+accrued\s+liabilities)?$/i,
+    preferredSections: ["balance_sheet"],
+    reject:
+      /\b(increase|decrease|change\s+in|turnover|days|segment|accrued\s+expense)\b/i,
+    abs: true,
+  },
+  ebitda: {
+    tag: "EBITDA",
+    label: "EBITDA",
+    patterns: [/^ebitda\b/i, /^adjusted\s+ebitda\b/i],
+    exactLabel: /^(?:adjusted\s+)?ebitda(?:\s*\([^)]+\))?$/i,
+    preferredSections: ["key_measures", "income", "notes"],
+    fallbackSections: ["cash_flow"],
+    reject:
+      /\b(margin|ratio|conversion|coverage|net\s+debt\s*\/?\s*ebitda|ebitda\s+to\b|defined\s+as|represents)\b/i,
+    abs: true,
+  },
+  grossDebt: {
+    tag: "GrossDebt",
+    label: "Total gross debt",
+    patterns: [/^total\s+gross\s+debt\b/i, /^total\s+debt\b/i],
+    exactLabel: /^(?:total\s+gross\s+debt|total\s+debt)$/i,
+    preferredSections: ["key_measures", "balance_sheet", "notes"],
+    fallbackSections: ["income", "cash_flow"],
+    reject: /\b(long[\s-]*term|net\s+debt|maturities|current\s+portion|weighted|average|rate)\b/i,
+    abs: true,
+  },
+  supplementalNetDebt: {
+    tag: "TotalNetDebtSupplemental",
+    label: "Total net debt",
+    patterns: [/^total\s+net\s+debt\b/i],
+    exactLabel: /^total\s+net\s+debt$/i,
+    preferredSections: ["key_measures", "notes"],
+    fallbackSections: ["balance_sheet", "income"],
+    reject: /\b(ratio|to\s+ebitda|margin|coverage)\b/i,
+    abs: true,
+  },
 };
 
 const SECTION_PATTERNS: Array<[RegExp, PdfSection]> = [
+  [/other\s+key\s+financial\s+measures/i, "key_measures"],
+  [/key\s+financial\s+measures/i, "key_measures"],
+  [/non-gaap\s+financial\s+measures/i, "key_measures"],
   [/condensed\s+consolidated\s+balance\s+sheets?/i, "balance_sheet"],
   [/consolidated\s+balance\s+sheets?/i, "balance_sheet"],
   [/balance\s+sheets?/i, "balance_sheet"],
@@ -299,6 +608,8 @@ function scoreCandidate(line: ParsedLine, config: MetricConfig, value: number): 
   else if (config.fallbackSections?.includes(line.section)) score += 15;
   else if (line.section === "unknown") score += 10;
   else if (line.section === "notes") score -= 15;
+  else if (line.section === "key_measures" && !config.preferredSections.includes("key_measures"))
+    score -= 8;
   else score -= 10;
 
   if (config.exactLabel.test(line.label)) score += 15;
@@ -344,6 +655,7 @@ export function extractPdfFinancialValue(
     const selected = line.numbers[0];
     const rawValue = config.abs ? Math.abs(selected) : selected;
     const value = Math.round(rawValue * scale * 100) / 100;
+    if (config.minAbs != null && Math.abs(value) < config.minAbs) continue;
     const score = scoreCandidate(line, config, value);
 
     if (!best || score > best.score) {
@@ -361,5 +673,7 @@ export function extractPdfFinancialValue(
     source: `heuristic:${metric}:line${best.line.idx + 1}`,
     raw: best.line.raw,
     confidence: confidenceFromScore(best.score),
+    filingLineIndex: best.line.idx,
+    matchedRowLabel: best.line.label.replace(/\s+/g, " ").trim().slice(0, 120),
   };
 }

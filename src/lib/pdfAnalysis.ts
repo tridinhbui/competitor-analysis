@@ -14,7 +14,11 @@
 import type { BSItem, FullAnalysis, StepEvent } from "@/types/analysis";
 import { PIPELINE_STEPS } from "@/types/analysis";
 import { assembleAnalysis } from "./analysisEngine";
-import { extractPdfFinancialValue, type PdfFinancialMetric } from "./pdfFinancialValueExtractor";
+import {
+  buildHeuristicPdfProvenance,
+  extractPdfFinancialValue,
+  type PdfFinancialMetric,
+} from "./pdfFinancialValueExtractor";
 
 // ---------------------------------------------------------------------------
 // Load pdfjs from /public via native browser ESM import (bypasses webpack).
@@ -634,26 +638,46 @@ function heuristicExtract(lines: PdfLine[]): { bs: BSItem[]; cf: BSItem[] } {
     }
   }
 
-  const repairText = lines.map((line) => line.text).join("\n");
+  const repairText = lines
+    .map((line, i) => {
+      if (i === 0) return line.text;
+      const prev = lines[i - 1];
+      if (line.page > prev.page) return `\n\n--- Page Break ---\n\n${line.text}`;
+      return `\n${line.text}`;
+    })
+    .join("");
   function repairCriticalValue(metric: PdfFinancialMetric, items: BSItem[]): void {
     const repaired = extractPdfFinancialValue(repairText, metric);
     if (!repaired || Math.abs(repaired.value) <= 1) return;
 
     const existing = items.find((item) => item.tag === repaired.tag);
     const existingValue = existing?.value ?? null;
-    if (existingValue != null && Math.abs(existingValue) > 1) return;
+
+    const dividendsHeuristicReplacesSuspiciousExisting =
+      metric === "dividendsPaid" &&
+      existingValue != null &&
+      Math.abs(repaired.value) > 35 &&
+      Math.abs(repaired.value) >= Math.abs(existingValue) * 3;
+
+    if (
+      existingValue != null &&
+      Math.abs(existingValue) > 1 &&
+      !dividendsHeuristicReplacesSuspiciousExisting
+    ) {
+      return;
+    }
 
     if (existing) {
       existing.value = repaired.value;
       existing.label = repaired.label;
-      existing.source = repaired.source;
+      existing.source = buildHeuristicPdfProvenance(repaired, repairText);
     } else {
       items.push({
         tag: repaired.tag,
         label: repaired.label,
         value: repaired.value,
         period: periodLabel,
-        source: repaired.source,
+        source: buildHeuristicPdfProvenance(repaired, repairText),
       });
     }
   }
@@ -667,6 +691,8 @@ function heuristicExtract(lines: PdfLine[]): { bs: BSItem[]; cf: BSItem[] } {
   repairCriticalValue("netIncome", cf);
   repairCriticalValue("operatingCashFlow", cf);
   repairCriticalValue("capitalExpenditures", cf);
+  repairCriticalValue("dividendsPaid", cf);
+  repairCriticalValue("stockBasedCompensation", cf);
 
   // Repair path for total equity:
   // Prefer the FINAL total line in the equity section (e.g., "Total shareholders' equity"),

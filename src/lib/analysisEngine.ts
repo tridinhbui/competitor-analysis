@@ -16,6 +16,11 @@ import type {
   ValidationCheck,
 } from "@/types/analysis";
 import { enforceAccountingIdentity } from "@/lib/financialConsistency";
+import {
+  applyExtractionRepairs,
+  deriveEbitdaIfMissing,
+  pickDisclosedEbitdaValue,
+} from "@/lib/extractionRepairs";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -123,8 +128,12 @@ export function buildBalanceSheet(bs: BSItem[]): BalanceSheet {
     }
   }
 
-  const cash = find(bs, "CashAndCashEquivalentsAtCarryingValue");
-  const retained = find(bs, "RetainedEarningsAccumulatedDeficit");
+  const cash =
+    findOrNull(bs, "CashAndCashEquivalentsAtCarryingValue") ??
+    findOrNull(bs, "CashAndCashEquivalents") ??
+    0;
+  const retained =
+    findOrNull(bs, "RetainedEarningsAccumulatedDeficit", "RetainedEarnings");
 
   return {
     totalAssets,
@@ -141,22 +150,57 @@ export function buildBalanceSheet(bs: BSItem[]): BalanceSheet {
 // ---------------------------------------------------------------------------
 
 export function buildDebtStructure(bs: BSItem[]): DebtStructure {
-  const ltDebt =
-    find(bs, "LongTermDebtNoncurrent") || find(bs, "LongTermDebt");
+  // Sum all short-term / current debt pieces (do NOT use || — that drops components when DebtCurrent is non-zero).
   const stDebt =
-    find(bs, "DebtCurrent") ||
-    find(bs, "ShortTermBorrowings") + find(bs, "LongTermDebtCurrent");
-  const total = ltDebt + stDebt;
-  const cash = find(bs, "CashAndCashEquivalentsAtCarryingValue");
+    find(bs, "DebtCurrent") +
+    find(bs, "ShortTermBorrowings") +
+    find(bs, "LongTermDebtCurrent");
+
+  const ltNon = find(bs, "LongTermDebtNoncurrent");
+  const ltPlain = find(bs, "LongTermDebt");
+  let ltDebt = 0;
+  if (ltNon > 0 && ltPlain > 0) {
+    const mx = Math.max(ltNon, ltPlain);
+    const mn = Math.min(ltNon, ltPlain);
+    ltDebt = mx - mn < mx * 0.04 ? mx : ltNon + ltPlain;
+  } else {
+    ltDebt = ltNon || ltPlain;
+  }
+
+  const financeLease = find(bs, "FinanceLeaseLiabilityNoncurrent");
+  const computedGross = stDebt + ltDebt + financeLease;
+
+  const cashForDebt =
+    findOrNull(bs, "CashAndCashEquivalentsAtCarryingValue") ??
+    findOrNull(bs, "CashAndCashEquivalents") ??
+    0;
+
+  const grossFromTag = findOrNull(bs, "GrossDebt");
+  const netDebtSupplemental = findOrNull(bs, "TotalNetDebtSupplemental");
+  const grossFromNetPlusCash =
+    netDebtSupplemental != null && cashForDebt > 0
+      ? Math.abs(netDebtSupplemental) + cashForDebt
+      : null;
+
+  const total =
+    grossFromTag != null && Math.abs(grossFromTag) > 400
+      ? Math.abs(grossFromTag)
+      : grossFromNetPlusCash != null && grossFromNetPlusCash > 400
+        ? grossFromNetPlusCash
+        : computedGross;
+
+  const cash = cashForDebt;
   const netDebt = total - cash;
 
   const items = bs.filter((i) =>
     [
+      "GrossDebt",
       "LongTermDebt",
       "LongTermDebtNoncurrent",
       "LongTermDebtCurrent",
       "DebtCurrent",
       "ShortTermBorrowings",
+      "FinanceLeaseLiabilityNoncurrent",
     ].includes(i.tag)
   );
 
@@ -173,15 +217,41 @@ export function buildDebtStructure(bs: BSItem[]): DebtStructure {
 // Cash flow
 // ---------------------------------------------------------------------------
 
+/** Prefer the CapEx line from the cash flow / investing context, not supplemental EBITDA tables mis-tagged as PP&E. */
+function pickCapitalExpenditures(cf: BSItem[]): number | null {
+  const rows = cf.filter(
+    (i) => i.tag === "PaymentsToAcquirePropertyPlantAndEquipment"
+  );
+  if (rows.length === 0) return null;
+  if (rows.length === 1) return Math.abs(rows[0].value);
+
+  const ocf = findOrNull(cf, "NetCashProvidedByOperatingActivities");
+
+  const score = (lab: string, value: number): number => {
+    const l = lab.toLowerCase();
+    let s = 0;
+    if (/\bebitda\b|net\s+debt|gross\s+debt|key\s+financial\s+measures|ratio\s+calc|supplemental\s+disclosure/i.test(l))
+      s += 500;
+    if (/contractual\s+obligation|maturity|thereafter/i.test(l)) s += 300;
+    if (/capital\s+expenditure|purchase.*property|p\s*&\s*p\s*&\s*e|plant\s*(,|and)\s*equipment/i.test(l))
+      s -= 40;
+    const av = Math.abs(value);
+    if (ocf != null && ocf > 100 && av > ocf * 1.35) s += 200;
+    return s;
+  };
+
+  const ranked = [...rows].sort(
+    (a, b) => score(a.label ?? "", a.value) - score(b.label ?? "", b.value)
+  );
+  return Math.abs(ranked[0].value);
+}
+
 export function buildCashFlow(cf: BSItem[]): CashFlowData {
   const operatingCashFlow = findOrNull(
     cf,
     "NetCashProvidedByOperatingActivities"
   );
-  const capex = findOrNull(
-    cf,
-    "PaymentsToAcquirePropertyPlantAndEquipment"
-  );
+  const capex = pickCapitalExpenditures(cf);
   const dividendsPaid =
     findOrNull(cf, "PaymentsOfDividendsCommonStock") ??
     findOrNull(cf, "PaymentsOfDividends");
@@ -236,7 +306,22 @@ export function buildCashFlow(cf: BSItem[]): CashFlowData {
       hasAnyFinComponent = true;
     }
 
-    financingCashFlow = hasAnyFinComponent ? Math.round(derived) : null;
+    // Do not infer financing CF from one or two noisy lines — need enough independent legs
+    // (issuance, any repayment line, dividends, buybacks) or leave null so the UI shows —.
+    const hasRepaymentLine =
+      ltDebtRepayments != null ||
+      debtRepaymentsMixed != null ||
+      stDebtRepayments != null;
+    const reliableFinSlots = [
+      debtIssuance != null,
+      hasRepaymentLine,
+      dividendsPaid != null,
+      shareRepurchases != null,
+    ].filter(Boolean).length;
+    const hasEnoughFinComponents = reliableFinSlots >= 3;
+
+    financingCashFlow =
+      hasAnyFinComponent && hasEnoughFinComponents ? Math.round(derived) : null;
   }
 
   return {
@@ -364,8 +449,14 @@ export function buildIncomeStatement(cf: BSItem[], bs: BSItem[]): IncomeStatemen
       : amort != null
         ? Math.abs(amort)
         : null;
-  // EBITDA = EBIT + D&A only (never interest)
-  let ebitda = ebit != null && totalDA != null ? ebit + totalDA : null;
+  // Prefer company-disclosed EBITDA (e.g. "Other Key Financial Measures") over OI + D&A when tagged or coalesced.
+  const disclosedEbitda = pickDisclosedEbitdaValue(allItems, revenue);
+  let ebitda: number | null =
+    disclosedEbitda != null
+      ? Math.round(disclosedEbitda * 100) / 100
+      : ebit != null && totalDA != null
+        ? Math.round((ebit + totalDA) * 100) / 100
+        : null;
 
   if (
     interestExpense == null &&
@@ -449,6 +540,14 @@ export function buildRatiosFull(
   let interestCoverage = ratio(operatingIncome, interestExpense);
   if (
     interestCoverage == null &&
+    ebitdaFinal != null &&
+    interestExpense != null &&
+    Math.abs(interestExpense) > 1e-6
+  ) {
+    interestCoverage = ratio(ebitdaFinal, interestExpense);
+  }
+  if (
+    interestCoverage == null &&
     operatingIncome != null &&
     interestExpense == null &&
     revenue != null
@@ -484,26 +583,57 @@ export function buildRatiosFull(
   // Returns
   const netIncome = cf.netIncome;
   let roe = ratio(netIncome, bs.totalEquity);
-  if (roe != null && (roe > 5 || roe < -5)) {
+  // Null only absurd ratios (>5000% or <−5000%); prior 5x cap hid valid high-ROE names
+  if (roe != null && (roe > 50 || roe < -50)) {
     roe = null;
   }
   const roa = ratio(netIncome, bs.totalAssets);
-  // ROIC = NOPAT / (Equity + Debt - Cash)
-  const nopat = operatingIncome != null && income?.incomeTax != null && income?.netIncome != null && operatingIncome !== 0
-    ? operatingIncome * (1 - (income.incomeTax / Math.max(Math.abs(operatingIncome), 1)))
-    : null;
-  const investedCapital = bs.totalEquity + debt.totalDebt - bs.cashAndEquivalents;
-  const roic = ratio(
-    nopat,
-    investedCapital > 1e-6 ? investedCapital : null
+  // ROIC: prefer company-disclosed % from supplemental tables when extracted as a line item
+  const disclosedRoicRaw = findOrNull(allItems, "ReturnOnInvestedCapital");
+  let roic: number | null = null;
+  if (disclosedRoicRaw != null) {
+    const v = Math.abs(disclosedRoicRaw);
+    roic = v > 1 ? v / 100 : v;
+  }
+  // ROIC ≈ NOPAT / (Equity + Debt − Cash); NOPAT ≈ EBIT × (1 − statutory tax rate)
+  const pretaxForRoic = findOrNull(
+    allItems,
+    "IncomeLossFromContinuingOperationsBeforeIncomeTaxes",
+    "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+    "IncomeBeforeIncomeTaxes"
   );
+  const incomeTaxForRoic =
+    income?.incomeTax ??
+    findOrNull(allItems, "IncomeTaxExpenseBenefit");
+  let nopat: number | null = null;
+  if (
+    operatingIncome != null &&
+    pretaxForRoic != null &&
+    pretaxForRoic > 25 &&
+    incomeTaxForRoic != null
+  ) {
+    const statutoryRate = Math.abs(incomeTaxForRoic) / pretaxForRoic;
+    if (statutoryRate > 0 && statutoryRate < 0.55) {
+      nopat =
+        operatingIncome * (1 - Math.min(0.45, statutoryRate));
+    }
+  }
+  const investedCapital = bs.totalEquity + debt.totalDebt - bs.cashAndEquivalents;
+  if (roic == null) {
+    roic = ratio(
+      nopat,
+      investedCapital > 1e-6 ? investedCapital : null
+    );
+  }
 
   // Efficiency
   const assetTurnover = ratio(revenue, bs.totalAssets);
   const inventory = findOrNull(allItems, "InventoryNet");
   const cogs = income?.costOfRevenue ?? null;
   const inventoryTurnover = ratio(cogs, inventory);
-  const receivables = findOrNull(allItems, "AccountsReceivableNetCurrent");
+  const receivables =
+    findOrNull(allItems, "AccountsReceivableNetCurrent") ??
+    findOrNull(allItems, "AccountsReceivableNet");
   const receivablesTurnover = ratio(revenue, receivables);
 
   // Cash
@@ -522,7 +652,7 @@ export function buildRatiosFull(
     debtToEquity: r1(debtToEquity),
     debtToCapital: debtToCapital != null ? Math.round(debtToCapital * 1000) / 10 : null,
     netDebtToEbitda: r10(netDebtToEbitda),
-    interestCoverage: r10(interestCoverage),
+    interestCoverage: r1(interestCoverage),
     currentRatio: r1(currentRatio),
     grossMargin: grossMarginR,
     operatingMargin: opMarginR,
@@ -571,17 +701,31 @@ export function buildDividendAnalysis(
   if (divPaid == null || divPaid === 0) {
     verdict = "unknown";
     bullets.push("No dividend cash outflow found in this extract.");
+    bullets.push(
+      "Dividends are often also disclosed in the statement of equity, footnotes, or MD&A — verify the filing if policy matters."
+    );
     if (cf.freeCashFlow != null && cf.freeCashFlow > 0) {
       bullets.push(
         `FCF is ${cf.freeCashFlow.toLocaleString()}M — capacity to pay a dividend exists if the board chooses to.`
       );
     }
-    if (bs.retainedEarnings > 0) {
+    if (bs.retainedEarnings != null && bs.retainedEarnings > 0) {
       bullets.push(
         `Retained earnings: ${bs.retainedEarnings.toLocaleString()}M (positive accumulated profits).`
       );
     }
   } else {
+    const divLine = allItems?.find(
+      (i) =>
+        (i.tag === "PaymentsOfDividends" ||
+          i.tag === "PaymentsOfDividendsCommonStock") &&
+        Math.abs(i.value) > 1
+    );
+    if (divLine?.source?.includes("notes_dividends")) {
+      bullets.push(
+        "Dividend amount is from note disclosure (dividends declared). The cash flow statement line was not mapped — compare to cash dividends paid when that line is available."
+      );
+    }
     if (payoutNI != null) {
       bullets.push(
         `Payout vs net income: ${payoutNI}% — ${payoutNI < 60 ? "comfortable" : payoutNI < 85 ? "reasonable" : "stretched"}`
@@ -619,7 +763,7 @@ export function buildDividendAnalysis(
       );
     }
 
-    if (bs.retainedEarnings !== 0) {
+    if (bs.retainedEarnings != null && bs.retainedEarnings !== 0) {
       bullets.push(
         `Retained earnings: ${bs.retainedEarnings.toLocaleString()}M${bs.retainedEarnings < 0 ? " (deficit — review equity quality)" : ""}`
       );
@@ -799,17 +943,22 @@ export function assembleAnalysis(
   cf: BSItem[],
   meta: FullAnalysis["meta"]
 ): FullAnalysis {
-  const allItems = [...bs, ...cf];
-  let balanceSheet = buildBalanceSheet(bs);
-  const identity = enforceAccountingIdentity(balanceSheet, bs);
+  const { bs: bsRep, cf: cfRep, repairs } = applyExtractionRepairs(bs, cf);
+  const allItems = [...bsRep, ...cfRep];
+  let balanceSheet = buildBalanceSheet(bsRep);
+  const identity = enforceAccountingIdentity(balanceSheet, bsRep);
   balanceSheet = identity.balanceSheet;
   const metaMerged: FullAnalysis["meta"] = { ...meta };
   if (identity.hadLargeMismatch) {
     metaMerged.confidence = "low";
   }
-  const debtStructure = buildDebtStructure(bs);
-  const cashFlow = buildCashFlow(cf);
-  const incomeStatement = buildIncomeStatement(cf, bs);
+  if (repairs.length > 0) {
+    metaMerged.extractionRepairs = repairs;
+  }
+  const debtStructure = buildDebtStructure(bsRep);
+  const cashFlow = buildCashFlow(cfRep);
+  let incomeStatement = buildIncomeStatement(cfRep, bsRep);
+  incomeStatement = deriveEbitdaIfMissing(incomeStatement, cfRep);
   const ratios = buildRatiosFull(balanceSheet, debtStructure, cashFlow, allItems, incomeStatement);
   const dividendAnalysis = buildDividendAnalysis(
     balanceSheet,
@@ -828,7 +977,7 @@ export function assembleAnalysis(
     incomeStatement,
     ratios,
     dividendAnalysis,
-    cfItems: cf,
+    cfItems: cfRep,
     validation,
     reconcile,
   };

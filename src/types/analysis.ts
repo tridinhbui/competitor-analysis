@@ -68,7 +68,8 @@ export interface BalanceSheet {
   totalLiabilities: number;
   totalEquity: number;
   cashAndEquivalents: number;
-  retainedEarnings: number;
+  /** Null when no retained-earnings line was matched (distinct from a real $0 balance). */
+  retainedEarnings: number | null;
   items: BSItem[];
 }
 
@@ -212,6 +213,8 @@ export interface FullAnalysis {
       | "pdf-ai-section-split"
       | "pdf-vision"
       | "pdf-heuristic";
+    /** Human-readable post-processing steps (derived equity, suppressed outliers, etc.) */
+    extractionRepairs?: string[];
   };
   balanceSheet: BalanceSheet;
   debtStructure: DebtStructure;

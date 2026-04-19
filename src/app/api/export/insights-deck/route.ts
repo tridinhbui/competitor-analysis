@@ -211,7 +211,7 @@ export async function POST(request: Request) {
     const ebit3 = inc.operatingIncome ?? 0;
     const ta3 = bs.totalAssets || 1;
     const wc3 = ratios.workingCapital ?? 0;
-    const re3 = bs.retainedEarnings;
+    const re3 = bs.retainedEarnings ?? 0;
     const tl3 = bs.totalLiabilities || 1;
     const zVal = 1.2 * (wc3 / ta3) + 1.4 * (re3 / ta3) + 3.3 * (ebit3 / ta3) + 0.6 * (bs.totalEquity / tl3) + 1.0 * ((inc.revenue ?? 0) / ta3);
     const zZone = zVal > 2.99 ? "Safe" : zVal > 1.81 ? "Grey" : "Distress";
