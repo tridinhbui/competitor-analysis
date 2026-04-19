@@ -6,3 +6,8 @@ export { extractShareRepurchasesHeuristic } from "./shareRepurchases";
 
 export { extractTotalEquityHeuristic, computeBalanceGapPct } from "./totalEquity";
 export type { EquityConfidence, EquityExtractionResult } from "./totalEquity";
+
+export {
+  extractTotalLiabilitiesHeuristic,
+  type LiabilitiesHeuristicResult,
+} from "./totalLiabilities";

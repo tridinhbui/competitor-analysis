@@ -4,6 +4,11 @@
 // when AI extraction missed or returned an incorrect value.
 // ---------------------------------------------------------------------------
 
+import {
+  LIABILITIES_AND_EQUITY_LINE_RE,
+  parseNumbersForPdfHeuristic,
+} from "./pdfHeuristicNumbers";
+
 export type EquityConfidence = "high" | "medium" | "low";
 
 export interface EquityExtractionResult {
@@ -25,8 +30,7 @@ export function extractTotalEquityHeuristic(
     .map((line) => line.replace(/\s+/g, " ").trim())
     .filter(Boolean);
 
-  const liabilitiesAndEquityPattern =
-    /total\s+liabilities\s+(and|&)\s+((stock|share)holders?['\u2019]?\s+equity|equity)/i;
+  const liabilitiesAndEquityPattern = LIABILITIES_AND_EQUITY_LINE_RE;
   const totalLiabilitiesPattern = /^total\s+liabilities\b/i;
   const companySpecificPattern =
     /^company\s+shareholders?['\u2019]?\s+equity\b/i;
@@ -43,6 +47,16 @@ export function extractTotalEquityHeuristic(
     },
     {
       pattern: /^total\s+stockholders?['\u2019]?\s+equity\b/i,
+      confidence: "high",
+      isTotal: true,
+    },
+    {
+      pattern: /^total\s+.{1,140}?\bshareholders?['\u2019]?\s+equity\b/i,
+      confidence: "high",
+      isTotal: true,
+    },
+    {
+      pattern: /^total\s+.{1,140}?\bstockholders?['\u2019]?\s+equity\b/i,
       confidence: "high",
       isTotal: true,
     },
@@ -68,30 +82,6 @@ export function extractTotalEquityHeuristic(
     },
   ];
 
-  function parseNumbers(input: string): number[] {
-    const out: number[] = [];
-    const re = /\(([\d,]+(?:\.\d+)?)\)|(-?\d{1,3}(?:,\d{3})*(?:\.\d+)?)/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(input)) !== null) {
-      const raw = m[1] ?? m[2];
-      if (!raw) continue;
-      const parsed = parseFloat(raw.replace(/,/g, ""));
-      if (Number.isNaN(parsed)) continue;
-      const value = m[1] ? -parsed : parsed;
-      // Filter likely year headers (e.g. 2025) from OCR/table text.
-      if (
-        value >= 1900 &&
-        value <= 2100 &&
-        !raw.includes(",") &&
-        !raw.includes(".")
-      ) {
-        continue;
-      }
-      out.push(value);
-    }
-    return out;
-  }
-
   interface Candidate {
     idx: number;
     label: string;
@@ -115,7 +105,10 @@ export function extractTotalEquityHeuristic(
     startIdx = Math.max(0, finalLiabilitiesAndEquityIdx - 160);
     endIdx = finalLiabilitiesAndEquityIdx;
     for (let i = finalLiabilitiesAndEquityIdx; i >= startIdx; i--) {
-      if (totalLiabilitiesPattern.test(lines[i])) {
+      if (
+        totalLiabilitiesPattern.test(lines[i]) &&
+        !liabilitiesAndEquityPattern.test(lines[i])
+      ) {
         startIdx = i;
         break;
       }
@@ -126,14 +119,22 @@ export function extractTotalEquityHeuristic(
 
   for (let i = startIdx; i <= endIdx; i++) {
     const label = lines[i];
+    if (liabilitiesAndEquityPattern.test(label)) continue;
+
     const matchedPattern = equityPatterns.find((p) => p.pattern.test(label));
     const isCompanySpecific = companySpecificPattern.test(label);
     if (!matchedPattern && !isCompanySpecific) continue;
 
+    const fromLabel = parseNumbersForPdfHeuristic(label);
     const context = lines.slice(i, Math.min(lines.length, i + 3)).join(" ");
     const tail = context.slice(label.length).trim();
-    const values = parseNumbers(tail);
-    const valuesFallback = values.length > 0 ? values : parseNumbers(context);
+    const fromTail = parseNumbersForPdfHeuristic(tail);
+    const valuesFallback =
+      fromLabel.length > 0
+        ? fromLabel
+        : fromTail.length > 0
+          ? fromTail
+          : parseNumbersForPdfHeuristic(context);
     if (valuesFallback.length === 0) continue;
 
     candidates.push({

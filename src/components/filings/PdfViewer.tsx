@@ -2,6 +2,9 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { cn } from "@/lib/utils";
+import type { PdfTraceTarget } from "@/lib/pdfTraceResolve";
+
+export type TraceTarget = PdfTraceTarget;
 import {
   ChevronLeft, ChevronRight, ZoomIn, ZoomOut,
   Maximize2, Minimize2, FileText, X,
@@ -32,18 +35,22 @@ interface PdfTextItem { str: string; transform: number[]; width: number; height:
 
 // ─── public types ────────────────────────────────────────────────────────────
 
-export interface TraceTarget {
-  key: string;
-  label: string;
-  value?: number | null;
-  sourceHint?: string;
-}
-
 export interface TraceCandidate {
   metricKey: string;
   page: number;
   rowBbox: { x: number; y: number; width: number; height: number };
-  tokenBoxes: Array<{ x: number; y: number; width: number; height: number; text: string; isMatch: boolean }>;
+  /** Tight box around the token(s) that match `traceTarget.value` (e.g. one fiscal column). */
+  valueBbox: { x: number; y: number; width: number; height: number } | null;
+  tokenBoxes: Array<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    text: string;
+    isMatch: boolean;
+    isValueMatch?: boolean;
+    isLabelMatch?: boolean;
+  }>;
   score: number;
   confidence: "high" | "medium" | "low";
   source: "heuristic" | "ai-hint" | "fallback-search";
@@ -58,14 +65,74 @@ const METRIC_ALIASES: Record<string, string[]> = {
   "Net Income":        ["net income", "net earnings", "net income attributable", "net income loss", "net earnings attributable", "net income (loss)"],
   "Total Assets":      ["total assets"],
   "Total Equity":      ["total equity", "total stockholders", "total shareholders", "stockholders equity", "shareholders equity"],
-  "Total Debt":        ["total debt"],
-  "Net Debt":          ["net debt"],
+  "Total Debt":        ["total debt", "total gross debt", "gross debt"],
+  "Net Debt":          ["net debt", "total net debt"],
   "Cash & Equivalents":["cash and cash equivalents", "cash and equivalents", "cash & equivalents"],
   "Operating CF":      ["operating cash flow", "cash from operations", "cash provided by operating", "net cash provided by operating"],
   "Free Cash Flow":    ["free cash flow"],
-  "EBITDA":            ["ebitda"],
+  "EBITDA":            ["ebitda", "ebitda (calculated", "adjusted ebitda"],
   "Cost of Revenue":   ["cost of revenue", "cost of sales", "cost of goods sold", "cogs"],
+  "Capital Expenditures": ["payments to acquire property", "capital expenditures", "purchases of property"],
+  /**
+   * `pdfMatchLabel` "Dividends" uses this list. Bare "dividends" must match SCF lines that only say
+   * "Dividends"; footnote hits are down-ranked via `scoreRow` (large target + tiny row amount) + page hint.
+   */
+  Dividends: [
+    "payments of dividends",
+    "cash dividends paid",
+    "dividends paid",
+    "cash dividends",
+    "dividends",
+  ],
+  "Dividends Paid": [
+    "payments of dividends",
+    "cash dividends paid",
+    "dividends paid",
+    "cash dividends",
+    "dividends",
+  ],
+  "Short-Term Debt":   ["short-term debt", "current portion of long-term debt"],
+  "Long-Term Debt":    ["long-term debt", "long term debt"],
+  "Return on invested capital": ["return on invested capital", "roic"],
+
+  "PP&E (Net)": [
+    "net property, plant and equipment",
+    "property, plant and equipment, net",
+    "property and equipment, net",
+    "property, plant and equipment",
+    "net ppe",
+    "pp&e",
+  ],
+  Goodwill: ["goodwill"],
+  "Retained Earnings": [
+    "retained earnings",
+    "accumulated deficit",
+    "retained earnings (accumulated deficit)",
+  ],
+  "Accounts Payable": [
+    "accounts payable",
+    "trade accounts payable",
+    "trade payables",
+  ],
+  Inventories: ["inventories", "inventory"],
+  "Accounts Receivable": [
+    "accounts receivable, net",
+    "accounts receivable",
+    "trade receivables",
+  ],
+  "Current Assets": ["total current assets"],
+  "Current Liabilities": ["total current liabilities"],
 };
+
+function labelForPdfSearch(target: PdfTraceTarget): string {
+  return (target.pdfMatchLabel?.trim() || target.label).trim();
+}
+
+function rowLooksLikeDefinitionOrNarrative(rowText: string): boolean {
+  return /ebitda\s+is\s+defined|ebitda\s+represents|net\s+debt\s+to\s+ebitda\s+represents|ratio\s+calculations|reconciliation\s+of\s+(?:net\s+)?(?:debt|ebitda)/i.test(
+    rowText
+  );
+}
 
 // ─── row reconstruction engine ───────────────────────────────────────────────
 
@@ -135,15 +202,66 @@ function normalizeNumber(v: number): string[] {
   return [...new Set(variants)];
 }
 
-function scoreRow(row: ReconstructedRow, target: TraceTarget): number {
-  const aliases = METRIC_ALIASES[target.label] ?? [target.label.toLowerCase()];
+/** True if combined PDF token text parses to the same number as the dashboard value (e.g. 1,098 ↔ 1098). */
+function matchesNumericTarget(combinedRaw: string, absTarget: number): boolean {
+  let s = combinedRaw.replace(/[$\s\u00a0]/g, "").trim();
+  const paren = /^\(([\d,.]+)\)$/.exec(s);
+  if (paren) s = paren[1];
+  s = s.replace(/,/g, "");
+  if (!s) return false;
+  const v = Number.parseFloat(s);
+  if (Number.isNaN(v)) return false;
+  const t = Math.abs(absTarget);
+  if (t >= 1 && t < 1_000_000) {
+    return Math.abs(Math.abs(v) - t) < 0.501;
+  }
+  return Math.abs(v - t) < Math.max(0.0001, t * 0.0005);
+}
+
+/**
+ * Find the shortest contiguous run of tokens whose joined text parses to the target value.
+ * Handles split tokens like "1," + "098" or "$" + "1,098".
+ */
+function pickContiguousValueTokens(tokens: TokenBox[], value: number | null | undefined): TokenBox[] {
+  if (value == null || value === 0 || !Number.isFinite(value)) return [];
+  const absTarget = Math.abs(value);
+  const n = tokens.length;
+  let best: TokenBox[] = [];
+  for (let len = 1; len <= Math.min(6, n); len++) {
+    for (let i = 0; i + len <= n; i++) {
+      const slice = tokens.slice(i, i + len);
+      const combined = slice.map((t) => t.text).join("");
+      if (matchesNumericTarget(combined, absTarget)) {
+        if (best.length === 0 || slice.length < best.length) best = slice;
+      }
+    }
+  }
+  return best;
+}
+
+function bboxFromTokens(tokens: TokenBox[]): { x: number; y: number; width: number; height: number } {
+  const minX = Math.min(...tokens.map((t) => t.x));
+  const maxR = Math.max(...tokens.map((t) => t.x + t.width));
+  const minY = Math.min(...tokens.map((t) => t.y));
+  const maxY = Math.max(...tokens.map((t) => t.y + t.height));
+  return { x: minX, y: minY, width: maxR - minX, height: maxY - minY };
+}
+
+function scoreRow(row: ReconstructedRow, target: PdfTraceTarget): number {
+  const searchLabel = labelForPdfSearch(target);
+  const aliases =
+    METRIC_ALIASES[searchLabel] ??
+    METRIC_ALIASES[target.label] ??
+    [searchLabel.toLowerCase()];
   let score = 0;
 
-  // Label match
   for (const alias of aliases) {
     if (row.rowText.includes(alias)) {
-      score += alias === target.label.toLowerCase() ? 50 : 40;
-      if (row.rowText.startsWith(alias) || row.rowText.match(new RegExp(`^\\s*${alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`))) {
+      score += alias === searchLabel.toLowerCase() ? 50 : 40;
+      if (
+        row.rowText.startsWith(alias) ||
+        row.rowText.match(new RegExp(`^\\s*${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`))
+      ) {
         score += 15;
       }
       break;
@@ -151,33 +269,79 @@ function scoreRow(row: ReconstructedRow, target: TraceTarget): number {
   }
   if (score === 0) return 0;
 
-  // Numeric consistency
+  const traceBundle =
+    `${target.label} ${target.pdfMatchLabel ?? ""} ${target.key ?? ""}`.toLowerCase();
+  if (
+    traceBundle.includes("dividend") &&
+    target.value != null &&
+    Number.isFinite(target.value) &&
+    Math.abs(target.value) > 100
+  ) {
+    const nums = row.tokens.map((t) => {
+      const x = t.text.replace(/[$\s\u00a0]/g, "").trim();
+      const paren = /^\(([\d,.]+)\)$/.exec(x);
+      const raw = (paren ? paren[1] : x).replace(/,/g, "");
+      const n = parseFloat(raw);
+      return Number.isFinite(n) ? Math.abs(n) : NaN;
+    }).filter((n) => !Number.isNaN(n));
+    const rowMax = nums.length > 0 ? Math.max(...nums) : 0;
+    if (rowMax < 50) score -= 40;
+  }
+
+  if (target.rowLabelHint) {
+    const h = target.rowLabelHint.toLowerCase().replace(/\s+/g, " ").trim().slice(0, 56);
+    if (h.length >= 3 && row.rowText.includes(h)) score += 48;
+  }
+
   if (target.value != null && target.value !== 0) {
     const numVariants = normalizeNumber(target.value);
     for (const v of numVariants) {
-      if (row.rowText.includes(v)) { score += 30; break; }
+      if (row.rowText.includes(v)) {
+        score += 30;
+        break;
+      }
     }
+    const vt = pickContiguousValueTokens(row.tokens, target.value);
+    if (vt.length > 0) score += 22;
   }
 
-  // Penalize very short rows (header fragments)
   if (row.tokens.length < 2) score -= 10;
-  // Penalize rows that look like footnotes/notes
   if (row.rowText.match(/^\(\d+\)|^note\s|^see\s/i)) score -= 20;
-  // Bonus for rows with $ sign or parenthesized numbers
   if (row.rowText.includes("$") || row.rowText.match(/\(\d[\d,]*\)/)) score += 5;
+  if (rowLooksLikeDefinitionOrNarrative(row.rowText)) score -= 55;
 
   return Math.max(0, score);
 }
 
-function markMatchingTokens(tokens: TokenBox[], target: TraceTarget): Array<TokenBox & { isMatch: boolean }> {
-  const aliases = METRIC_ALIASES[target.label] ?? [target.label.toLowerCase()];
+function markMatchingTokens(
+  tokens: TokenBox[],
+  target: PdfTraceTarget,
+  valueTokens: TokenBox[]
+): TraceCandidate["tokenBoxes"] {
+  const searchLabel = labelForPdfSearch(target);
+  const aliases =
+    METRIC_ALIASES[searchLabel] ??
+    METRIC_ALIASES[target.label] ??
+    [searchLabel.toLowerCase()];
   const numVariants = target.value != null && target.value !== 0 ? normalizeNumber(target.value) : [];
+  const valueSet = new Set(valueTokens);
 
-  return tokens.map(t => {
+  return tokens.map((t) => {
     const lower = t.text.toLowerCase();
-    const isLabelMatch = aliases.some(a => lower.includes(a) || a.includes(lower));
-    const isNumMatch = numVariants.some(v => lower.includes(v) || lower.replace(/[,$()]/g, "").includes(v.replace(/[,$()]/g, "")));
-    return { ...t, isMatch: isLabelMatch || isNumMatch };
+    const isValueMatch = valueSet.has(t);
+    const isLabelMatch = aliases.some((a) => lower.includes(a) || a.includes(lower));
+    const isNumMatch =
+      !isValueMatch &&
+      numVariants.some(
+        (v) =>
+          lower.includes(v) || lower.replace(/[,$()]/g, "").includes(v.replace(/[,$()]/g, ""))
+      );
+    return {
+      ...t,
+      isValueMatch,
+      isLabelMatch,
+      isMatch: isValueMatch || isLabelMatch || isNumMatch,
+    };
   });
 }
 
@@ -185,45 +349,77 @@ function markMatchingTokens(tokens: TokenBox[], target: TraceTarget): Array<Toke
 
 const SCORE_THRESHOLD = 35;
 
+function resolveHintPage(target: PdfTraceTarget, totalPages: number): number | null {
+  const fromSource = parsePageFromSource(target.sourceHint);
+  if (fromSource != null && fromSource >= 1 && fromSource <= totalPages) return fromSource;
+  const ph = target.pageHint;
+  if (ph != null && ph >= 1 && ph <= totalPages) return Math.floor(ph);
+  return null;
+}
+
+async function collectCandidatesForPage(
+  doc: PdfDoc,
+  pageNum: number,
+  target: PdfTraceTarget,
+  prioritizedPage: number | null
+): Promise<TraceCandidate[]> {
+  const page = await doc.getPage(pageNum);
+  const content = await page.getTextContent();
+  const rows = reconstructRows(content.items as PdfTextItem[]);
+  const out: TraceCandidate[] = [];
+  for (const row of rows) {
+    const s = scoreRow(row, target);
+    if (s < SCORE_THRESHOLD) continue;
+    const valueToks = pickContiguousValueTokens(row.tokens, target.value);
+    const valueBbox = valueToks.length > 0 ? bboxFromTokens(valueToks) : null;
+    const markedTokens = markMatchingTokens(row.tokens, target, valueToks);
+    const onHint = prioritizedPage != null && pageNum === prioritizedPage;
+    out.push({
+      metricKey: target.key,
+      page: pageNum,
+      rowBbox: row.bbox,
+      valueBbox,
+      tokenBoxes: markedTokens,
+      score: s + (onHint ? 14 : 0),
+      confidence: s >= 70 ? "high" : s >= 50 ? "medium" : "low",
+      source: onHint ? "ai-hint" : "heuristic",
+    });
+  }
+  return out;
+}
+
 async function searchDocForTarget(
   doc: PdfDoc,
-  target: TraceTarget,
-  totalPages: number,
+  target: PdfTraceTarget,
+  totalPages: number
 ): Promise<TraceCandidate[]> {
-  const hintPage = parsePageFromSource(target.sourceHint);
-  const candidates: TraceCandidate[] = [];
+  const hintPage = resolveHintPage(target, totalPages);
 
-  const pagesToSearch = hintPage
-    ? [hintPage, ...Array.from({ length: totalPages }, (_, i) => i + 1).filter(p => p !== hintPage)]
-    : Array.from({ length: totalPages }, (_, i) => i + 1);
-
-  for (const pageNum of pagesToSearch) {
+  if (hintPage != null) {
     try {
-      const page = await doc.getPage(pageNum);
-      const content = await page.getTextContent();
-      const rows = reconstructRows(content.items as PdfTextItem[]);
-
-      for (const row of rows) {
-        const s = scoreRow(row, target);
-        if (s < SCORE_THRESHOLD) continue;
-
-        const markedTokens = markMatchingTokens(row.tokens, target);
-
-        candidates.push({
-          metricKey: target.key,
-          page: pageNum,
-          rowBbox: row.bbox,
-          tokenBoxes: markedTokens,
-          score: s + (pageNum === hintPage ? 10 : 0),
-          confidence: s >= 70 ? "high" : s >= 50 ? "medium" : "low",
-          source: hintPage === pageNum ? "ai-hint" : "heuristic",
-        });
+      const onPage = await collectCandidatesForPage(doc, hintPage, target, hintPage);
+      onPage.sort((a, b) => b.score - a.score);
+      if (onPage.length > 0) {
+        const top = onPage[0].score;
+        return onPage.filter((c) => c.score >= top - 12).slice(0, 10);
       }
-    } catch { /* skip page */ }
+    } catch {
+      /* fall through to full scan */
+    }
   }
 
-  candidates.sort((a, b) => b.score - a.score);
-  return candidates;
+  const all: TraceCandidate[] = [];
+  for (let p = 1; p <= totalPages; p++) {
+    try {
+      all.push(...(await collectCandidatesForPage(doc, p, target, hintPage)));
+    } catch {
+      /* skip page */
+    }
+  }
+  all.sort((a, b) => b.score - a.score);
+  if (all.length === 0) return [];
+  const top = all[0].score;
+  return all.filter((c) => c.score >= Math.max(SCORE_THRESHOLD, top - 18)).slice(0, 14);
 }
 
 // ─── pdfjs loader ────────────────────────────────────────────────────────────
@@ -278,6 +474,11 @@ export function PdfViewer({ file, fullHeight, traceTarget, onClearTrace }: Props
 
   const activeCand = candidates[candidateIdx] ?? null;
   const pagesWithMatches = useMemo(() => new Set(candidates.map(c => c.page)), [candidates]);
+  const traceExpectedPage = useMemo(
+    () =>
+      traceTarget && totalPages > 0 ? resolveHintPage(traceTarget, totalPages) : null,
+    [traceTarget, totalPages],
+  );
 
   // Load PDF
   useEffect(() => {
@@ -345,7 +546,27 @@ export function PdfViewer({ file, fullHeight, traceTarget, onClearTrace }: Props
     for (const cand of pageCands) {
       const isActive = cand === activeCand;
 
-      // Primary: row bbox (light yellow)
+      // Pin highlight to the exact amount cell when we matched dashboard value (not the whole row).
+      if (cand.valueBbox) {
+        const vb = cand.valueBbox;
+        const vx = vb.x * scale;
+        const vw = vb.width * scale;
+        const vh = (vb.height + 6) * scale;
+        const vy = hCanvas.height - (vb.y + vb.height + 3) * scale;
+
+        ctx.fillStyle = isActive ? "rgba(250, 204, 21, 0.52)" : "rgba(250, 204, 21, 0.28)";
+        ctx.fillRect(vx - 2 * scale, vy, vw + 4 * scale, vh);
+
+        if (isActive) {
+          ctx.strokeStyle = "rgba(234, 179, 8, 0.95)";
+          ctx.lineWidth = 2;
+          ctx.setLineDash([]);
+          ctx.strokeRect(vx - 2 * scale, vy, vw + 4 * scale, vh);
+        }
+        continue;
+      }
+
+      // Fallback: full row + token highlights when no single value cell was identified
       const rb = cand.rowBbox;
       const rx = rb.x * scale;
       const rw = rb.width * scale;
@@ -362,7 +583,6 @@ export function PdfViewer({ file, fullHeight, traceTarget, onClearTrace }: Props
         ctx.strokeRect(rx - 4 * scale, ry, rw + 8 * scale, rh);
       }
 
-      // Secondary: matched token highlights (darker)
       for (const tk of cand.tokenBoxes) {
         if (!tk.isMatch) continue;
         const tx = tk.x * scale;
@@ -383,6 +603,11 @@ export function PdfViewer({ file, fullHeight, traceTarget, onClearTrace }: Props
       setCandidateIdx(0);
       setNoMatch(false);
       return;
+    }
+
+    const jumpPage = totalPages > 0 ? resolveHintPage(traceTarget, totalPages) : null;
+    if (jumpPage != null) {
+      setCurrentPage(jumpPage);
     }
 
     let cancelled = false;
@@ -486,6 +711,9 @@ export function PdfViewer({ file, fullHeight, traceTarget, onClearTrace }: Props
           <Search className="h-3.5 w-3.5 text-yellow-700" />
           <span className="text-[11px] font-semibold text-yellow-800">
             {searching ? "Scanning rows…" : noMatch ? `No row match for "${traceTarget.label}"` : `"${traceTarget.label}"`}
+            {!searching && traceExpectedPage != null && (
+              <span className="ml-1.5 font-normal text-yellow-700">· p.{traceExpectedPage}</span>
+            )}
           </span>
           {!searching && candidates.length > 0 && (
             <>

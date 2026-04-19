@@ -113,6 +113,7 @@ export default function WorkspacePage() {
   };
 
   return (
+    <RequireAuth>
     <div className="workspace-page mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       {/* Header */}
       <div className="mb-6 flex items-center gap-4">

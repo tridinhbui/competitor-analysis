@@ -1,16 +1,22 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { assembleAnalysis } from "@/lib/analysisEngine";
 import { extractNonRecurringItems } from "@/lib/filingTextExtractor";
 import { shouldRunExtraction } from "@/lib/llmExtractionGuards";
-import { extractPdfFinancialValue, type PdfFinancialMetric } from "@/lib/pdfFinancialValueExtractor";
+import {
+  buildHeuristicPdfProvenance,
+  extractPdfFinancialValue,
+  type PdfFinancialMetric,
+} from "@/lib/pdfFinancialValueExtractor";
 import type { BSItem, FootnoteItem, EarningsNarrative } from "@/types/analysis";
 import { STRICT_PROVENANCE_EXTRACTOR_SYSTEM } from "@/lib/prompts/strictProvenanceExtractor";
 import {
   resolveRnDExpense,
   extractShareRepurchasesHeuristic,
   extractTotalEquityHeuristic,
+  extractTotalLiabilitiesHeuristic,
   computeBalanceGapPct,
 } from "@/lib/heuristics";
+import { applyDividendsDeclaredNoteFallback } from "@/lib/dividendsNoteHeuristic";
 import { debugLog, warnLog } from "@/lib/debugLogger";
 
 export const runtime = "nodejs";
@@ -46,6 +52,7 @@ Items MUST use ONLY these EXACT tags (do not output income or cash flow tags in 
 - AssetsCurrent -> Total current assets
 - AssetsNoncurrent -> Total non-current assets
 - CashAndCashEquivalentsAtCarryingValue -> Cash and cash equivalents
+- CashAndCashEquivalents -> Cash and cash equivalents (alternate tag when the filing uses this label)
 - ShortTermInvestments -> Short-term investments / marketable securities
 - AccountsReceivableNet -> Accounts receivable, net (trade receivables)
 - AccountsReceivableNetCurrent -> Accounts receivable current
@@ -60,6 +67,7 @@ Items MUST use ONLY these EXACT tags (do not output income or cash flow tags in 
 - LiabilitiesCurrent -> Total current liabilities
 - LiabilitiesNoncurrent -> Total non-current / long-term liabilities
 - AccountsPayable -> Accounts payable (trade payables)
+- AccountsPayableCurrent -> Accounts payable current (use if filer tags current AP separately; else use AccountsPayable)
 - AccruedLiabilitiesCurrent -> Accrued expenses / accrued liabilities
 - DeferredRevenueCurrent -> Deferred revenue (current)
 - DebtCurrent -> Current portion of long-term debt / short-term borrowings / notes payable current
@@ -67,6 +75,9 @@ Items MUST use ONLY these EXACT tags (do not output income or cash flow tags in 
 - LongTermDebt -> Long-term debt (if only one debt line is shown)
 - ShortTermBorrowings -> Short-term borrowings / revolving credit (if separate from current portion of LT debt)
 - LongTermDebtCurrent -> Current maturities of long-term debt (if shown as separate line from DebtCurrent)
+- GrossDebt -> Total debt (GROSS carrying amount per debt footnote — all borrowings; NOT the same as "Total long-term debt" alone)
+- TotalNetDebtSupplemental -> "Total net debt" line from Key Financial Measures / supplemental tables only (not a ratio); used with cash to cross-check gross debt downstream
+- Do NOT tag GrossDebt from lines that say only "Long-term debt", "Total long-term debt", or "Long-term debt, net" — those belong on LongTermDebtNoncurrent / LongTermDebt, not gross consolidated debt.
 - OperatingLeaseLiabilityNoncurrent -> Operating lease liabilities (non-current)
 - FinanceLeaseLiabilityNoncurrent -> Finance lease obligations (non-current portion)
 - PensionAndOtherPostretirementDefinedBenefitPlansLiabilitiesNoncurrent -> Pension / OPEB obligations (non-current)
@@ -114,6 +125,9 @@ INCOME STATEMENT:
 - InterestIncome -> Interest income
 - IncomeTaxExpenseBenefit -> Income tax expense / provision for income taxes
 - NetIncomeLoss -> Net income / net earnings / attributable lines
+- EBITDA -> Company-reported EBITDA in **Other Key Financial Measures**, supplemental tables, or non-GAAP reconciliations (may differ from Operating Income + D&A)
+- EarningsBeforeInterestTaxesDepreciationAmortization -> Same as EBITDA (XBRL-style tag)
+- ReturnOnInvestedCapital -> Return on invested capital / ROIC as a **percentage** (e.g. 2.8 for 2.8%) when shown in Key Financial Measures or ratio tables
 - EarningsPerShareBasic -> Basic EPS (per-share; unit per-share; NOT millions)
 - EarningsPerShareDiluted -> Diluted EPS (per-share; unit per-share)
 - WeightedAverageSharesBasic -> Weighted average shares basic (millions; unit shares-millions)
@@ -306,12 +320,14 @@ interface SegmentExtraction {
 }
 
 const BS_TAG_SET = new Set([
-  "Assets", "AssetsCurrent", "AssetsNoncurrent", "CashAndCashEquivalentsAtCarryingValue",
+  "Assets", "AssetsCurrent", "AssetsNoncurrent",
+  "CashAndCashEquivalentsAtCarryingValue", "CashAndCashEquivalents",
   "ShortTermInvestments", "AccountsReceivableNet", "AccountsReceivableNetCurrent", "InventoryNet",
   "PrepaidExpenseAndOtherAssetsCurrent", "PropertyPlantAndEquipmentNet", "Goodwill", "IntangibleAssetsNet",
   "OtherAssetsNoncurrent", "DeferredIncomeTaxAssetsNet", "Liabilities", "LiabilitiesCurrent", "LiabilitiesNoncurrent",
-  "AccountsPayable", "AccruedLiabilitiesCurrent", "DeferredRevenueCurrent", "DebtCurrent", "LongTermDebtNoncurrent",
-  "LongTermDebt", "ShortTermBorrowings", "LongTermDebtCurrent", "OperatingLeaseLiabilityNoncurrent",
+  "AccountsPayable", "AccountsPayableCurrent", "AccruedLiabilitiesCurrent", "DeferredRevenueCurrent", "DebtCurrent", "LongTermDebtNoncurrent",
+  "LongTermDebt", "ShortTermBorrowings", "LongTermDebtCurrent", "GrossDebt", "TotalNetDebtSupplemental",
+  "OperatingLeaseLiabilityNoncurrent",
   "FinanceLeaseLiabilityNoncurrent", "PensionAndOtherPostretirementDefinedBenefitPlansLiabilitiesNoncurrent",
   "RedeemableNoncontrollingInterestEquityCarryingAmount", "StockholdersEquity", "CommonStockValue",
   "AdditionalPaidInCapital", "RetainedEarningsAccumulatedDeficit", "TreasuryStockValue",
@@ -325,7 +341,12 @@ const CF_TAG_SET = new Set([
   "SalesRevenueGoodsNet",
   "CostOfGoodsSold", "CostOfGoodsAndServicesSold", "CostOfRevenue", "GrossProfit",
   "SellingGeneralAndAdministrativeExpense", "ResearchAndDevelopmentExpense", "OperatingExpenses",
-  "OperatingIncomeLoss", "InterestExpense", "InterestIncome", "IncomeTaxExpenseBenefit", "NetIncomeLoss",
+  "OperatingIncomeLoss",
+  "IncomeBeforeIncomeTaxes",
+  "IncomeLossFromContinuingOperationsBeforeIncomeTaxes",
+  "InterestExpense", "InterestIncome", "IncomeTaxExpenseBenefit", "NetIncomeLoss",
+  "EBITDA", "EarningsBeforeInterestTaxesDepreciationAmortization",
+  "ReturnOnInvestedCapital",
   "EarningsPerShareBasic", "EarningsPerShareDiluted", "WeightedAverageSharesBasic", "WeightedAverageSharesDiluted",
   "DepreciationDepletionAndAmortization", "DepreciationAndAmortization", "Depreciation", "AmortizationOfIntangibleAssets",
   "ShareBasedCompensation", "NetCashProvidedByOperatingActivities", "PaymentsToAcquirePropertyPlantAndEquipment",
@@ -393,7 +414,7 @@ function periodTypeFromItem(it: RawAiItem, kind: "bs" | "cf"): BSItem["period_ty
 function itemValueForTag(tag: string, v: number | string | null | undefined): number {
   if (v == null) return 0;
   const s = typeof v === "string" ? v.trim() : String(v);
-  if (s === "" || s === "N/A" || s === "n/a" || s === "-" || s === "â€”" || s === "â€“") return 0;
+  if (s === "" || s === "N/A" || s === "n/a" || s === "-" || s === "├óΓé¼ΓÇ¥" || s === "├óΓé¼ΓÇ£") return 0;
   const cleaned = s.replace(/[,$\s]/g, "");
   const n = Number(cleaned);
   if (Number.isNaN(n)) return 0;
@@ -451,7 +472,7 @@ function normalizeScaleNote(s: string | undefined): string | undefined {
 }
 
 // ---------------------------------------------------------------------------
-// Section detection Ã¢â‚¬â€ find the right text for each AI call
+// Section detection ├â┬ó├óΓÇÜ┬¼├óΓé¼┬¥ find the right text for each AI call
 // ---------------------------------------------------------------------------
 
 /**
@@ -475,7 +496,8 @@ function findSection(text: string, patterns: RegExp[], maxLen: number): string {
       if (usedOffsets.has(rounded)) continue;
       usedOffsets.add(rounded);
 
-      const chunkLen = Math.min(maxLen, Math.max(maxLen, 15_000));
+      const remaining = Math.max(0, text.length - idx);
+      const chunkLen = Math.min(maxLen, remaining);
       const slice = text.slice(idx, idx + chunkLen);
       chunks.push(slice);
       totalLen += slice.length;
@@ -526,19 +548,32 @@ function extractSections(text: string): {
     /note\s+\d+[\.\:\-\s]+(?:segment|business\s+segment|operating\s+segment)/i,
   ], 25_000);
 
-  // Equity statement Ã¢â‚¬â€ SBC is sometimes only shown here (e.g. recently-IPO'd companies)
+  // Equity statement ├â┬ó├óΓÇÜ┬¼├óΓé¼┬¥ SBC is sometimes only shown here (e.g. recently-IPO'd companies)
   const equityText = findSection(text, [
     /(?:condensed\s+)?(?:consolidated\s+)?statements?\s+of\s+(changes\s+in\s+)?(stockholders|shareholders).?\s+equity/i,
     /(?:condensed\s+)?(?:consolidated\s+)?statements?\s+of\s+equity/i,
   ], 8_000);
 
-  // Combine IS + CF + equity for the income/cashflow call
-  const isCfText = [isText, cfText, equityText].filter(Boolean).join("\n\n---\n\n");
+  const keyMeasuresText = findSection(
+    text,
+    [
+      /other\s+key\s+financial\s+measures/i,
+      /key\s+financial\s+measures/i,
+      /non-gaap\s+financial\s+measures/i,
+      /supplemental\s+(?:financial\s+)?information/i,
+    ],
+    35_000
+  );
+
+  // Combine IS + CF + equity + supplemental key measures (EBITDA, gross/net debt often live here)
+  const isCfText = [isText, cfText, equityText, keyMeasuresText]
+    .filter(Boolean)
+    .join("\n\n---\n\n");
 
   // Combine MD&A + Notes for qualitative call
   const qualText = [mdaText, notesText].filter(Boolean).join("\n\n---\n\n");
 
-  // Segment text Ã¢â‚¬â€ combine segment section + MD&A (often has segment breakdowns)
+  // Segment text ├â┬ó├óΓÇÜ┬¼├óΓé¼┬¥ combine segment section + MD&A (often has segment breakdowns)
   const segmentText = [segText, mdaText].filter(Boolean).join("\n\n---\n\n");
 
   return { bsText, isCfText, qualText, segmentText };
@@ -660,6 +695,12 @@ function toBsItems(
   return out;
 }
 
+const REPAIR_OVERRIDE_METRICS = new Set<PdfFinancialMetric>([
+  "ebitda",
+  "grossDebt",
+  "supplementalNetDebt",
+]);
+
 function repairCriticalFinancialValue(
   items: BSItem[],
   metric: PdfFinancialMetric,
@@ -672,7 +713,25 @@ function repairCriticalFinancialValue(
 
   const existing = items.find((item) => item.tag === repaired.tag);
   const existingValue = existing?.value ?? null;
-  if (existingValue != null && Math.abs(existingValue) > 1) return;
+  const existingIsAi = existing?.source?.startsWith("AI:") ?? false;
+  const heuristicOverridesWrongAi =
+    REPAIR_OVERRIDE_METRICS.has(metric) && existingIsAi;
+
+  /** SCF "Dividends" vs footnote/derivative line with a tiny bogus $(8). */
+  const dividendsHeuristicReplacesSuspiciousExisting =
+    metric === "dividendsPaid" &&
+    existingValue != null &&
+    Math.abs(repaired.value) > 35 &&
+    Math.abs(repaired.value) >= Math.abs(existingValue) * 3;
+
+  if (
+    existingValue != null &&
+    Math.abs(existingValue) > 1 &&
+    !heuristicOverridesWrongAi &&
+    !dividendsHeuristicReplacesSuspiciousExisting
+  ) {
+    return;
+  }
 
   if (existing) {
     debugLog("[analyze-pdf:repair]", {
@@ -684,7 +743,7 @@ function repairCriticalFinancialValue(
     });
     existing.value = repaired.value;
     existing.label = repaired.label;
-    existing.source = repaired.source;
+    existing.source = buildHeuristicPdfProvenance(repaired, text);
   } else {
     debugLog("[analyze-pdf:repair]", {
       metric,
@@ -698,14 +757,14 @@ function repairCriticalFinancialValue(
       label: repaired.label,
       value: repaired.value,
       period,
-      source: repaired.source,
+      source: buildHeuristicPdfProvenance(repaired, text),
     });
   }
 }
 
 
 // ---------------------------------------------------------------------------
-// POST handler Ã¢â‚¬â€ 3 parallel AI calls
+// POST handler ├â┬ó├óΓÇÜ┬¼├óΓé¼┬¥ 3 parallel AI calls
 // ---------------------------------------------------------------------------
 
 export async function POST(request: Request) {
@@ -731,7 +790,7 @@ export async function POST(request: Request) {
 
   const model = process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini";
 
-  // Split text into sections (â‰¥500 chars, financial keywords passed guard)
+  // Split text into sections (├óΓÇ░┬Ñ500 chars, financial keywords passed guard)
   const { bsText, isCfText, qualText, segmentText } = extractSections(filingText);
 
   // Fallback: if section detection found nothing, use the full text (truncated)
@@ -800,55 +859,119 @@ export async function POST(request: Request) {
     );
     const bsItems: BSItem[] = dedupeByTagPreferPdf([...bsFromParsed, ...bsFromLegacy]);
 
-    // Guard: only run equity heuristic if AI equity is missing or zero
-    const existingEquityItem = bsItems.find((item) => item.tag === "StockholdersEquity");
-    const equityMissing = existingEquityItem == null || Math.abs(existingEquityItem.value) === 0;
-    if (equityMissing) {
-      const equityCandidate = extractTotalEquityHeuristic(filingText, scaleForHeuristics);
-      if (equityCandidate.totalEquity != null) {
-        const assetsValue = bsItems.find((item) => item.tag === "Assets")?.value ?? null;
-        const liabilitiesValue = bsItems.find((item) => item.tag === "Liabilities")?.value ?? null;
-        const existingEquityValue = existingEquityItem?.value ?? null;
-        const existingEquityLooksCompanySpecific = existingEquityItem
-          ? /^company\s+shareholders?['\u2019]?\s+equity/i.test(existingEquityItem.label)
-          : false;
+    // Run before BS text heuristics so equity/liabilities can sanity-check vs scale (e.g. when AI returns weak values).
+    for (const metric of ["totalAssets", "cashAndEquivalents"] as const) {
+      repairCriticalFinancialValue(bsItems, metric, filingText, scaleForHeuristics, period);
+    }
 
-        const currentGap = computeBalanceGapPct(assetsValue, liabilitiesValue, existingEquityValue);
-        const candidateGap = computeBalanceGapPct(assetsValue, liabilitiesValue, equityCandidate.totalEquity);
+    const equityCandidate = extractTotalEquityHeuristic(filingText, scaleForHeuristics);
+    if (equityCandidate.totalEquity != null) {
+      const assetsValue = bsItems.find((item) => item.tag === "Assets")?.value ?? null;
+      const liabilitiesValue = bsItems.find((item) => item.tag === "Liabilities")?.value ?? null;
+      const existingEquityItem = bsItems.find((item) => item.tag === "StockholdersEquity");
+      const existingEquityValue = existingEquityItem?.value ?? null;
+      const existingEquityLooksCompanySpecific = existingEquityItem
+        ? /^company\s+shareholders?['\u2019]?\s+equity/i.test(existingEquityItem.label)
+        : false;
 
-        const shouldUseCandidate =
-          existingEquityItem == null ||
+      const currentGap = computeBalanceGapPct(assetsValue, liabilitiesValue, existingEquityValue);
+      const candidateGap = computeBalanceGapPct(assetsValue, liabilitiesValue, equityCandidate.totalEquity);
+
+      const equityToAssetsRatio =
+        assetsValue != null && Math.abs(assetsValue) >= 500
+          ? Math.abs(equityCandidate.totalEquity) / Math.abs(assetsValue)
+          : null;
+      const equityLooksPlausibleVsAssets =
+        equityToAssetsRatio == null ||
+        (equityToAssetsRatio >= 0.02 && equityToAssetsRatio <= 0.98);
+
+      const shouldUseCandidate =
+        equityLooksPlausibleVsAssets &&
+        (existingEquityItem == null ||
           existingEquityValue === 0 ||
           existingEquityLooksCompanySpecific ||
           (Number.isFinite(candidateGap) &&
             (!Number.isFinite(currentGap) || candidateGap < currentGap)) ||
-          (equityCandidate.confidence === "high" && !Number.isFinite(currentGap));
+          (equityCandidate.confidence === "high" && !Number.isFinite(currentGap)));
 
-        if (shouldUseCandidate) {
-          if (existingEquityItem) {
-            existingEquityItem.value = equityCandidate.totalEquity;
-            existingEquityItem.label = equityCandidate.labelUsed ?? existingEquityItem.label;
-            existingEquityItem.source = `heuristic:equity:${equityCandidate.confidence}`;
-          } else {
-            bsItems.push({
-              tag: "StockholdersEquity",
-              label: equityCandidate.labelUsed ?? "Total equity",
-              value: equityCandidate.totalEquity,
-              period,
-              source: `heuristic:equity:${equityCandidate.confidence}`,
-            });
-          }
+      if (shouldUseCandidate) {
+        if (existingEquityItem) {
+          existingEquityItem.value = equityCandidate.totalEquity;
+          existingEquityItem.label = equityCandidate.labelUsed ?? existingEquityItem.label;
+          existingEquityItem.source = `heuristic:equity:${equityCandidate.confidence}`;
+        } else {
+          bsItems.push({
+            tag: "StockholdersEquity",
+            label: equityCandidate.labelUsed ?? "Total equity",
+            value: equityCandidate.totalEquity,
+            period,
+            source: `heuristic:equity:${equityCandidate.confidence}`,
+          });
         }
-
-        debugLog("[equity:heuristic-candidate]", {
-          selectedLabel: equityCandidate.labelUsed,
-          selectedValue: equityCandidate.totalEquity,
-          confidence: equityCandidate.confidence,
-          shouldUseCandidate,
-          currentGap,
-          candidateGap,
-        });
       }
+
+      debugLog("[equity:heuristic-candidate]", {
+        selectedLabel: equityCandidate.labelUsed,
+        selectedValue: equityCandidate.totalEquity,
+        confidence: equityCandidate.confidence,
+        shouldUseCandidate,
+        currentGap,
+        candidateGap,
+      });
+    }
+
+    const assetsForHeuristics = bsItems.find((item) => item.tag === "Assets")?.value ?? null;
+    const liabilitiesCandidate = extractTotalLiabilitiesHeuristic(
+      filingText,
+      scaleForHeuristics,
+      assetsForHeuristics
+    );
+    if (liabilitiesCandidate.totalLiabilities != null) {
+      const equityValueForGap =
+        bsItems.find((item) => item.tag === "StockholdersEquity")?.value ?? null;
+      const existingLiab = bsItems.find((item) => item.tag === "Liabilities");
+      const existingLiabValue = existingLiab?.value ?? null;
+
+      const currentGapL = computeBalanceGapPct(
+        assetsForHeuristics,
+        existingLiabValue,
+        equityValueForGap
+      );
+      const candidateGapL = computeBalanceGapPct(
+        assetsForHeuristics,
+        liabilitiesCandidate.totalLiabilities,
+        equityValueForGap
+      );
+
+      const shouldUseLiab =
+        existingLiab == null ||
+        existingLiabValue === 0 ||
+        (Number.isFinite(candidateGapL) &&
+          (!Number.isFinite(currentGapL) || candidateGapL < currentGapL));
+
+      if (shouldUseLiab) {
+        if (existingLiab) {
+          existingLiab.value = liabilitiesCandidate.totalLiabilities;
+          existingLiab.label = liabilitiesCandidate.labelUsed ?? existingLiab.label;
+          existingLiab.source = "heuristic:liabilities";
+        } else {
+          bsItems.push({
+            tag: "Liabilities",
+            label: liabilitiesCandidate.labelUsed ?? "Total liabilities",
+            value: liabilitiesCandidate.totalLiabilities,
+            period,
+            source: "heuristic:liabilities",
+          });
+        }
+      }
+
+      debugLog("[liabilities:heuristic-candidate]", {
+        selectedLabel: liabilitiesCandidate.labelUsed,
+        selectedValue: liabilitiesCandidate.totalLiabilities,
+        shouldUseLiab,
+        currentGap: currentGapL,
+        candidateGap: candidateGapL,
+      });
     }
 
     const cfFromParsed = isCfParsed.items
@@ -864,7 +987,23 @@ export async function POST(request: Request) {
     const cfItems: BSItem[] = dedupeByTagPreferPdf([...cfFromParsed, ...cfFromLegacy]);
 
     // Hard backfill for core dashboard fields when AI coverage is weak in production.
-    for (const metric of ["totalAssets", "cashAndEquivalents"] as const) {
+    for (const metric of [
+      "totalAssets",
+      "cashAndEquivalents",
+      "totalCurrentAssets",
+      "totalCurrentLiabilities",
+      "longTermDebtNoncurrent",
+      "currentMaturitiesLongTermDebt",
+      "shortTermBorrowings",
+      "grossDebt",
+      "supplementalNetDebt",
+      "inventories",
+      "accountsReceivable",
+      "propertyPlantAndEquipment",
+      "retainedEarnings",
+      "goodwill",
+      "accountsPayable",
+    ] as const) {
       repairCriticalFinancialValue(bsItems, metric, filingText, scaleForHeuristics, period);
     }
     for (const metric of [
@@ -875,6 +1014,13 @@ export async function POST(request: Request) {
       "netIncome",
       "operatingCashFlow",
       "capitalExpenditures",
+      "dividendsPaid",
+      "stockBasedCompensation",
+      "depreciationDepletionAndAmortization",
+      "interestExpense",
+      "incomeTaxExpense",
+      "incomeBeforeIncomeTaxes",
+      "ebitda",
     ] as const) {
       repairCriticalFinancialValue(cfItems, metric, filingText, scaleForHeuristics, period);
     }
@@ -974,7 +1120,7 @@ export async function POST(request: Request) {
 
     // R&D fallback chain:
     // We only auto-fill when an explicit R&D line is found in the PDF text.
-    // If not explicit, leave missing so UI shows "Ã¢â‚¬â€" instead of forced estimates.
+    // If not explicit, leave missing so UI shows "├â┬ó├óΓÇÜ┬¼├óΓé¼┬¥" instead of forced estimates.
     const existingRdItem = cfItems.find(
       (i) => i.tag === "ResearchAndDevelopmentExpense"
     );
@@ -1034,6 +1180,16 @@ export async function POST(request: Request) {
       cfItems.find((i) => i.tag === "ResearchAndDevelopmentExpense") ?? null
     );
 
+    const dividendNoteRepairs = applyDividendsDeclaredNoteFallback(
+      cfItems,
+      filingText,
+      scaleForHeuristics,
+      period
+    );
+    if (dividendNoteRepairs.length > 0) {
+      debugLog("[dividends:note-fallback]", dividendNoteRepairs);
+    }
+
     // If AI extraction is weak, return an error so the client can trigger
     // its deterministic heuristic fallback instead of rendering mostly empty UI.
     const hasCoreBalanceSheet = bsItems.some((i) =>
@@ -1069,6 +1225,12 @@ export async function POST(request: Request) {
         confidence: "low",
         extractionMethod: "pdf-ai-partial",
       });
+      if (dividendNoteRepairs.length > 0) {
+        degradedAnalysis.meta.extractionRepairs = [
+          ...(degradedAnalysis.meta.extractionRepairs ?? []),
+          ...dividendNoteRepairs,
+        ];
+      }
 
       warnLog("[analyze-pdf] Degraded extraction mode:", reasons);
 
@@ -1090,6 +1252,12 @@ export async function POST(request: Request) {
       confidence: "medium",
       extractionMethod: "pdf-ai",
     });
+    if (dividendNoteRepairs.length > 0) {
+      analysis.meta.extractionRepairs = [
+        ...(analysis.meta.extractionRepairs ?? []),
+        ...dividendNoteRepairs,
+      ];
+    }
     debugLog(
       "[repurchase:final-render-value]",
       analysis.cashFlow.shareRepurchases
