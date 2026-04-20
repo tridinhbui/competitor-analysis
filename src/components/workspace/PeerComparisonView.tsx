@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, PanelLeftClose, PanelLeftOpen, Plus, Search, TrendingUp, UploadCloud, X } from "lucide-react";
+import { Loader2, PanelLeftClose, PanelLeftOpen, Plus, Search, TrendingUp, UploadCloud, X, Trash2 } from "lucide-react";
 import type { CompanyComparisonPayload } from "@/lib/companyComparison";
 import {
   ComparisonReportContent,
@@ -93,11 +93,13 @@ function resolveQuarterKey(entry: ParsedEntry): QuarterKey {
 interface PeerComparisonViewProps {
   sidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
+  onRegistryChanged?: () => void | Promise<void>;
 }
 
 export function PeerComparisonView({
   sidebarCollapsed = false,
   onToggleSidebar,
+  onRegistryChanged,
 }: PeerComparisonViewProps) {
   const [options, setOptions] = useState<CompanyOption[]>([]);
   const [selectedTickers, setSelectedTickers] = useState<string[]>([]);
@@ -117,6 +119,7 @@ export function PeerComparisonView({
   const [dragActive, setDragActive] = useState(false);
   const [guidanceLoading, setGuidanceLoading] = useState(false);
   const [guidanceStatus, setGuidanceStatus] = useState("");
+  const [clearingAll, setClearingAll] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const loadOptions = useCallback(async () => {
@@ -360,7 +363,50 @@ export function PeerComparisonView({
     setQueuedFiles([]);
     setParsedAnalyses([]);
     setGuidanceStatus("");
-  }, [loadOptions, setupCompanyCount]);
+    await onRegistryChanged?.();
+  }, [loadOptions, onRegistryChanged, setupCompanyCount]);
+
+  const clearAllCompanies = useCallback(async () => {
+    const typed = window.prompt(
+      'This will clear all companies and uploaded competitor analysis data. Analysis History in History stays intact.\n\nType "delete all" to confirm.'
+    );
+
+    if (typed == null) return;
+    if (typed.trim().toLowerCase() !== "delete all") {
+      window.alert('Deletion cancelled. You must type "delete all" exactly.');
+      return;
+    }
+
+    setClearingAll(true);
+    setError("");
+    try {
+      const response = await fetch("/api/workspace/clear-all", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmationText: typed.trim() }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        throw new Error(payload.error || `HTTP ${response.status}`);
+      }
+
+      setResult(null);
+      setSelectedTickers([]);
+      setOptions([]);
+      setQueuedFiles([]);
+      setParsedAnalyses([]);
+      setGuidanceStatus("");
+      setShowGuidance(false);
+      setGuidanceStep(1);
+      await onRegistryChanged?.();
+      await loadOptions();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Failed to clear competitor analysis data");
+    } finally {
+      setClearingAll(false);
+    }
+  }, [loadOptions, onRegistryChanged]);
 
   const finalizeGuidance = useCallback(async () => {
     setGuidanceLoading(true);
@@ -816,17 +862,31 @@ export function PeerComparisonView({
             <TrendingUp className="h-5 w-5 text-primary" strokeWidth={2.5} />
             <h3 className="text-base font-bold text-slate-900">Peer Comparison</h3>
           </div>
-          {onToggleSidebar ? (
-            <button
-              type="button"
-              onClick={onToggleSidebar}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 shadow-subtle transition hover:bg-slate-50 hover:text-slate-800"
-              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-              title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            >
-              {sidebarCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
-            </button>
-          ) : null}
+          <div className="flex items-center gap-2">
+            {options.length > 0 ? (
+              <button
+                type="button"
+                onClick={clearAllCompanies}
+                disabled={clearingAll}
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 text-xs font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                title="Clear all companies and uploaded competitor analysis data"
+              >
+                {clearingAll ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                Clear all companies
+              </button>
+            ) : null}
+            {onToggleSidebar ? (
+              <button
+                type="button"
+                onClick={onToggleSidebar}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 shadow-subtle transition hover:bg-slate-50 hover:text-slate-800"
+                aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              >
+                {sidebarCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+              </button>
+            ) : null}
+          </div>
         </div>
 
         {loadingOpts ? (

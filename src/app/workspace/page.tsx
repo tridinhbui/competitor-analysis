@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { AnalysisModulesSidebar, WorkspacePanel, type WorkspacePanelActions } from "@/components/workspace/WorkspacePanel";
 import { AnalysisResults } from "@/components/workspace/AnalysisResults";
 import { SlideBlocksPanel } from "@/components/workspace/SlideBlocksPanel";
@@ -12,7 +11,6 @@ import { MacroInsightsPanel } from "@/components/workspace/MacroInsightsPanel";
 import type { CompanyRegistry, ModuleReadiness, TimelineSlot, WorkspaceReadiness } from "@/types/competitor";
 import {
   Boxes,
-  ArrowLeft,
   Loader2,
   Building2,
   CalendarDays,
@@ -47,6 +45,8 @@ export default function WorkspacePage() {
         setRegistry(data);
         if (nextSelectedTicker) {
           setSelectedTicker(nextSelectedTicker);
+        } else if (data.companies.length === 0) {
+          setSelectedTicker(null);
         } else if (data.companies.length > 0 && !selectedTicker) {
           setSelectedTicker(data.companies[0].ticker);
         }
@@ -112,7 +112,7 @@ export default function WorkspacePage() {
               </div>
             </div>
           </div>
-          <PeerComparisonView />
+          <PeerComparisonView onRegistryChanged={() => loadRegistry()} />
         </div>
       ) : (
         <div className={`grid gap-4 ${sidebarCollapsed ? "lg:grid-cols-[56px_1fr]" : "lg:grid-cols-[240px_1fr]"}`}>
@@ -283,6 +283,7 @@ export default function WorkspacePage() {
                 <PeerComparisonView
                   sidebarCollapsed={sidebarCollapsed}
                   onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
+                  onRegistryChanged={() => loadRegistry()}
                 />
               </div>
             ) : null}
