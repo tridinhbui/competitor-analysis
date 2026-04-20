@@ -13,7 +13,7 @@ import {
   isFullAnalysisPayload,
   isStepEventPayload,
 } from "@/lib/sseClient";
-import { RotateCcw, FileText } from "lucide-react";
+import { RotateCcw, FileText, Sparkles } from "lucide-react";
 import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import { normalizeCompanyName, resolveTicker } from "@/lib/filingIdentity";
 type Phase = "idle" | "analyzing" | "done" | "error";
@@ -122,6 +122,19 @@ export function TenQDropAnalyzer() {
   const resizeContainerRef = useRef<HTMLDivElement>(null);
   const savedResultKeyRef = useRef<string | null>(null);
   const [traceTarget, setTraceTarget] = useState<TraceTarget | null>(null);
+  const [aiEnabled, setAiEnabled] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    const stored = window.localStorage.getItem("analyze-ai-enabled");
+    return stored === null ? true : stored !== "false";
+  });
+
+  const toggleAi = useCallback(() => {
+    setAiEnabled((prev) => {
+      const next = !prev;
+      window.localStorage.setItem("analyze-ai-enabled", String(next));
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -291,7 +304,7 @@ export function TenQDropAnalyzer() {
     setResult(null);
     setError("");
     try {
-      const analysis = await analyzePdf(file, (evt) => setEvents((prev) => [...prev, evt]));
+      const analysis = await analyzePdf(file, (evt) => setEvents((prev) => [...prev, evt]), { useAI: aiEnabled });
       const resolvedTicker = resolveTicker({
         metaTicker: analysis.meta.ticker,
         fileName: file.name,
@@ -369,6 +382,8 @@ export function TenQDropAnalyzer() {
         handleDrop={handleDrop}
         handleFileInput={handleFileInput}
         inputRef={inputRef}
+        aiEnabled={aiEnabled}
+        onToggleAi={toggleAi}
       />
     );
   }
@@ -393,6 +408,21 @@ export function TenQDropAnalyzer() {
             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
               {phase === "analyzing" ? "Extracting tables · mapping debt lines" : phase === "done" ? "Ready to review, export, and chat" : "Awaiting input"}
             </span>
+            <button
+              type="button"
+              onClick={toggleAi}
+              disabled={phase === "analyzing"}
+              title={aiEnabled ? "AI extraction ON — click to disable" : "AI extraction OFF — click to enable"}
+              className={cn(
+                "ml-auto inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50",
+                aiEnabled
+                  ? "border-primary/30 bg-primary/10 text-primary hover:bg-primary/20"
+                  : "border-slate-200 bg-slate-100 text-slate-500 hover:bg-slate-200"
+              )}
+            >
+              <Sparkles className="h-3 w-3" />
+              AI extraction {aiEnabled ? "on" : "off"}
+            </button>
           </div>
           <AgentWorkflow events={events} isRunning={phase === "analyzing"} horizontal />
           {persistNotice?.kind === "warn" && (

@@ -982,8 +982,10 @@ function detectPeriod(lines: PdfLine[]): string {
 
 export async function analyzePdf(
   file: File,
-  onStep: (event: StepEvent) => void
+  onStep: (event: StepEvent) => void,
+  options?: { useAI?: boolean }
 ): Promise<FullAnalysis> {
+  const useAI = options?.useAI !== false; // default true
   const t0 = performance.now();
 
   // Step 1: Ingest
@@ -1013,12 +1015,41 @@ export async function analyzePdf(
     step: "extract_bs",
     label: pipeLabel("extract_bs"),
     status: "running",
-    message: "Running 5 parallel AI extractions (BS, IS/CF, qualitative, segments, non-recurring)…",
+    message: useAI
+      ? "Running 5 parallel AI extractions (BS, IS/CF, qualitative, segments, non-recurring)…"
+      : "AI extraction disabled — running heuristic extraction…",
   });
 
   const tAi = performance.now();
   let analysis: FullAnalysis;
   let usedAI = false;
+
+  if (!useAI) {
+    onStep({
+      step: "extract_bs",
+      label: pipeLabel("extract_bs"),
+      status: "running",
+      message: "Heuristic extraction (AI off)…",
+    });
+    const tH = performance.now();
+    const { bs, cf } = heuristicExtract(lines);
+    onStep({
+      step: "extract_bs", label: pipeLabel("extract_bs"), status: "done",
+      message: `Heuristic found ${bs.length} BS + ${cf.length} CF items (AI disabled)`,
+      durationMs: elapsed(tH),
+    });
+    onStep({
+      step: "extract_cf", label: pipeLabel("extract_cf"), status: "done",
+      message: `Heuristic found ${cf.length} cash flow / income items`,
+      durationMs: elapsed(tH),
+    });
+    analysis = assembleAnalysis(bs, cf, {
+      source: "pdf", fileName: file.name, pagesRead: pages,
+      charsExtracted: rawChars, periodEnd: detectPeriod(lines),
+      confidence: "low",
+      extractionMethod: "pdf-heuristic",
+    });
+  } else
 
   try {
     analysis = await analyzeWithAI(fullText, file.name, pages, rawChars);

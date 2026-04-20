@@ -15,6 +15,8 @@ interface AnalyzeExtractPanelProps {
   handleDrop: (e: React.DragEvent) => void;
   handleFileInput: (e: React.ChangeEvent<HTMLInputElement>) => void;
   inputRef: RefObject<HTMLInputElement | null>;
+  aiEnabled?: boolean;
+  onToggleAi?: () => void;
 }
 
 export function AnalyzeExtractPanel({
@@ -23,6 +25,8 @@ export function AnalyzeExtractPanel({
   handleDrop,
   handleFileInput,
   inputRef,
+  aiEnabled = true,
+  onToggleAi,
 }: AnalyzeExtractPanelProps) {
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:py-10">
@@ -32,6 +36,27 @@ export function AnalyzeExtractPanel({
         <p className="mx-auto mt-2 max-w-2xl text-sm text-slate-600">
           Upload a <strong className="font-semibold text-slate-800">10-Q PDF</strong>. We map key lines, score quality, and prepare dashboard-ready output.
         </p>
+        {onToggleAi ? (
+          <div className="mt-4 flex justify-center">
+            <button
+              type="button"
+              onClick={onToggleAi}
+              className={cn(
+                "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition",
+                aiEnabled
+                  ? "border-primary/30 bg-primary/10 text-primary hover:bg-primary/20"
+                  : "border-slate-200 bg-slate-100 text-slate-500 hover:bg-slate-200"
+              )}
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              AI extraction {aiEnabled ? "on" : "off"}
+              <span className={cn(
+                "ml-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider",
+                aiEnabled ? "bg-primary/20 text-primary" : "bg-slate-200 text-slate-500"
+              )}>{aiEnabled ? "enabled" : "disabled"}</span>
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
