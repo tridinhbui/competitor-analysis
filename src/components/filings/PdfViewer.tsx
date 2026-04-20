@@ -562,6 +562,7 @@ interface Props {
 export function PdfViewer({ file, fullHeight, traceTarget, onClearTrace }: Props) {
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const isHoveredRef = useRef(false);
   const [pdfDoc, setPdfDoc] = useState<PdfDoc | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
@@ -751,6 +752,7 @@ export function PdfViewer({ file, fullHeight, traceTarget, onClearTrace }: Props
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+        if (!isHoveredRef.current && !manualSearchOpen) return;
         event.preventDefault();
         setManualSearchOpen(true);
         window.setTimeout(() => searchInputRef.current?.focus(), 0);
@@ -873,11 +875,15 @@ export function PdfViewer({ file, fullHeight, traceTarget, onClearTrace }: Props
   }[activeCand.confidence] : null;
 
   return (
-    <div className={cn(
-      "flex flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-elevation transition-all duration-300",
-      fullHeight && "h-full min-h-0",
-      expanded && "fixed inset-4 z-50"
-    )}>
+    <div
+      className={cn(
+        "flex flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-elevation transition-all duration-300",
+        fullHeight && "h-full min-h-0",
+        expanded && "fixed inset-4 z-50"
+      )}
+      onMouseEnter={() => { isHoveredRef.current = true; }}
+      onMouseLeave={() => { isHoveredRef.current = false; }}
+    >
       {expanded && (
         <div className="fixed inset-0 -z-10 bg-slate-900/40 backdrop-blur-sm" onClick={() => setExpanded(false)} />
       )}
