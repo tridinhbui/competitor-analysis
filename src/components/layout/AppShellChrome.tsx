@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, X, LogIn, LogOut, User, Settings, ChevronDown } from "lucide-react";
+import { Menu, X, LogIn, LogOut, User, Settings, ChevronDown, CreditCard } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/authContext";
 import { useProfile } from "@/lib/profileContext";
@@ -14,7 +14,6 @@ const NAV_ITEMS = [
   { href: "/analyze", label: "Analyze" },
   { href: "/data-source", label: "Data Source" },
   { href: "/workspace", label: "Competitor Analysis" },
-  { href: "/#pricing", label: "Pricing" },
 ] as const;
 
 function isItemActive(pathname: string, href: string): boolean {
@@ -42,8 +41,10 @@ export function AppShellChrome() {
     profile?.avatar_url ||
     (typeof user?.user_metadata?.avatar_url === "string" ? user.user_metadata.avatar_url : null) ||
     (typeof user?.user_metadata?.picture === "string" ? user.user_metadata.picture : null);
-  const brandHref = "/";
   const showAppNav = Boolean(user) && !authLoading;
+  const brandHref = showAppNav ? "/analyze" : "/";
+  const pricingHref = "/#pricing";
+  const pricingActive = pathname === "/" && currentHash === "#pricing";
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -127,6 +128,18 @@ export function AppShellChrome() {
 
                   {userMenuOpen && (
                     <div className="absolute right-0 top-full z-50 mt-1.5 w-44 rounded-xl border border-border bg-white py-1 shadow-lg">
+                      <Link
+                        href={pricingHref}
+                        onClick={() => setUserMenuOpen(false)}
+                        className={cn(
+                          "flex items-center gap-2 px-3 py-2 text-xs font-medium transition hover:bg-secondary",
+                          pricingActive ? "bg-primary/10 text-primary" : "text-foreground"
+                        )}
+                      >
+                        <CreditCard className="h-3.5 w-3.5 text-muted-foreground" />
+                        Pricing
+                      </Link>
+                      <div className="mx-2 my-1 h-px bg-border/60" />
                       <Link
                         href="/profile"
                         onClick={() => setUserMenuOpen(false)}
@@ -213,6 +226,19 @@ export function AppShellChrome() {
               {user && (
                 <>
                   <div className="mx-1 my-1 h-px bg-border/60" />
+                  <Link
+                    href={pricingHref}
+                    onClick={() => setMobileOpen(false)}
+                    className={cn(
+                      "flex items-center gap-2 rounded-lg px-3 py-2 text-xs transition",
+                      pricingActive
+                        ? "bg-primary/10 text-primary"
+                        : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                    )}
+                  >
+                    <CreditCard className="h-3.5 w-3.5" />
+                    Pricing
+                  </Link>
                   <Link
                     href="/profile"
                     onClick={() => setMobileOpen(false)}

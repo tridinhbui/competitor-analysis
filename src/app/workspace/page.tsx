@@ -84,13 +84,6 @@ export default function WorkspacePage() {
     <div className="workspace-page mx-auto max-w-[1500px] px-4 py-4 sm:px-6 sm:py-6">
       {/* Header */}
       <div className="mb-4 flex items-center gap-4">
-        <Link
-          href="/"
-          className="workspace-interactive inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-subtle hover:border-slate-300 hover:text-slate-900"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          Back
-        </Link>
         <div>
           <h1 className="flex items-center gap-2 text-xl font-bold text-slate-900 sm:text-2xl">
             <Boxes className="h-6 w-6 text-primary" />
@@ -107,13 +100,19 @@ export default function WorkspacePage() {
           <Loader2 className="h-6 w-6 animate-spin text-primary" />
         </div>
       ) : !registry || registry.companies.length === 0 ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-8 text-center shadow-subtle">
-          <Building2 className="mx-auto mb-3 h-10 w-10 text-slate-300" />
-          <p className="text-sm font-semibold text-slate-600">No companies yet</p>
-          <p className="mt-1 text-xs text-slate-400">
-            Go back and analyze a company by ticker or PDF upload. Filings will
-            appear here automatically.
-          </p>
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-subtle">
+            <div className="flex items-start gap-3">
+              <Building2 className="mt-0.5 h-8 w-8 text-primary" />
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Set up your first competitor comparison</p>
+                <p className="mt-1 text-sm text-slate-500">
+                  Start here by choosing how many companies and years you want to compare, then drop the filing PDFs below.
+                </p>
+              </div>
+            </div>
+          </div>
+          <PeerComparisonView />
         </div>
       ) : (
         <div className={`grid gap-4 ${sidebarCollapsed ? "lg:grid-cols-[56px_1fr]" : "lg:grid-cols-[240px_1fr]"}`}>

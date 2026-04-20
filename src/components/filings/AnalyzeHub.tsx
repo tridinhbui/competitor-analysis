@@ -4,15 +4,14 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { TenQDropAnalyzer } from "./TenQDropAnalyzer";
-import { OverviewSnapshotPanel } from "@/components/overview/OverviewSnapshotPanel";
 import { AnalysisHistoryPanel } from "@/components/history/AnalysisHistoryPanel";
 
-type AnalyzeTab = "extract" | "snapshot" | "history";
+type AnalyzeTab = "extract" | "history";
 
 export function AnalyzeHub() {
   const searchParams = useSearchParams();
   const rawTab = searchParams.get("tab");
-  const tab = (rawTab === "snapshot" || rawTab === "history" ? rawTab : "extract") as AnalyzeTab;
+  const tab = (rawTab === "history" ? rawTab : "extract") as AnalyzeTab;
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -30,18 +29,6 @@ export function AnalyzeHub() {
           Extract
         </Link>
         <Link
-          href="/analyze?tab=snapshot"
-          role="tab"
-          aria-selected={tab === "snapshot"}
-          aria-current={tab === "snapshot" ? "page" : undefined}
-          className={cn(
-            "rounded-full px-3 py-1.5 text-xs font-semibold transition",
-            tab === "snapshot" ? "bg-primary/10 text-primary" : "bg-white text-slate-500 hover:text-slate-900"
-          )}
-        >
-          Snapshot
-        </Link>
-        <Link
           href="/analyze?tab=history"
           role="tab"
           aria-selected={tab === "history"}
@@ -55,7 +42,7 @@ export function AnalyzeHub() {
         </Link>
       </div>
 
-      {tab === "snapshot" ? <OverviewSnapshotPanel /> : tab === "history" ? <AnalysisHistoryPanel /> : <TenQDropAnalyzer />}
+      {tab === "history" ? <AnalysisHistoryPanel /> : <TenQDropAnalyzer />}
     </div>
   );
 }

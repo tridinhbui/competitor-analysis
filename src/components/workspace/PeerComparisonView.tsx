@@ -34,6 +34,21 @@ function uniqueTickers(list: string[]): string[] {
   return [...new Set(list.map((t) => t.trim().toUpperCase()).filter(Boolean))];
 }
 
+function rankParsedTickers(entries: ParsedEntry[], limit: number): string[] {
+  const counts = entries.reduce((acc, entry) => {
+    const ticker = (entry.resolvedTicker || "UNKNOWN").toUpperCase();
+    if (ticker !== "UNKNOWN") {
+      acc[ticker] = (acc[ticker] ?? 0) + 1;
+    }
+    return acc;
+  }, {} as Record<string, number>);
+
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit)
+    .map(([ticker]) => ticker);
+}
+
 type QuarterKey = "Q1" | "Q2" | "Q3" | "Q4" | "Unknown";
 
 function detectQuarterFromText(value?: string): QuarterKey {
@@ -91,6 +106,8 @@ export function PeerComparisonView({
   const [error, setError] = useState("");
   const [result, setResult] = useState<CompanyComparisonPayload | null>(null);
   const [activeTab, setActiveTab] = useState<CompareTab>("overview");
+  const [setupCompanyCount, setSetupCompanyCount] = useState(2);
+  const [setupYearCount, setSetupYearCount] = useState(2);
 
   // Full-screen guidance state
   const [showGuidance, setShowGuidance] = useState(false);
@@ -144,6 +161,8 @@ export function PeerComparisonView({
     selectedTickers.length < MAX_COMPANIES &&
     options.some((option) => !selectedTickers.includes(option.ticker));
   const hasDuplicateSelection = new Set(selectedTickers).size !== selectedTickers.length;
+  const expectedFileCount = setupCompanyCount * setupYearCount * 4;
+  const uploadProgress = expectedFileCount > 0 ? Math.min(100, Math.round((queuedFiles.length / expectedFileCount) * 100)) : 0;
 
   const updateRow = useCallback((index: number, ticker: string) => {
     setSelectedTickers((rows) => {
@@ -296,54 +315,79 @@ export function PeerComparisonView({
   })();
   const step4RevenueMax = Math.max(...step4RevenueBars.map((point) => point.value), 1);
 
+  const ingestAnalyses = useCallback(async (analyses: ParsedEntry[], companyCount = setupCompanyCount) => {
+    if (analyses.length === 0) {
+      throw new Error("Upload at least one PDF filing to continue");
+    }
+
+    const seenTicker = new Set<string>();
+    for (let i = 0; i < analyses.length; i += 1) {
+      const entry = analyses[i];
+      const analysis = entry.analysis;
+      const ticker = entry.resolvedTicker.toUpperCase();
+      setGuidanceStatus(`Saving ${i + 1}/${analyses.length}: ${ticker || entry.sourceFileName || "PDF"}`);
+      await fetch("/api/filings/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ticker: ticker || undefined,
+          periodEnd: analysis.meta.periodEnd,
+          source: "pdf",
+          workflowOrigin: "competitor",
+          analysis,
+        }),
+      });
+
+      if (ticker && !seenTicker.has(ticker)) {
+        seenTicker.add(ticker);
+        await fetch("/api/filings/peer", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ticker,
+            name: entry.resolvedCompanyName || ticker,
+            peerType: "diversified-protein",
+          }),
+        }).catch(() => {});
+      }
+    }
+
+    await loadOptions();
+    const topTickers = rankParsedTickers(analyses, Math.max(2, Math.min(MAX_COMPANIES, companyCount)));
+    if (topTickers.length > 0) {
+      setSelectedTickers(topTickers);
+    }
+    setQueuedFiles([]);
+    setParsedAnalyses([]);
+    setGuidanceStatus("");
+  }, [loadOptions, setupCompanyCount]);
+
   const finalizeGuidance = useCallback(async () => {
     setGuidanceLoading(true);
     setError("");
     try {
       const analyses = parsedAnalyses.length > 0 ? parsedAnalyses : await parseDroppedFiles();
-      if (analyses.length > 0) {
-        const seenTicker = new Set<string>();
-        for (let i = 0; i < analyses.length; i += 1) {
-          const entry = analyses[i];
-          const analysis = entry.analysis;
-          const ticker = entry.resolvedTicker.toUpperCase();
-          setGuidanceStatus(`Saving ${i + 1}/${analyses.length}: ${ticker || entry.sourceFileName || "PDF"}`);
-          await fetch("/api/filings/save", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              ticker: ticker || undefined,
-              periodEnd: analysis.meta.periodEnd,
-              source: "pdf",
-              workflowOrigin: "competitor",
-              analysis,
-            }),
-          });
-
-          // Ensure company list auto-populates when many files are dropped.
-          if (ticker && !seenTicker.has(ticker)) {
-            seenTicker.add(ticker);
-            await fetch("/api/filings/peer", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                ticker,
-                name: entry.resolvedCompanyName || ticker,
-                peerType: "diversified-protein",
-              }),
-            }).catch(() => {});
-          }
-        }
-        await loadOptions();
-      }
+      await ingestAnalyses(analyses);
       setShowGuidance(false);
-      setGuidanceStatus("");
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Failed to complete guidance");
     } finally {
       setGuidanceLoading(false);
     }
-  }, [loadOptions, parseDroppedFiles, parsedAnalyses]);
+  }, [ingestAnalyses, parseDroppedFiles, parsedAnalyses]);
+
+  const processSetupUploads = useCallback(async () => {
+    setGuidanceLoading(true);
+    setError("");
+    try {
+      const analyses = parsedAnalyses.length > 0 ? parsedAnalyses : await parseDroppedFiles();
+      await ingestAnalyses(analyses, setupCompanyCount);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Failed to process uploaded filings");
+    } finally {
+      setGuidanceLoading(false);
+    }
+  }, [ingestAnalyses, parseDroppedFiles, parsedAnalyses, setupCompanyCount]);
 
   const compare = useCallback(async () => {
     const tickers = uniqueTickers(selectedTickers);
@@ -791,9 +835,131 @@ export function PeerComparisonView({
             Loading analyzed companies...
           </div>
         ) : options.length < 2 ? (
-          <p className="text-sm text-slate-500">
-            Compare financial metrics across companies side-by-side. Load historical quarters first via the Analyze page.
-          </p>
+          <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-5">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">Setup</p>
+              <h4 className="mt-2 text-lg font-bold text-slate-900">Drop filings to start the comparison</h4>
+              <p className="mt-1 text-sm text-slate-500">Pick the size first, then upload the PDF quarters.</p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Companies</label>
+                <select
+                  value={setupCompanyCount}
+                  onChange={(event) => setSetupCompanyCount(Number(event.target.value))}
+                  className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
+                >
+                  {[2, 3, 4, 5, 6, 7].map((count) => (
+                    <option key={count} value={count}>
+                      {count} companies
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Years</label>
+                <select
+                  value={setupYearCount}
+                  onChange={(event) => setSetupYearCount(Number(event.target.value))}
+                  className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
+                >
+                  {[1, 2, 3, 4, 5].map((count) => (
+                    <option key={count} value={count}>
+                      {count} year{count > 1 ? "s" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+              Target: <span className="font-semibold text-slate-900">{expectedFileCount}</span> filings
+              <span className="text-slate-400"> · {queuedFiles.length} queued · {uploadProgress}%</span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => inputRef.current?.click()}
+              onDragOver={(event) => {
+                event.preventDefault();
+                setDragActive(true);
+              }}
+              onDragLeave={() => setDragActive(false)}
+              onDrop={(event) => {
+                event.preventDefault();
+                setDragActive(false);
+                addFiles(event.dataTransfer.files);
+              }}
+              className={`w-full rounded-2xl border-2 border-dashed p-6 text-left transition ${
+                dragActive ? "border-primary bg-primary/5" : "border-slate-200 bg-white hover:border-primary/30"
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <UploadCloud className="mt-0.5 h-6 w-6 text-slate-400" />
+                <div>
+                  <p className="text-base font-semibold text-slate-800">Drop PDF filings here</p>
+                  <p className="mt-1 text-sm text-slate-500">10-Q or 10-K PDFs are supported.</p>
+                </div>
+              </div>
+            </button>
+            <input
+              ref={inputRef}
+              type="file"
+              accept=".pdf"
+              multiple
+              className="hidden"
+              onChange={(event) => {
+                if (event.target.files) addFiles(event.target.files);
+                event.currentTarget.value = "";
+              }}
+            />
+
+            {queuedFiles.length > 0 ? (
+              <div className="rounded-xl border border-slate-200 bg-white p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Queued filings</p>
+                  <span className="text-[11px] text-slate-400">{queuedFiles.length} file(s)</span>
+                </div>
+                <div className="space-y-1">
+                  {queuedFiles.map((file, idx) => (
+                    <div key={`${file.name}-${idx}`} className="flex items-center justify-between rounded-md bg-slate-50 px-2 py-1.5 text-xs text-slate-700">
+                      <span className="truncate">{file.name}</span>
+                      <button type="button" onClick={() => removeQueuedFile(idx)} className="rounded p-1 hover:bg-slate-200">
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => inputRef.current?.click()}
+                className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                Browse PDFs
+              </button>
+              <button
+                type="button"
+                onClick={processSetupUploads}
+                disabled={guidanceLoading || queuedFiles.length === 0}
+                className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {guidanceLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
+                {guidanceLoading ? "Processing..." : "Build comparison"}
+              </button>
+            </div>
+
+            {options.length === 1 ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                One company is already on file. Add at least one more company to compare side by side.
+              </div>
+            ) : null}
+          </div>
         ) : (
           <>
             <p className="mb-3 text-xs text-slate-500">

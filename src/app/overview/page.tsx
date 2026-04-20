@@ -7,11 +7,11 @@ import { RequireAuth } from "@/components/auth/RequireAuth";
 function OverviewRedirect() {
   const router = useRouter();
   useEffect(() => {
-    router.replace("/analyze?tab=snapshot");
+    router.replace("/analyze?tab=extract");
   }, [router]);
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 text-center text-sm text-muted-foreground">
-      Opening snapshot…
+      Opening analyze workspace…
     </div>
   );
 }
