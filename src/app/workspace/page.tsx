@@ -57,6 +57,7 @@ export default function WorkspacePage() {
     }
   }, []);
   const [overviewReadiness, setOverviewReadiness] = useState<(WorkspaceReadiness & { timeline?: TimelineSlot[] }) | null>(null);
+  const [deletingTicker, setDeletingTicker] = useState<string | null>(null);
   const panelActionsRef = useRef<WorkspacePanelActions | null>(null);
   const handleActionsReady = useCallback((actions: WorkspacePanelActions) => {
     panelActionsRef.current = actions;
@@ -95,6 +96,32 @@ export default function WorkspacePage() {
     setAnalysisModulesOpen(true);
     setOverviewReadiness(null);
   }, [selectedTicker]);
+
+  const handleDeleteCompany = useCallback(async (ticker: string) => {
+    if (deletingTicker) return;
+    setDeletingTicker(ticker);
+    try {
+      const resp = await fetch("/api/workspace/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker }),
+      });
+      if (!resp.ok) return;
+
+      const remainingCompanies =
+        registry?.companies.filter((company) => company.ticker !== ticker) ?? [];
+      const nextSelected =
+        selectedTicker === ticker
+          ? (remainingCompanies[0]?.ticker ?? null)
+          : selectedTicker;
+      await loadRegistry(nextSelected ?? undefined);
+      if (nextSelected == null) {
+        setSelectedTicker(null);
+      }
+    } finally {
+      setDeletingTicker(null);
+    }
+  }, [deletingTicker, registry?.companies, selectedTicker]);
 
   const sectionTabs: Array<{ id: WorkspaceSection; label: string; hint: string }> = [
     { id: "overview", label: "Overview", hint: "Quarter Coverage + Peer Comparison" },
@@ -246,21 +273,40 @@ export default function WorkspacePage() {
               {companiesOpen ? (
                 <div className="space-y-1">
                   {registry.companies.map((c) => (
-                    <button
+                    <div
                       key={c.ticker}
-                      onClick={() => setSelectedTicker(c.ticker)}
                       className={`workspace-interactive flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left [font-family:var(--font-body)] text-sm ${
                         selectedTicker === c.ticker
                           ? "bg-accent font-semibold text-accent-foreground ring-1 ring-primary/25"
                           : "text-slate-600 hover:bg-slate-50"
                       }`}
                     >
-                      <Building2 className="h-4 w-4 shrink-0" />
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm leading-tight">{c.name}</div>
-                        <div className="text-[10px] text-slate-400">{c.ticker}</div>
-                      </div>
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTicker(c.ticker)}
+                        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                      >
+                        <Building2 className="h-4 w-4 shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm leading-tight">{c.name}</div>
+                          <div className="text-[10px] text-slate-400">{c.ticker}</div>
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteCompany(c.ticker)}
+                        disabled={deletingTicker !== null}
+                        className="rounded p-1 text-slate-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+                        title="Delete company data"
+                        aria-label={`Delete ${c.ticker} data`}
+                      >
+                        {deletingTicker === c.ticker ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </div>
                   ))}
                 </div>
               ) : null}
