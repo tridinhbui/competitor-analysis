@@ -1011,6 +1011,7 @@ export async function POST(request: Request) {
       "costOfRevenue",
       "grossProfit",
       "operatingIncome",
+      "sgaExpense",
       "netIncome",
       "operatingCashFlow",
       "capitalExpenditures",
@@ -1140,7 +1141,36 @@ export async function POST(request: Request) {
       existingRd: hasValidRd ? existingRdItem!.value : null,
       currentRevenue: revenueItem != null ? Math.abs(revenueItem.value) : null,
     });
+    const explicitRdResolution = resolveRnDExpense({
+      text: filingText,
+      scaleNote: scaleForHeuristics,
+      companyName: mergedCompanyName,
+      existingRd: null,
+      currentRevenue: revenueItem != null ? Math.abs(revenueItem.value) : null,
+    });
+    const hasExplicitRdInPdf =
+      explicitRdResolution.method === "extracted" &&
+      explicitRdResolution.rAndDExpense != null &&
+      explicitRdResolution.rAndDExpense > 0;
     debugLog("[rd:resolution]", rdResolution);
+
+    // Guard against AI-only hallucinated R&D values when no explicit R&D line exists in the filing text.
+    // In that case we prefer missing (`—`) over a potentially wrong number.
+    if (
+      hasValidRd &&
+      existingRdItem &&
+      !hasExplicitRdInPdf &&
+      /^AI:/i.test(existingRdItem.source ?? "")
+    ) {
+      const idx = cfItems.indexOf(existingRdItem);
+      if (idx >= 0) {
+        cfItems.splice(idx, 1);
+      }
+      debugLog("[rd:drop-ai-no-explicit-row]", {
+        removedValue: existingRdItem.value,
+        source: existingRdItem.source,
+      });
+    }
 
     // Inline guards (not a precomputed boolean) so TS narrows rAndDExpense to number.
     if (

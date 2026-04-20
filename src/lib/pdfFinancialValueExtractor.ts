@@ -3,6 +3,7 @@ export type PdfFinancialMetric =
   | "costOfRevenue"
   | "grossProfit"
   | "netIncome"
+  | "sgaExpense"
   | "totalAssets"
   | "cashAndEquivalents"
   | "operatingIncome"
@@ -194,6 +195,20 @@ const METRICS: Record<PdfFinancialMetric, MetricConfig> = {
     preferredSections: ["income"],
     reject:
       /\b(segment|margin|per\s+share|cash\s+flow|adjusted|non-gaap|reconciliation|tax|before\s+income\s+tax)\b/i,
+  },
+  sgaExpense: {
+    tag: "SellingGeneralAndAdministrativeExpense",
+    label: "SG&A expense",
+    patterns: [
+      /^selling,?\s+general,?\s+and\s+administrative\b/i,
+      /^selling\s+general\s+and\s+administrative\b/i,
+      /^sg&a\b/i,
+    ],
+    exactLabel: /^selling,?\s+general,?\s+and\s+administrative(?:\s+expenses?)?$/i,
+    preferredSections: ["income"],
+    reject:
+      /\b(adjusted|non-gaap|percent|percentage|ratio|segment|as\s+a\s+percent|reconciliation)\b/i,
+    abs: true,
   },
   operatingCashFlow: {
     tag: "NetCashProvidedByOperatingActivities",
