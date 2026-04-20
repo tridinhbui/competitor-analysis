@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
-  LineChart, Line, CartesianGrid,
+  LineChart, Line, CartesianGrid, ReferenceLine,
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
 } from "recharts";
 import {
@@ -37,8 +37,11 @@ const COLORS = {
 };
 const PIE_PALETTE = [COLORS.primary, COLORS.blue, COLORS.emerald, COLORS.amber, COLORS.purple, COLORS.cyan];
 
-const fmt = (v: number | null | undefined, prefix = "$", suffix = "M"): string =>
-  v != null ? `${prefix}${v.toLocaleString()}${suffix}` : "—";
+const fmt = (v: number | null | undefined, prefix = "$", suffix = "M"): string => {
+  if (v == null) return "—";
+  const formatted = `${prefix}${Math.abs(v).toLocaleString()}${suffix}`;
+  return v < 0 ? `(${formatted})` : formatted;
+};
 const fmtPct = (v: number | null | undefined): string => v != null ? `${v.toFixed(1)}%` : "—";
 const fmtX = (v: number | null | undefined): string => v != null ? `${v.toFixed(2)}x` : "—";
 const fmtNum = (v: number | null | undefined): string => v != null ? v.toLocaleString() : "—";
@@ -220,7 +223,7 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
               {meta.companyName ?? meta.fileName ?? "Financial Analysis"}
             </h2>
             {meta.ticker && (
-              <span className="rounded bg-slate-900 px-2 py-0.5 text-[11px] font-bold text-white">
+              <span className="rounded-md bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary ring-1 ring-inset ring-primary/20">
                 {meta.ticker}
               </span>
             )}
@@ -259,7 +262,7 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
           </div>
         </div>
         {onExport && (
-          <button onClick={onExport} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white transition hover:bg-slate-800">
+          <button onClick={onExport} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-xs font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90">
             <Download className="h-3.5 w-3.5" />
             Export XLSX
           </button>
@@ -498,22 +501,23 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
 
         {/* ─── INCOME & MARGINS ─── */}
         {activeTab === "income" && (() => {
-          const bridgeData = [
-            { name: "Revenue", amt: inc.revenue ?? 0 },
-            { name: "COGS", amt: -(inc.costOfRevenue ?? 0) },
-            { name: "Gross Profit", amt: inc.grossProfit ?? 0 },
-            { name: "SG&A", amt: -(inc.sgaExpense ?? 0) },
-            { name: "OP Income", amt: inc.operatingIncome ?? 0 },
-            { name: "EBITDA", amt: inc.ebitda ?? 0 },
-            { name: "Net Income", amt: inc.netIncome ?? 0 },
-          ];
+          const revenue = inc.revenue ?? 0;
+          const grossProfit = inc.grossProfit ?? (inc.revenue != null && inc.costOfRevenue != null ? inc.revenue - inc.costOfRevenue : 0);
+          const operatingIncome = inc.operatingIncome ?? 0;
+          const ebitda = inc.ebitda ?? 0;
+          const netIncome = inc.netIncome ?? 0;
 
-          const marginData = [
-            { name: "Gross", value: inc.grossMargin ?? 0 },
-            { name: "Operating", value: inc.operatingMargin ?? 0 },
-            { name: "EBITDA", value: inc.ebitdaMargin ?? 0 },
-            { name: "Net", value: inc.netMargin ?? 0 },
-          ].filter(d => d.value !== 0);
+          const bridgeData = [
+            { name: "Revenue", base: 0, amt: revenue, total: revenue, subtotal: true },
+            { name: "COGS", base: revenue, amt: grossProfit - revenue, total: grossProfit, subtotal: false },
+            { name: "Gross Profit", base: grossProfit, amt: 0, total: grossProfit, subtotal: true },
+            { name: "OpEx", base: grossProfit, amt: operatingIncome - grossProfit, total: operatingIncome, subtotal: false },
+            { name: "Operating Income", base: operatingIncome, amt: 0, total: operatingIncome, subtotal: true },
+            { name: "D&A", base: operatingIncome, amt: ebitda - operatingIncome, total: ebitda, subtotal: false },
+            { name: "EBITDA", base: ebitda, amt: 0, total: ebitda, subtotal: true },
+            { name: "Interest, tax & other", base: ebitda, amt: netIncome - ebitda, total: netIncome, subtotal: false },
+            { name: "Net Income", base: 0, amt: netIncome, total: netIncome, subtotal: true },
+          ];
 
           return (
             <div className="space-y-4">
@@ -521,39 +525,6 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
               <Section title="Income Statement">
                 <IncomeStatementTable inc={inc} onRowClick={onTraceMetric ? onMetricTableRowClick : undefined} />
               </Section>
-
-              {/* Charts */}
-              <div className="grid gap-4 lg:grid-cols-2">
-                <Section title="Profit Waterfall ($M)">
-                  <div className="h-52">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={bridgeData}>
-                        <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} />
-                        <YAxis tick={{ fontSize: 10 }} />
-                        <Tooltip formatter={(v) => `$${Number(v).toLocaleString()}M`} contentStyle={tooltipStyle} />
-                        <Bar dataKey="amt" radius={[4, 4, 0, 0]}>
-                          {bridgeData.map((d, i) => (
-                            <Cell key={i} fill={d.amt >= 0 ? COLORS.blue : COLORS.red} />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </Section>
-
-                <Section title="Margin Profile (%)">
-                  <div className="h-52">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={marginData} layout="vertical">
-                        <XAxis type="number" tick={{ fontSize: 10 }} domain={[0, "auto"]} />
-                        <YAxis type="category" dataKey="name" width={70} tick={{ fontSize: 11 }} />
-                        <Tooltip formatter={(v) => `${Number(v).toFixed(1)}%`} contentStyle={tooltipStyle} />
-                        <Bar dataKey="value" fill={COLORS.primary} radius={[0, 4, 4, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </Section>
-              </div>
 
               {/* SG&A / R&D / D&A Breakdown */}
               <Section title="Operating Expense Breakdown">
@@ -570,6 +541,55 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                     { label: "Income Tax", value: fmt(inc.incomeTax), traceable: true },
                   ]}
                 />
+              </Section>
+
+              <Section title="Profit Waterfall ($M)">
+                <div className="mx-auto h-60 w-full max-w-4xl">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={bridgeData} margin={{ left: 12, right: 12, top: 8, bottom: 8 }}>
+                      <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#e2e8f0" />
+                      <ReferenceLine y={0} stroke="#94a3b8" />
+                      <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} />
+                      <YAxis tick={{ fontSize: 10 }} />
+                      <Tooltip
+                        formatter={(v, _name, entry) => {
+                          const value = Number(v);
+                          const payload = entry?.payload as { subtotal?: boolean; total?: number } | undefined;
+                          if (payload?.subtotal) {
+                            return [`$${Math.abs(payload.total ?? value).toLocaleString()}M`, "Total"];
+                          }
+                          return [
+                            `${value < 0 ? "($" : "$"}${Math.abs(value).toLocaleString()}M${value < 0 ? ")" : ""}`,
+                            "Change",
+                          ];
+                        }}
+                        labelFormatter={(_label, payload) => {
+                          const point = payload?.[0]?.payload as { name?: string; total?: number } | undefined;
+                          return point?.name
+                            ? `${point.name}${point.total != null ? ` · Total $${Math.abs(point.total).toLocaleString()}M` : ""}`
+                            : "";
+                        }}
+                        contentStyle={tooltipStyle}
+                      />
+                      <Bar dataKey="base" stackId="waterfall" fill="transparent" stroke="transparent" isAnimationActive={false} />
+                      <Bar dataKey="amt" stackId="waterfall" radius={[4, 4, 0, 0]} minPointSize={4}>
+                        {bridgeData.map((d, i) => (
+                          <Cell
+                            key={i}
+                            fill={
+                              d.name === "Revenue" ||
+                              d.name === "Net Income"
+                                ? COLORS.emerald
+                                : d.amt >= 0
+                                  ? COLORS.blue
+                                  : COLORS.red
+                            }
+                          />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               </Section>
 
               {/* EPS */}
@@ -696,12 +716,21 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
 
         {/* ─── CASH FLOW ─── */}
         {activeTab === "cashflow" && (() => {
+          const operatingCf = cf.operatingCashFlow ?? 0;
+          const capexOutflow = cf.capitalExpenditures != null ? -Math.abs(cf.capitalExpenditures) : 0;
+          const freeCashFlow = cf.freeCashFlow ?? (operatingCf + capexOutflow);
+          const dividendsOutflow = cf.dividendsPaid != null ? -Math.abs(cf.dividendsPaid) : 0;
+          const netIncomeValue = cf.netIncome ?? 0;
+          const ocfEnd = operatingCf;
+          const capexEnd = ocfEnd + capexOutflow;
+          const fcfStep = freeCashFlow - capexEnd;
+
           const cfBridge = [
-            { name: "OCF", amt: cf.operatingCashFlow ?? 0 },
-            { name: "CapEx", amt: -(cf.capitalExpenditures ?? 0) },
-            { name: "FCF", amt: cf.freeCashFlow ?? 0 },
-            { name: "Dividends", amt: -(cf.dividendsPaid ?? 0) },
-            { name: "Net Income", amt: cf.netIncome ?? 0 },
+            { name: "OCF", base: 0, amt: operatingCf, total: ocfEnd, subtotal: true },
+            { name: "CapEx", base: ocfEnd, amt: capexOutflow, total: capexEnd, subtotal: false },
+            { name: "FCF", base: capexEnd, amt: fcfStep, total: freeCashFlow, subtotal: false },
+            { name: "Dividends", base: freeCashFlow, amt: dividendsOutflow, total: freeCashFlow + dividendsOutflow, subtotal: false },
+            { name: "Net Income", base: 0, amt: netIncomeValue, total: netIncomeValue, subtotal: true },
           ];
 
           const buyback = cf.shareRepurchases ?? cfItems.find(i => i.tag === "PaymentsForRepurchaseOfCommonStock")?.value ?? null;
@@ -752,12 +781,45 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                 <Section title="Cash Flow Bridge ($M)">
                   <div className="h-52">
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={cfBridge}>
+                      <BarChart data={cfBridge} margin={{ left: 12, right: 12, top: 8, bottom: 8 }}>
+                        <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#e2e8f0" />
+                        <ReferenceLine y={0} stroke="#94a3b8" />
                         <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} />
                         <YAxis tick={{ fontSize: 10 }} />
-                        <Tooltip formatter={(v) => `$${Number(v).toLocaleString()}M`} contentStyle={tooltipStyle} />
-                        <Bar dataKey="amt" radius={[4, 4, 0, 0]}>
-                          {cfBridge.map((d, i) => <Cell key={i} fill={d.amt >= 0 ? COLORS.emerald : COLORS.red} />)}
+                        <Tooltip
+                          formatter={(v, _name, entry) => {
+                            const value = Number(v);
+                            const payload = entry?.payload as { subtotal?: boolean; total?: number } | undefined;
+                            if (payload?.subtotal) {
+                              return [`$${Math.abs(payload.total ?? value).toLocaleString()}M`, "Total"];
+                            }
+                            return [
+                              `${value < 0 ? "($" : "$"}${Math.abs(value).toLocaleString()}M${value < 0 ? ")" : ""}`,
+                              "Change",
+                            ];
+                          }}
+                          labelFormatter={(_label, payload) => {
+                            const point = payload?.[0]?.payload as { name?: string; total?: number } | undefined;
+                            return point?.name
+                              ? `${point.name}${point.total != null ? ` · Total $${Math.abs(point.total).toLocaleString()}M` : ""}`
+                              : "";
+                          }}
+                          contentStyle={tooltipStyle}
+                        />
+                        <Bar dataKey="base" stackId="cash-waterfall" fill="transparent" stroke="transparent" isAnimationActive={false} />
+                        <Bar dataKey="amt" stackId="cash-waterfall" radius={[4, 4, 0, 0]} minPointSize={4}>
+                          {cfBridge.map((d, i) => (
+                            <Cell
+                              key={i}
+                              fill={
+                                d.name === "OCF" || d.name === "Net Income"
+                                  ? COLORS.emerald
+                                  : d.amt >= 0
+                                    ? COLORS.blue
+                                    : COLORS.red
+                              }
+                            />
+                          ))}
                         </Bar>
                       </BarChart>
                     </ResponsiveContainer>
@@ -1406,7 +1468,14 @@ function InsightsTab({
       "EBITDA TTM": { value: ttm.ebitda, tags: ["EBITDA"] },
       "Net Income TTM": { value: ttm.netIncome, tags: ["NetIncome"] },
       "OCF TTM": { value: ttm.operatingCashFlow, tags: ["OperatingCashFlow"] },
-      "FCF TTM": { value: ttm.freeCashFlow, tags: ["FreeCashFlow"] },
+      "FCF TTM": {
+        value: ttm.freeCashFlow,
+        tags: ["FreeCashFlow"],
+        derivation: {
+          formula: "OCF TTM − CapEx TTM",
+          inputs: ["OCF TTM", "CapEx TTM"],
+        },
+      },
       "CapEx TTM": { value: ttm.capex, tags: ["CapitalExpenditure"] },
       "Gross Margin": { value: ttm.grossMargin, tags: ["GrossProfit", "Revenues"] },
       "OP Margin": { value: ttm.operatingMargin, tags: ["OperatingIncome", "Revenues"] },

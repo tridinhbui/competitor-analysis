@@ -388,7 +388,9 @@ export async function GET(request: Request) {
             ticker,
             result.meta.periodEnd ?? new Date().toISOString().split("T")[0],
             "sec",
-            result
+            result,
+            undefined,
+            "analyze"
           );
         } catch (saveErr) {
           // Don't fail the analysis if storage fails — log and continue

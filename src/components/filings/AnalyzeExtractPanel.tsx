@@ -1,20 +1,15 @@
 "use client";
 
 /**
- * /analyze idle UI — ingest + extract entry only:
- * - SEC ticker: server-side XBRL pipeline (official ingest).
- * - PDF: client-side parse + extract (same product surface as ticker output).
+ * /analyze idle UI — PDF extract entry only.
  * No backfill, quiz, or idle chat here (those live elsewhere).
  */
 
 import type { RefObject } from "react";
-import { Search, ArrowRight, FileUp, CheckCircle2, Sparkles, FileScan, ChartColumnBig } from "lucide-react";
+import { FileUp, CheckCircle2, Sparkles, FileScan, ChartColumnBig } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface AnalyzeExtractPanelProps {
-  ticker: string;
-  setTicker: (v: string) => void;
-  analyzeViaSec: (t: string) => void;
   dragOver: boolean;
   setDragOver: (v: boolean) => void;
   handleDrop: (e: React.DragEvent) => void;
@@ -23,9 +18,6 @@ interface AnalyzeExtractPanelProps {
 }
 
 export function AnalyzeExtractPanel({
-  ticker,
-  setTicker,
-  analyzeViaSec,
   dragOver,
   setDragOver,
   handleDrop,
@@ -35,47 +27,15 @@ export function AnalyzeExtractPanel({
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:py-10">
       <div className="mb-6 text-center">
-        <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-primary">Analyze</p>
+        <p className="text-sm font-bold uppercase tracking-[0.18em] text-primary sm:text-base">Analyze</p>
         <h1 className="mt-2 text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">Extract from filings</h1>
         <p className="mx-auto mt-2 max-w-2xl text-sm text-slate-600">
-          Ingest by <strong className="font-semibold text-slate-800">ticker</strong> (SEC stream) or <strong className="font-semibold text-slate-800">10-Q PDF</strong>. We map key lines,
-          score quality, and prepare dashboard-ready output.
+          Upload a <strong className="font-semibold text-slate-800">10-Q PDF</strong>. We map key lines, score quality, and prepare dashboard-ready output.
         </p>
       </div>
 
       <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
-        <div className="space-y-6 rounded-3xl border border-slate-200/90 bg-white/90 p-5 shadow-elevation sm:p-6">
-          <form
-            className="relative flex w-full items-center rounded-full border border-slate-200/90 bg-white shadow-subtle transition focus-within:border-primary/35 focus-within:ring-4 focus-within:ring-primary/10"
-            onSubmit={(e) => {
-              e.preventDefault();
-              analyzeViaSec(ticker);
-            }}
-          >
-            <Search className="pointer-events-none absolute left-4 h-5 w-5 text-slate-400 sm:left-5" aria-hidden />
-            <input
-              type="text"
-              placeholder="Ticker (e.g. AAPL, MSFT)…"
-              value={ticker}
-              onChange={(e) => setTicker(e.target.value.toUpperCase())}
-              autoComplete="off"
-              className="h-12 w-full rounded-full bg-transparent pl-11 pr-28 text-sm text-slate-900 outline-none placeholder:text-slate-400 sm:h-14 sm:pl-12 sm:pr-32 sm:text-base"
-            />
-            <button
-              type="submit"
-              disabled={!ticker.trim()}
-              className="absolute right-1.5 top-1.5 bottom-1.5 flex items-center justify-center gap-1.5 rounded-full bg-gradient-to-r from-primary to-[oklch(0.48_0.16_290)] px-4 text-xs font-semibold text-white shadow-subtle transition hover:opacity-95 disabled:opacity-40 sm:right-2 sm:top-2 sm:bottom-2 sm:gap-2 sm:px-5 sm:text-sm"
-            >
-              Run <ArrowRight className="h-3.5 w-3.5 sm:h-4 sm:w-4" aria-hidden />
-            </button>
-          </form>
-
-          <div className="flex items-center gap-4 text-[10px] font-semibold uppercase tracking-widest text-slate-400 sm:text-xs">
-            <div className="h-px flex-1 bg-gradient-to-r from-transparent to-slate-200" />
-            <span>or upload PDF</span>
-            <div className="h-px flex-1 bg-gradient-to-l from-transparent to-slate-200" />
-          </div>
-
+        <div className="flex min-h-[26rem] rounded-3xl border border-slate-200/90 bg-white/90 p-5 shadow-elevation sm:min-h-[30rem] sm:p-6">
           <div
             onDragOver={(e) => {
               e.preventDefault();
@@ -85,7 +45,7 @@ export function AnalyzeExtractPanel({
             onDrop={handleDrop}
             onClick={() => inputRef.current?.click()}
             className={cn(
-              "flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed p-8 text-center transition-all sm:p-10",
+              "flex min-h-full w-full cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed p-8 text-center transition-all sm:p-10",
               dragOver ? "border-primary bg-primary/[0.06] shadow-elevation" : "border-slate-200 bg-white/80 shadow-subtle hover:border-primary/35 hover:bg-white"
             )}
             role="button"
@@ -119,8 +79,8 @@ export function AnalyzeExtractPanel({
           </p>
           <ol className="mt-4 space-y-3 text-sm">
             <li className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-              <p className="font-semibold text-slate-900">1) Ingest & parse</p>
-              <p className="mt-1 text-xs text-slate-600">Ticker route streams SEC pipeline; PDF route parses pages and tables locally.</p>
+              <p className="font-semibold text-slate-900">1) Parse the filing</p>
+              <p className="mt-1 text-xs text-slate-600">The PDF route parses pages and tables locally before sending structured text for extraction.</p>
             </li>
             <li className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
               <p className="font-semibold text-slate-900">2) Map financial lines</p>
@@ -137,7 +97,7 @@ export function AnalyzeExtractPanel({
               Pro tip
             </p>
             <p className="mt-1 leading-relaxed">
-              Start with ticker for speed, then validate nuance by dropping the raw PDF.
+              Drag the raw filing PDF when you want the dashboard and PDF highlighter to stay in sync.
             </p>
           </div>
           <p className="mt-4 text-xs text-slate-500">

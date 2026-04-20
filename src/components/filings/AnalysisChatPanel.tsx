@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { compactAnalysisForLLM } from "@/lib/analysisContext";
+import { trackTokenUsage } from "@/lib/tokenUsageTracker";
 import type { FullAnalysis } from "@/types/analysis";
 import ReactMarkdown from "react-markdown";
 
@@ -136,6 +137,11 @@ History isn't just a log — it's your early warning system.
 const BOOT_SESSION_KEY = "cfo-boot-shown-v1";
 
 type Msg = { role: "user" | "assistant"; content: string; isAutoSummary?: boolean; isBoot?: boolean };
+type ChatResponse = {
+  message?: string;
+  error?: string;
+  usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+};
 
 interface Props {
   analysis: FullAnalysis | null;
@@ -209,7 +215,8 @@ export function AnalysisChatPanel({ analysis, inline, disableAutoSummary = false
           body: JSON.stringify({ context, autoSummary: true }),
           signal: abortController.signal,
         });
-        const data = (await res.json()) as { message?: string; error?: string };
+        const data = (await res.json()) as ChatResponse;
+        trackTokenUsage(data.usage);
         if (!res.ok) {
           setMessages((prev) => [...prev, { role: "assistant", content: data.error ?? `Request failed (${res.status})`, isAutoSummary: true }]);
           return;
@@ -257,7 +264,8 @@ export function AnalysisChatPanel({ analysis, inline, disableAutoSummary = false
             : undefined,
         }),
       });
-      const data = (await res.json()) as { message?: string; error?: string };
+      const data = (await res.json()) as ChatResponse;
+      trackTokenUsage(data.usage);
       if (!res.ok) {
         setMessages([...next, { role: "assistant", content: data.error ?? `Request failed (${res.status})` }]);
         return;

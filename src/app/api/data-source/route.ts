@@ -138,8 +138,11 @@ export async function GET() {
       ? parseFloat((Math.abs(rawSga) / rawRevenue).toFixed(4))
       : null;
 
+    const workflowOrigin = analysis.meta.workflowOrigin === "competitor" ? "competitor" : "analyze";
+
     const row: DataSourceRow = {
       id: f.id,
+      workflowOrigin,
       ticker: f.ticker,
       companyName: displayName,
       periodEnd: f.period_end,
@@ -198,12 +201,14 @@ export async function GET() {
   // ── Compute TTM rows: sum last 4 quarters per ticker for flow metrics
   const byTicker = new Map<string, DataSourceRow[]>();
   for (const r of rows) {
-    if (!byTicker.has(r.ticker)) byTicker.set(r.ticker, []);
-    byTicker.get(r.ticker)!.push(r);
+    const key = `${r.workflowOrigin}:${r.ticker}`;
+    if (!byTicker.has(key)) byTicker.set(key, []);
+    byTicker.get(key)!.push(r);
   }
 
   const ttmRows: DataSourceRow[] = [];
-  for (const [tk, tickerRows] of byTicker) {
+  for (const [groupKey, tickerRows] of byTicker) {
+    const [workflowOrigin, tk] = groupKey.split(":") as ["analyze" | "competitor", string];
     const sorted = tickerRows.sort((a, b) => a.periodEnd.localeCompare(b.periodEnd));
     if (sorted.length < 4) continue;
     const last4 = sorted.slice(-4);
@@ -228,7 +233,8 @@ export async function GET() {
       a != null && b != null && b > 0 ? parseFloat(((a / b) * 100).toFixed(1)) : null;
 
     ttmRows.push({
-      id: `${tk}_TTM`,
+      id: `${workflowOrigin}:${tk}_TTM`,
+      workflowOrigin,
       ticker: tk,
       companyName: latest.companyName,
       periodEnd: "TTM",
@@ -323,4 +329,61 @@ export async function PATCH(req: NextRequest) {
   }
 
   return NextResponse.json({ ok: true });
+}
+
+/** DELETE /api/data-source — clear all filings for one workflow table */
+export async function DELETE(req: NextRequest) {
+  const body = (await req.json().catch(() => ({}))) as {
+    workflowOrigin?: "analyze" | "competitor";
+    confirmationText?: string;
+  };
+
+  const workflowOrigin = body.workflowOrigin;
+  if (workflowOrigin !== "analyze" && workflowOrigin !== "competitor") {
+    return NextResponse.json({ error: "workflowOrigin must be 'analyze' or 'competitor'" }, { status: 400 });
+  }
+
+  const expectedConfirmationText =
+    workflowOrigin === "analyze"
+      ? "Delete Analyze Records"
+      : "Delete Competitor Analyze Records";
+
+  if ((body.confirmationText ?? "").trim() !== expectedConfirmationText) {
+    return NextResponse.json(
+      { error: `You must type "${expectedConfirmationText}" exactly to confirm deletion.` },
+      { status: 400 }
+    );
+  }
+
+  const { data: filings, error } = await supabase
+    .from("filings")
+    .select("id, analysis");
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  const idsToDelete = (filings ?? [])
+    .filter((f) => {
+      const analysis = f.analysis as FullAnalysis | null;
+      const origin = analysis?.meta?.workflowOrigin === "competitor" ? "competitor" : "analyze";
+      return origin === workflowOrigin;
+    })
+    .map((f) => f.id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+
+  if (idsToDelete.length === 0) {
+    return NextResponse.json({ ok: true, deleted: 0 });
+  }
+
+  const { error: deleteError } = await supabase
+    .from("filings")
+    .delete()
+    .in("id", idsToDelete);
+
+  if (deleteError) {
+    return NextResponse.json({ error: deleteError.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true, deleted: idsToDelete.length });
 }

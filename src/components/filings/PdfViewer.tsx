@@ -72,7 +72,7 @@ const METRIC_ALIASES: Record<string, string[]> = {
   "Free Cash Flow":    ["free cash flow"],
   "EBITDA":            ["ebitda", "ebitda (calculated", "adjusted ebitda"],
   "Cost of Revenue":   ["cost of revenue", "cost of sales", "cost of goods sold", "cogs"],
-  "Capital Expenditures": ["payments to acquire property", "capital expenditures", "purchases of property"],
+  "Capital Expenditures": ["additions to property, plant and equipment","payments to acquire property", "capital expenditures", "purchases of property"],
   /**
    * `pdfMatchLabel` "Dividends" uses this list. Bare "dividends" must match SCF lines that only say
    * "Dividends"; footnote hits are down-ranked via `scoreRow` (large target + tiny row amount) + page hint.
@@ -288,6 +288,28 @@ function scoreRow(row: ReconstructedRow, target: PdfTraceTarget): number {
     if (rowMax < 50) score -= 40;
   }
 
+  const traceIsCapex =
+    traceBundle.includes("capital expenditure") ||
+    traceBundle.includes("capex") ||
+    traceBundle.includes("additions to property");
+
+  if (traceIsCapex) {
+    if (
+      /contractual\s+obligation|thereafter|2027|2028|2029|2030|future\s+commit/i.test(
+        row.rowText
+      )
+    ) {
+      score -= 60;
+    }
+    if (
+      /approximately|complete\s+buildings|under\s+construction|fiscal\s+2026|expect\s+capital/i.test(
+        row.rowText
+      )
+    ) {
+      score -= 50;
+    }
+  }
+
   if (target.rowLabelHint) {
     const h = target.rowLabelHint.toLowerCase().replace(/\s+/g, " ").trim().slice(0, 56);
     if (h.length >= 3 && row.rowText.includes(h)) score += 48;
@@ -422,6 +444,88 @@ async function searchDocForTarget(
   return all.filter((c) => c.score >= Math.max(SCORE_THRESHOLD, top - 18)).slice(0, 14);
 }
 
+function normalizeSearchText(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function pickSearchTokens(tokens: TokenBox[], query: string): TokenBox[] {
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) return [];
+
+  const maxSpan = Math.min(12, tokens.length);
+  let best: TokenBox[] = [];
+
+  for (let len = 1; len <= maxSpan; len++) {
+    for (let i = 0; i + len <= tokens.length; i++) {
+      const slice = tokens.slice(i, i + len);
+      const combined = normalizeSearchText(slice.map((token) => token.text).join(" "));
+      if (combined.includes(normalizedQuery)) {
+        if (best.length === 0 || slice.length < best.length) best = slice;
+      }
+    }
+  }
+
+  if (best.length > 0) return best;
+
+  const words = normalizedQuery.split(" ").filter(Boolean);
+  return tokens.filter((token) => {
+    const lowered = token.text.toLowerCase();
+    return words.some((word) => lowered.includes(word));
+  });
+}
+
+async function collectTextMatchesForPage(
+  doc: PdfDoc,
+  pageNum: number,
+  query: string,
+): Promise<TraceCandidate[]> {
+  const page = await doc.getPage(pageNum);
+  const content = await page.getTextContent();
+  const rows = reconstructRows(content.items as PdfTextItem[]);
+  const normalizedQuery = normalizeSearchText(query);
+  const out: TraceCandidate[] = [];
+
+  for (const row of rows) {
+    if (!row.rowText.includes(normalizedQuery)) continue;
+    const matchedTokens = pickSearchTokens(row.tokens, query);
+    const markedTokens = row.tokens.map((token) => ({
+      ...token,
+      isMatch: matchedTokens.includes(token),
+    }));
+    out.push({
+      metricKey: normalizedQuery,
+      page: pageNum,
+      rowBbox: matchedTokens.length > 0 ? bboxFromTokens(matchedTokens) : row.bbox,
+      valueBbox: null,
+      tokenBoxes: markedTokens,
+      score: normalizedQuery.length * 10 + matchedTokens.length,
+      confidence: matchedTokens.length > 0 ? "high" : "medium",
+      source: "fallback-search",
+    });
+  }
+
+  return out;
+}
+
+async function searchDocForText(
+  doc: PdfDoc,
+  query: string,
+  totalPages: number,
+): Promise<TraceCandidate[]> {
+  const all: TraceCandidate[] = [];
+
+  for (let p = 1; p <= totalPages; p++) {
+    try {
+      all.push(...(await collectTextMatchesForPage(doc, p, query)));
+    } catch {
+      /* skip page */
+    }
+  }
+
+  all.sort((a, b) => a.page - b.page || b.score - a.score);
+  return all.slice(0, 100);
+}
+
 // ─── pdfjs loader ────────────────────────────────────────────────────────────
 
 let _pdfjsPromise: Promise<PdfjsLib> | null = null;
@@ -457,6 +561,7 @@ interface Props {
 
 export function PdfViewer({ file, fullHeight, traceTarget, onClearTrace }: Props) {
   const canvasContainerRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [pdfDoc, setPdfDoc] = useState<PdfDoc | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
@@ -471,9 +576,18 @@ export function PdfViewer({ file, fullHeight, traceTarget, onClearTrace }: Props
   const [candidateIdx, setCandidateIdx] = useState(0);
   const [searching, setSearching] = useState(false);
   const [noMatch, setNoMatch] = useState(false);
+  const [manualSearchOpen, setManualSearchOpen] = useState(false);
+  const [manualSearchQuery, setManualSearchQuery] = useState("");
+  const [manualCandidates, setManualCandidates] = useState<TraceCandidate[]>([]);
+  const [manualCandidateIdx, setManualCandidateIdx] = useState(0);
+  const [manualSearching, setManualSearching] = useState(false);
+  const [manualNoMatch, setManualNoMatch] = useState(false);
 
-  const activeCand = candidates[candidateIdx] ?? null;
-  const pagesWithMatches = useMemo(() => new Set(candidates.map(c => c.page)), [candidates]);
+  const hasManualSearch = manualSearchOpen && manualSearchQuery.trim().length > 0;
+  const displayedCandidates = hasManualSearch ? manualCandidates : candidates;
+  const displayedCandidateIdx = hasManualSearch ? manualCandidateIdx : candidateIdx;
+  const activeCand = displayedCandidates[displayedCandidateIdx] ?? null;
+  const pagesWithMatches = useMemo(() => new Set(displayedCandidates.map(c => c.page)), [displayedCandidates]);
   const traceExpectedPage = useMemo(
     () =>
       traceTarget && totalPages > 0 ? resolveHintPage(traceTarget, totalPages) : null,
@@ -540,7 +654,7 @@ export function PdfViewer({ file, fullHeight, traceTarget, onClearTrace }: Props
     if (!ctx) return;
     ctx.clearRect(0, 0, hCanvas.width, hCanvas.height);
 
-    const pageCands = candidates.filter(c => c.page === currentPage);
+    const pageCands = displayedCandidates.filter(c => c.page === currentPage);
     if (pageCands.length === 0) return;
 
     for (const cand of pageCands) {
@@ -594,7 +708,7 @@ export function PdfViewer({ file, fullHeight, traceTarget, onClearTrace }: Props
         ctx.fillRect(tx, ty, tw, th);
       }
     }
-  }, [candidates, candidateIdx, currentPage, scale, activeCand]);
+  }, [displayedCandidates, currentPage, scale, activeCand]);
 
   // Search when traceTarget changes
   useEffect(() => {
@@ -634,6 +748,83 @@ export function PdfViewer({ file, fullHeight, traceTarget, onClearTrace }: Props
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [traceTarget, pdfDoc, totalPages]);
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        setManualSearchOpen(true);
+        window.setTimeout(() => searchInputRef.current?.focus(), 0);
+        return;
+      }
+
+      if (!manualSearchOpen) return;
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setManualSearchOpen(false);
+        setManualSearchQuery("");
+        setManualCandidates([]);
+        setManualCandidateIdx(0);
+        setManualNoMatch(false);
+        return;
+      }
+
+      if (event.key === "Enter" && manualCandidates.length > 0) {
+        event.preventDefault();
+        if (event.shiftKey) {
+          const prev = (manualCandidateIdx - 1 + manualCandidates.length) % manualCandidates.length;
+          setManualCandidateIdx(prev);
+          setCurrentPage(manualCandidates[prev].page);
+        } else {
+          const next = (manualCandidateIdx + 1) % manualCandidates.length;
+          setManualCandidateIdx(next);
+          setCurrentPage(manualCandidates[next].page);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [manualSearchOpen, manualCandidates, manualCandidateIdx]);
+
+  useEffect(() => {
+    if (!pdfDoc || !manualSearchOpen) return;
+
+    const query = manualSearchQuery.trim();
+    if (!query) {
+      setManualCandidates([]);
+      setManualCandidateIdx(0);
+      setManualSearching(false);
+      setManualNoMatch(false);
+      return;
+    }
+
+    let cancelled = false;
+    setManualSearching(true);
+    setManualNoMatch(false);
+
+    const timer = window.setTimeout(() => {
+      (async () => {
+        const results = await searchDocForText(pdfDoc, query, totalPages);
+        if (cancelled) return;
+        setManualCandidates(results);
+        setManualSearching(false);
+        if (results.length > 0) {
+          setManualCandidateIdx(0);
+          setCurrentPage(results[0].page);
+          setManualNoMatch(false);
+        } else {
+          setManualNoMatch(true);
+        }
+      })();
+    }, 180);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [manualSearchQuery, manualSearchOpen, pdfDoc, totalPages]);
+
   const prevPage = useCallback(() => setCurrentPage(p => Math.max(1, p - 1)), []);
   const nextPage = useCallback(() => setCurrentPage(p => Math.min(totalPages, p + 1)), [totalPages]);
 
@@ -657,6 +848,20 @@ export function PdfViewer({ file, fullHeight, traceTarget, onClearTrace }: Props
     setNoMatch(false);
     onClearTrace?.();
   }, [onClearTrace]);
+
+  const goNextManualMatch = useCallback(() => {
+    if (manualCandidates.length === 0) return;
+    const next = (manualCandidateIdx + 1) % manualCandidates.length;
+    setManualCandidateIdx(next);
+    setCurrentPage(manualCandidates[next].page);
+  }, [manualCandidates, manualCandidateIdx]);
+
+  const goPrevManualMatch = useCallback(() => {
+    if (manualCandidates.length === 0) return;
+    const prev = (manualCandidateIdx - 1 + manualCandidates.length) % manualCandidates.length;
+    setManualCandidateIdx(prev);
+    setCurrentPage(manualCandidates[prev].page);
+  }, [manualCandidates, manualCandidateIdx]);
 
   if (!file) return null;
 

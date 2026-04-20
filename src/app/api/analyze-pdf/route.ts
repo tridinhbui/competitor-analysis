@@ -1,4 +1,4 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { assembleAnalysis } from "@/lib/analysisEngine";
 import { extractNonRecurringItems } from "@/lib/filingTextExtractor";
 import { shouldRunExtraction } from "@/lib/llmExtractionGuards";

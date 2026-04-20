@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { DataSourceRow } from "@/types/dataSource";
 import { METRIC_COLUMNS } from "@/types/dataSource";
 import { Download, Save, Loader2, RotateCcw, Search } from "lucide-react";
-import { HistoricalBackfillPanel } from "@/components/data-source/HistoricalBackfillPanel";
 import { AnalysisCalculationsExplainer } from "@/components/data-source/AnalysisCalculationsExplainer";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 // ---------------------------------------------------------------------------
@@ -38,11 +37,13 @@ function EditableCell({
   value,
   format,
   isEdited,
+  editable,
   onSave,
 }: {
   value: number | null;
   format: string;
   isEdited: boolean;
+  editable: boolean;
   onSave: (v: number | null) => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -81,9 +82,9 @@ function EditableCell({
 
   return (
     <span
-      className={`cursor-pointer tabular-nums ${isEdited ? "bg-amber-100 text-amber-900 px-1 rounded font-semibold" : ""}`}
-      onDoubleClick={beginEdit}
-      title="Double-click to edit"
+      className={`tabular-nums ${editable ? "cursor-pointer" : "cursor-default"} ${isEdited ? "bg-amber-100 text-amber-900 px-1 rounded font-semibold" : ""}`}
+      onDoubleClick={editable ? beginEdit : undefined}
+      title={editable ? "Double-click to edit" : undefined}
     >
       {fmtCell(value, format)}
     </span>
@@ -98,8 +99,13 @@ export default function DataSourcePage() {
   const [rows, setRows] = useState<DataSourceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [clearingWorkflow, setClearingWorkflow] = useState<"analyze" | "competitor" | null>(null);
   const [filter, setFilter] = useState("");
   const [edits, setEdits] = useState<Map<string, Map<string, number | null>>>(new Map());
+  const [editingWorkflows, setEditingWorkflows] = useState<Record<"analyze" | "competitor", boolean>>({
+    analyze: false,
+    competitor: false,
+  });
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -118,6 +124,8 @@ export default function DataSourcePage() {
   const filtered = filter
     ? rows.filter((r) => r.ticker === filter || r.companyName.toLowerCase().includes(filter.toLowerCase()))
     : rows;
+  const analyzeRows = filtered.filter((r) => r.workflowOrigin === "analyze");
+  const competitorRows = filtered.filter((r) => r.workflowOrigin === "competitor");
 
   const hasEdits = edits.size > 0;
 
@@ -149,10 +157,11 @@ export default function DataSourcePage() {
   };
 
   const handleExportCSV = () => {
-    const headers = ["Ticker", "Company", "Quarter", "Period End", ...METRIC_COLUMNS.map((c) => c.label)];
+    const headers = ["Workflow", "Ticker", "Company", "Quarter", "Period End", ...METRIC_COLUMNS.map((c) => c.label)];
     const csvRows = [headers.join(",")];
     for (const row of filtered) {
       const vals = [
+        row.workflowOrigin,
         row.ticker,
         `"${row.companyName}"`,
         row.quarterLabel,
@@ -173,17 +182,150 @@ export default function DataSourcePage() {
     URL.revokeObjectURL(url);
   };
 
+  const handleClearTable = async (workflowOrigin: "analyze" | "competitor") => {
+    const label = workflowOrigin === "analyze" ? "Analyze Records" : "Competitor Analyze Records";
+    const confirmationPhrase = `Delete ${label}`;
+    const typed = window.prompt(
+      `This will permanently delete all rows in ${label} from the database.\n\nType "${confirmationPhrase}" to confirm.`
+    );
+    if (typed == null) return;
+    if (typed.trim() !== confirmationPhrase) {
+      window.alert(`Deletion cancelled. You must type "${confirmationPhrase}" exactly.`);
+      return;
+    }
+
+    setClearingWorkflow(workflowOrigin);
+    try {
+      const res = await fetch("/api/data-source", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workflowOrigin, confirmationText: typed.trim() }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Failed to clear ${label}`);
+      }
+
+      setRows((prev) => prev.filter((row) => row.workflowOrigin !== workflowOrigin));
+      setEdits((prev) => {
+        const next = new Map(prev);
+        for (const row of rows) {
+          if (row.workflowOrigin === workflowOrigin) next.delete(row.id);
+        }
+        return next;
+      });
+    } finally {
+      setClearingWorkflow(null);
+    }
+  };
+
+  const handleToggleEditMode = (workflowOrigin: "analyze" | "competitor") => {
+    setEditingWorkflows((prev) => ({
+      ...prev,
+      [workflowOrigin]: !prev[workflowOrigin],
+    }));
+  };
+
+  const renderTable = (
+    tableRows: DataSourceRow[],
+    workflowOrigin: "analyze" | "competitor",
+    title: string,
+    description: string
+  ) => (
+    <div className="space-y-2">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
+          <p className="text-xs text-slate-500">{description}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => handleToggleEditMode(workflowOrigin)}
+            className={`inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs font-semibold transition ${
+              editingWorkflows[workflowOrigin]
+                ? "border-primary/40 bg-primary/10 text-primary"
+                : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+            }`}
+          >
+            Edit data
+          </button>
+          <button
+            type="button"
+            onClick={() => handleClearTable(workflowOrigin)}
+            disabled={tableRows.length === 0 || clearingWorkflow != null}
+            className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {clearingWorkflow === workflowOrigin ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+            Clear all
+          </button>
+        </div>
+      </div>
+      <div className="max-h-[38vh] overflow-y-auto overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+        <table className="w-full text-xs">
+          <thead className="sticky top-0 z-10">
+            <tr className="bg-slate-800 text-white">
+              <th className="sticky left-0 z-20 bg-slate-800 whitespace-nowrap px-3 py-2 text-left font-semibold">Ticker</th>
+              <th className="whitespace-nowrap px-3 py-2 text-left font-semibold">Company</th>
+              <th className="whitespace-nowrap px-3 py-2 text-left font-semibold">Quarter</th>
+              {METRIC_COLUMNS.map((col) => (
+                <th key={col.key} className="whitespace-nowrap px-3 py-2 text-right font-semibold">
+                  {col.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {tableRows.map((row, ri) => {
+              const rowEdits = edits.get(row.id);
+              return (
+                <tr
+                  key={row.id}
+                  className={`border-b border-slate-50 transition hover:bg-blue-50/30 ${ri % 2 === 1 ? "bg-slate-50/40" : ""}`}
+                >
+                  <td className="sticky left-0 z-10 bg-inherit whitespace-nowrap px-3 py-1.5 font-semibold text-primary">
+                    {row.ticker}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-1.5 text-slate-600 max-w-[150px] truncate">
+                    {row.companyName}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-1.5 text-slate-500">{row.quarterLabel}</td>
+                  {METRIC_COLUMNS.map((col) => (
+                    <td key={col.key} className="whitespace-nowrap px-3 py-1.5 text-right">
+                      <EditableCell
+                        value={row[col.key] as number | null}
+                        format={col.format}
+                        isEdited={!!rowEdits?.has(col.key)}
+                        editable={editingWorkflows[workflowOrigin]}
+                        onSave={(v) => handleCellEdit(row, col.key, v)}
+                      />
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+            {tableRows.length === 0 && (
+              <tr>
+                <td colSpan={3 + METRIC_COLUMNS.length} className="px-4 py-8 text-center text-slate-400">
+                  No data found in this table.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
   return (
     <RequireAuth>
     <div className="mx-auto max-w-[98vw] px-4 py-6">
-      <HistoricalBackfillPanel />
-
       {/* Header */}
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h1 className="text-lg font-bold text-slate-900">Centralized Data Source</h1>
           <p className="text-xs text-slate-500">
-            {rows.length} filings from {tickers.length} companies · Double-click any cell to edit · Dollar columns are{" "}
+            {rows.length} records from {tickers.length} companies · Double-click any cell to edit · Dollar columns are{" "}
             <span className="font-medium text-slate-700">USD millions ($M)</span>; totals <span className="font-medium text-slate-700">≥ $1B</span> show as{" "}
             <span className="font-medium text-slate-700">$XB</span>
           </p>
@@ -230,59 +372,9 @@ export default function DataSourcePage() {
           <span className="ml-2 text-sm text-slate-500">Loading data source…</span>
         </div>
       ) : (
-        <div
-          className="max-h-[38vh] overflow-y-auto overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm"
-        >
-          <table className="w-full text-xs">
-            <thead className="sticky top-0 z-10">
-              <tr className="bg-slate-800 text-white">
-                <th className="sticky left-0 z-20 bg-slate-800 whitespace-nowrap px-3 py-2 text-left font-semibold">Ticker</th>
-                <th className="whitespace-nowrap px-3 py-2 text-left font-semibold">Company</th>
-                <th className="whitespace-nowrap px-3 py-2 text-left font-semibold">Quarter</th>
-                {METRIC_COLUMNS.map((col) => (
-                  <th key={col.key} className="whitespace-nowrap px-3 py-2 text-right font-semibold">
-                    {col.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((row, ri) => {
-                const rowEdits = edits.get(row.id);
-                return (
-                  <tr
-                    key={row.id}
-                    className={`border-b border-slate-50 transition hover:bg-blue-50/30 ${ri % 2 === 1 ? "bg-slate-50/40" : ""}`}
-                  >
-                    <td className="sticky left-0 z-10 bg-inherit whitespace-nowrap px-3 py-1.5 font-semibold text-primary">
-                      {row.ticker}
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-1.5 text-slate-600 max-w-[150px] truncate">
-                      {row.companyName}
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-1.5 text-slate-500">{row.quarterLabel}</td>
-                    {METRIC_COLUMNS.map((col) => (
-                      <td key={col.key} className="whitespace-nowrap px-3 py-1.5 text-right">
-                        <EditableCell
-                          value={row[col.key] as number | null}
-                          format={col.format}
-                          isEdited={!!rowEdits?.has(col.key)}
-                          onSave={(v) => handleCellEdit(row, col.key, v)}
-                        />
-                      </td>
-                    ))}
-                  </tr>
-                );
-              })}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={3 + METRIC_COLUMNS.length} className="px-4 py-8 text-center text-slate-400">
-                    No data found. Analyze some companies first.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+        <div className="space-y-6">
+          {renderTable(analyzeRows, "analyze", "Analyze Records", "Runs saved from the Analyze workflow.")}
+          {renderTable(competitorRows, "competitor", "Competitor Analyze Records", "Runs saved from workspace / competitor analysis flows.")}
         </div>
       )}
 

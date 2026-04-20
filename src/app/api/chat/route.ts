@@ -11,6 +11,12 @@ interface PageContext {
   expectedOutputs?: string[];
 }
 
+interface TokenUsage {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+}
+
 const CFO_PAGE_FRAMING: Record<string, string> = {
   "/analyze": `You are acting as a strategic CFO copilot reviewing a financial filing analysis. Prioritize:
 - Debt and leverage risk (flag anything outside safe sector range)
@@ -137,6 +143,7 @@ ${body.context ? `Current analysis (JSON, values in USD millions):\n${body.conte
     const data = (await res.json()) as {
       error?: { message?: string };
       choices?: { message?: { content?: string } }[];
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
     };
 
     if (!res.ok) {
@@ -147,7 +154,14 @@ ${body.context ? `Current analysis (JSON, values in USD millions):\n${body.conte
     }
 
     const text = data.choices?.[0]?.message?.content?.trim() ?? "";
-    return NextResponse.json({ message: text });
+    const usage: TokenUsage | undefined = data.usage
+      ? {
+          promptTokens: data.usage.prompt_tokens,
+          completionTokens: data.usage.completion_tokens,
+          totalTokens: data.usage.total_tokens,
+        }
+      : undefined;
+    return NextResponse.json({ message: text, usage });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Model provider error" },
@@ -213,6 +227,7 @@ Rules:
     const data = (await res.json()) as {
       error?: { message?: string };
       choices?: { message?: { content?: string } }[];
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
     };
 
     if (!res.ok) {
@@ -223,7 +238,14 @@ Rules:
     }
 
     const text = data.choices?.[0]?.message?.content?.trim() ?? "";
-    return NextResponse.json({ message: text });
+    const usage: TokenUsage | undefined = data.usage
+      ? {
+          promptTokens: data.usage.prompt_tokens,
+          completionTokens: data.usage.completion_tokens,
+          totalTokens: data.usage.total_tokens,
+        }
+      : undefined;
+    return NextResponse.json({ message: text, usage });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Model provider error" },
