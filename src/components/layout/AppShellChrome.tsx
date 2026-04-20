@@ -17,7 +17,6 @@ const NAV_ITEMS = [
 ] as const;
 
 function isItemActive(pathname: string, href: string): boolean {
-  if (href === "/#pricing") return pathname === "/";
   if (href === "/") return pathname === "/";
   return pathname === href || pathname.startsWith(`${href}/`);
 }
@@ -79,9 +78,7 @@ export function AppShellChrome() {
                 <span className="hidden text-border sm:inline">|</span>
                 <div className="hidden items-center gap-1 md:flex">
                   {NAV_ITEMS.map((item) => {
-                    const active = item.href === "/#pricing"
-                      ? pathname === "/" && currentHash === "#pricing"
-                      : isItemActive(pathname, item.href);
+                    const active = isItemActive(pathname, item.href);
                     return (
                       <Link
                         key={item.href}
@@ -192,9 +189,7 @@ export function AppShellChrome() {
             <div className="grid gap-1">
               {showAppNav &&
                 NAV_ITEMS.map((item) => {
-                  const active = item.href === "/#pricing"
-                    ? pathname === "/" && currentHash === "#pricing"
-                    : isItemActive(pathname, item.href);
+                  const active = isItemActive(pathname, item.href);
                   return (
                     <Link
                       key={item.href}
