@@ -5,12 +5,12 @@
 
 import type { FootnoteItem, AdjustedMetric, EarningsNarrative, NonRecurringItem } from "@/types/analysis";
 import type { SegmentData, VolumeUnitType } from "@/types/segments";
+import { callChatCompletion, safeJsonParse } from "@/lib/openai/chatJsonRunner";
+import { debugLog, warnLog } from "@/lib/debugLogger";
 
 const SEC_UA =
   process.env.SEC_EDGAR_USER_AGENT ??
   "DividendAnalyzer/1.0 (your-email@example.com)";
-
-const OPENAI_API = "https://api.openai.com/v1/chat/completions";
 
 // ---------------------------------------------------------------------------
 // 1. Fetch the actual filing document from SEC EDGAR
@@ -221,32 +221,18 @@ Rules:
 - Return empty arrays if section content is unclear.`;
 
   try {
-    const res = await fetch(OPENAI_API, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.1,
-        max_tokens: 2500,
-        response_format: { type: "json_object" },
-      }),
-      signal: AbortSignal.timeout(45_000),
+    const call = await callChatCompletion({
+      step: "filing:footnotes-adjusted",
+      apiKey,
+      model,
+      userContent: prompt,
+      temperature: 0.1,
+      maxTokens: 2500,
+      timeoutMs: 45_000,
     });
+    if (call.error || !call.content) return { footnotes: [], adjustedMetrics: [] };
 
-    if (!res.ok) return { footnotes: [], adjustedMetrics: [] };
-
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const content = data.choices?.[0]?.message?.content ?? "{}";
-    const parsed = JSON.parse(content) as {
-      footnotes?: FootnoteItem[];
-      adjustedMetrics?: AdjustedMetric[];
-    };
+    const parsed = safeJsonParse(call.content, {} as { footnotes?: FootnoteItem[]; adjustedMetrics?: AdjustedMetric[] });
 
     return {
       footnotes: Array.isArray(parsed.footnotes) ? parsed.footnotes : [],
@@ -315,29 +301,18 @@ Rules:
 - Return null fields if information is not available in the text.`;
 
   try {
-    const res = await fetch(OPENAI_API, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.2,
-        max_tokens: 1500,
-        response_format: { type: "json_object" },
-      }),
-      signal: AbortSignal.timeout(45_000),
+    const call = await callChatCompletion({
+      step: "filing:earnings-narrative",
+      apiKey,
+      model,
+      userContent: prompt,
+      temperature: 0.2,
+      maxTokens: 1500,
+      timeoutMs: 45_000,
     });
+    if (call.error || !call.content) return null;
 
-    if (!res.ok) return null;
-
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const content = data.choices?.[0]?.message?.content ?? "{}";
-    const parsed = JSON.parse(content) as Partial<EarningsNarrative>;
+    const parsed = safeJsonParse(call.content, {} as Partial<EarningsNarrative>);
 
     if (
       !parsed.result ||
@@ -481,46 +456,35 @@ export async function extractSegments(
   const segText = extractSegmentSection(text);
 
   if (!segText || segText.length < 200) {
-    console.log("[extractSegments] No segment section found or too short:", segText.length);
+    debugLog("[extractSegments] No segment section found or too short:", segText.length);
     return [];
   }
 
-  console.log("[extractSegments] Found segment text:", segText.length, "chars. First 500:", segText.slice(0, 500));
+  debugLog("[extractSegments] segment text chars:", segText.length);
 
   try {
     // Truncate to fit token limits (~4 chars/token, 40k chars ≈ 10k tokens)
     const truncated = segText.slice(0, 35_000);
 
-    const res = await fetch(OPENAI_API, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: SEGMENT_EXTRACT_PROMPT },
-          { role: "user", content: `Extract segment financial data from this SEC filing text. Pay attention to pipe-delimited tables (|) and column headers.\n\n${truncated}` },
-        ],
-        temperature: 0.1,
-        max_tokens: 3000,
-        response_format: { type: "json_object" },
-      }),
-      signal: AbortSignal.timeout(45_000),
+    const call = await callChatCompletion({
+      step: "filing:segments",
+      apiKey,
+      model,
+      systemPrompt: SEGMENT_EXTRACT_PROMPT,
+      userContent: `Extract segment financial data from this SEC filing text. Pay attention to pipe-delimited tables (|) and column headers.\n\n${truncated}`,
+      temperature: 0.1,
+      maxTokens: 3000,
+      timeoutMs: 45_000,
     });
 
-    if (!res.ok) {
-      console.log("[extractSegments] OpenAI call failed:", res.status);
+    if (call.error || !call.content) {
+      debugLog("[extractSegments] OpenAI call failed:", call.status, call.error);
       return [];
     }
 
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const content = data.choices?.[0]?.message?.content ?? "{}";
-    console.log("[extractSegments] AI response:", content.slice(0, 500));
-    const parsed = JSON.parse(content) as SegmentExtractionResult;
+    const content = call.content;
+    debugLog("[extractSegments] AI response length:", content.length);
+    const parsed = safeJsonParse(content, {} as SegmentExtractionResult);
 
     if (!parsed.segments || !Array.isArray(parsed.segments) || parsed.segments.length === 0) {
       return [];
@@ -570,10 +534,10 @@ export async function extractSegments(
       // Filter out segments with NO financial data at all (just names with all nulls)
       .filter(seg => seg.revenue != null || seg.operatingIncome != null);
 
-    console.log("[extractSegments] Extracted", results.length, "segments with data:", results.map(s => `${s.segmentName}: rev=${s.revenue}, op=${s.operatingIncome}`));
+    debugLog("[extractSegments] Extracted", results.length, "segments with data");
     return results;
   } catch (e) {
-    console.error("[extractSegments] Error:", e);
+    warnLog("[extractSegments] Error:", e);
     return [];
   }
 }
@@ -706,32 +670,20 @@ export async function extractNonRecurringItems(
   try {
     const truncated = adjustmentText.slice(0, 45_000);
 
-    const res = await fetch(OPENAI_API, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: NON_RECURRING_PROMPT },
-          { role: "user", content: `Identify all non-recurring and special items in this SEC filing:\n\n${truncated}` },
-        ],
-        temperature: 0.1,
-        max_tokens: 4000,
-        response_format: { type: "json_object" },
-      }),
-      signal: AbortSignal.timeout(60_000),
+    const call = await callChatCompletion({
+      step: "filing:non-recurring",
+      apiKey,
+      model,
+      systemPrompt: NON_RECURRING_PROMPT,
+      userContent: `Identify all non-recurring and special items in this SEC filing:\n\n${truncated}`,
+      temperature: 0.1,
+      maxTokens: 4000,
+      timeoutMs: 60_000,
     });
 
-    if (!res.ok) return [];
+    if (call.error || !call.content) return [];
 
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const content = data.choices?.[0]?.message?.content ?? "{}";
-    const parsed = JSON.parse(content) as {
+    const parsed = safeJsonParse(call.content, {} as {
       items?: Array<{
         label: string;
         description: string;
@@ -743,7 +695,7 @@ export async function extractNonRecurringItems(
         confidence?: string;
         sourceRef?: string;
       }>;
-    };
+    });
 
     if (!parsed.items || !Array.isArray(parsed.items)) return [];
 

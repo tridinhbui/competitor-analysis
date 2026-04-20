@@ -2,6 +2,7 @@
 // Conditional Debug Logger
 // Suppresses verbose extraction debug logs in production to keep logs clean.
 // Only emits output when NODE_ENV !== "production".
+// Analyze-PDF verbose object logs: set ANALYZE_PDF_DEBUG=1 (dev only) — see analyzePdf/verboseLog.ts.
 // ---------------------------------------------------------------------------
 
 const isDebug = process.env.NODE_ENV !== "production";
