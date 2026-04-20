@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Merriweather, Montserrat } from "next/font/google";
 import { AppShellChrome } from "@/components/layout/AppShellChrome";
+import { TokenTrackerFab } from "@/components/layout/TokenTrackerFab";
 import { AuthProvider } from "@/lib/authContext";
 import { ProfileProvider } from "@/lib/profileContext";
 import "./globals.css";
@@ -41,6 +42,7 @@ export default function RootLayout({
           <ProfileProvider>
             <AppShellChrome />
             <main className="min-h-[calc(100dvh-2.5rem)]">{children}</main>
+            <TokenTrackerFab />
           </ProfileProvider>
         </AuthProvider>
       </body>

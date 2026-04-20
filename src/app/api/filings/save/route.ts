@@ -1,6 +1,6 @@
 /**
  * POST /api/filings/save
- * Body: { ticker: string, periodEnd: string, source: "sec"|"pdf", analysis: FullAnalysis }
+ * Body: { ticker: string, periodEnd: string, source: "sec"|"pdf", analysis: FullAnalysis, workflowOrigin?: "analyze"|"competitor" }
  *
  * Save a filing from client-side analysis (e.g. PDF upload).
  */
@@ -43,6 +43,7 @@ export async function POST(request: Request) {
       periodEnd?: string;
       source?: "sec" | "pdf";
       analysis?: FullAnalysis;
+      workflowOrigin?: "analyze" | "competitor";
     };
 
     if (!analysis) {
@@ -79,6 +80,7 @@ export async function POST(request: Request) {
       analysis.meta.periodEnd ||
       new Date().toISOString().split("T")[0];
     const resolvedSource = source || analysis.meta.source || "pdf";
+    const resolvedWorkflowOrigin = body.workflowOrigin || analysis.meta.workflowOrigin || "analyze";
     const dataSourceOverrides = await loadDataSourceOverrides(
       resolvedTicker,
       resolvedPeriod
@@ -100,7 +102,8 @@ export async function POST(request: Request) {
       resolvedPeriod,
       resolvedSource,
       normalizedAnalysis,
-      quarterHint
+      quarterHint,
+      resolvedWorkflowOrigin
     );
 
     return Response.json({

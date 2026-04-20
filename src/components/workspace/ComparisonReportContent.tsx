@@ -34,6 +34,16 @@ import type {
   MultiMarginGapBarRow,
   MultiTrendPoint,
 } from "@/lib/companyComparison";
+import { StatusPill } from "@/components/ui/status-pill";
+
+type InterpretationTone = "primary" | "warning" | "danger" | "info";
+
+function interpretationMeta(index: number): { label: string; variant: InterpretationTone; rowClass: string } {
+  if (index === 0) return { label: "Lead", variant: "primary", rowClass: "border-primary/20 bg-primary/5" };
+  if (index === 1) return { label: "Risk", variant: "warning", rowClass: "border-amber-200 bg-amber-50/60" };
+  if (index === 2) return { label: "Alert", variant: "danger", rowClass: "border-red-200 bg-red-50/50" };
+  return { label: "Signal", variant: "info", rowClass: "border-sky-200 bg-sky-50/50" };
+}
 
 export type CompareTab = "overview" | "margin-gaps" | "financials" | "trends";
 type ViewMode = "summary" | "detailed";
@@ -184,9 +194,9 @@ function Card({
   children: ReactNode;
 }) {
   return (
-    <div className="comparison-card rounded-2xl border border-slate-200 bg-white p-4 shadow-subtle">
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</p>
-      {sub ? <p className="mb-3 mt-0.5 text-[11px] text-slate-400">{sub}</p> : <div className="mb-3" />}
+    <div className="comparison-card rounded-xl border border-slate-200/70 bg-white p-3">
+      <p className="text-[13px] font-semibold text-slate-800">{title}</p>
+      {sub ? <p className="mb-2 mt-0.5 text-[11px] text-slate-400">{sub}</p> : <div className="mb-2" />}
       {children}
     </div>
   );
@@ -220,7 +230,7 @@ function ModuleCard({
         </div>
         {open ? <ChevronUp className="h-4 w-4 text-slate-500" /> : <ChevronDown className="h-4 w-4 text-slate-500" />}
       </button>
-      {open ? <div className="border-t border-slate-100 p-4">{children}</div> : null}
+      {open ? <div className="border-t border-slate-100 bg-slate-50/50 p-4">{children}</div> : null}
     </div>
   );
 }
@@ -323,7 +333,7 @@ function BarCard({
         </div>
       ) : null}
       <p className="mb-2 text-[11px] text-slate-500">{comment}</p>
-      <div className="comparison-chart h-60">
+      <div className="comparison-chart h-44">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -344,11 +354,6 @@ function BarCard({
           </BarChart>
         </ResponsiveContainer>
       </div>
-      {scale.truncated ? (
-        <p className="mt-2 text-[11px] text-slate-500">
-          ... Y-axis capped near {tickFmt(scale.capValue ?? 0)} to improve readability of smaller bars while preserving outlier context.
-        </p>
-      ) : null}
     </Card>
   );
 }
@@ -371,7 +376,7 @@ function MarginGapChart({
           <PillBadge label="Period mismatch" color="amber" />
         </div>
       ) : null}
-      <div className="comparison-chart h-72">
+      <div className="comparison-chart h-52">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={data}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -420,7 +425,7 @@ function TrendCard({
 
   return (
     <Card title={title}>
-      <div className="comparison-chart h-56">
+      <div className="comparison-chart h-44">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={{ left: 4, right: 8 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -441,11 +446,6 @@ function TrendCard({
           </LineChart>
         </ResponsiveContainer>
       </div>
-      {scale.truncated ? (
-        <p className="mt-2 text-[11px] text-slate-500">
-          ... Y-axis capped near {tickFmt(scale.capValue ?? 0)} so smaller trend changes remain visible.
-        </p>
-      ) : null}
     </Card>
   );
 }
@@ -589,7 +589,7 @@ function MultiBarCard({
           <PillBadge label="Period mismatch" color="amber" />
         </div>
       ) : null}
-      <div className="comparison-chart h-60">
+      <div className="comparison-chart h-44">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -617,11 +617,6 @@ function MultiBarCard({
           </BarChart>
         </ResponsiveContainer>
       </div>
-      {scale.truncated ? (
-        <p className="mt-2 text-[11px] text-slate-500">
-          ... Y-axis capped near {tickFmt(scale.capValue ?? 0)} due to outlier values.
-        </p>
-      ) : null}
     </Card>
   );
 }
@@ -652,7 +647,7 @@ function MultiPeerGapBarCard({
           <PillBadge label="Period mismatch" color="amber" />
         </div>
       ) : null}
-      <div className="comparison-chart h-64">
+      <div className="comparison-chart h-44">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -712,7 +707,7 @@ function MultiTrendCard({
 
   return (
     <Card title={title}>
-      <div className="comparison-chart h-56">
+      <div className="comparison-chart h-44">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData} margin={{ left: 4, right: 8 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -743,11 +738,6 @@ function MultiTrendCard({
           </LineChart>
         </ResponsiveContainer>
       </div>
-      {scale.truncated ? (
-        <p className="mt-2 text-[11px] text-slate-500">
-          ... Y-axis capped near {tickFmt(scale.capValue ?? 0)} so smaller trend signals are not compressed.
-        </p>
-      ) : null}
     </Card>
   );
 }
@@ -972,16 +962,16 @@ export function ComparisonReportContent({
 
   return (
     <div className={printMode ? "comparison-print-root space-y-6" : "space-y-4"}>
-      <div className="comparison-card rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-subtle">
+      <div className={printMode ? "comparison-card rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-subtle" : "comparison-card sticky top-2 z-20 rounded-2xl border border-slate-200 bg-white/95 px-5 py-3 shadow-subtle backdrop-blur"}>
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
             {isMulti && result.multiCompanies ? (
               <>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-lg font-bold text-slate-900">Peer comparison</span>
-                  <span className="rounded-md bg-slate-900 px-2 py-0.5 text-[11px] font-bold text-white">
+                  <StatusPill variant="neutral" size="sm">
                     {result.multiCompanies.length} companies
-                  </span>
+                  </StatusPill>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {result.multiCompanies.map((company, index) => (
@@ -1006,10 +996,10 @@ export function ComparisonReportContent({
               <>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-lg font-bold text-slate-900">{result.companyA.companyName}.</span>
-                  <span className="rounded-md bg-slate-900 px-2 py-0.5 text-sm font-bold text-white">{tA}</span>
+                  <span className="rounded-md bg-primary/10 px-2 py-0.5 text-sm font-bold text-primary ring-1 ring-inset ring-primary/20">{tA}</span>
                   <span className="text-sm text-slate-400">vs</span>
                   <span className="text-lg font-bold text-slate-900">{result.companyB.companyName}.</span>
-                  <span className="rounded-md border border-slate-200 bg-slate-100 px-2 py-0.5 text-sm font-bold text-slate-700">
+                  <span className="rounded-md bg-slate-100 px-2 py-0.5 text-sm font-bold text-slate-700 ring-1 ring-inset ring-slate-200">
                     {tB}
                   </span>
                 </div>
@@ -1059,7 +1049,7 @@ export function ComparisonReportContent({
               >
                 {tab.label}
                 {activeTab === tab.value ? (
-                  <span className="absolute bottom-0 left-0 right-0 h-0.5 rounded-t-full bg-slate-900" />
+                  <span className="absolute bottom-0 left-0 right-0 h-0.5 rounded-t-full bg-primary" />
                 ) : null}
               </button>
             ))}
@@ -1135,9 +1125,16 @@ export function ComparisonReportContent({
       ) : null}
 
       {result.warnings.length > 0 && showOverview ? (
-        <div className="comparison-card rounded-xl border border-amber-200 bg-amber-50 p-3">
-          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-800">Warnings</p>
-          <ul className="space-y-1 text-xs text-amber-800">
+        <details className="comparison-card group rounded-xl border border-amber-200 bg-amber-50 p-3 open:pb-3">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2">
+            <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-amber-800">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              Warnings
+              <StatusPill variant="warning" size="xs">{result.warnings.length}</StatusPill>
+            </span>
+            <ChevronDown className="h-4 w-4 text-amber-700 transition-transform group-open:rotate-180" />
+          </summary>
+          <ul className="mt-2 space-y-1 text-xs text-amber-800">
             {result.warnings.map((warning) => (
               <li key={warning.code} className="flex items-start gap-1.5">
                 <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
@@ -1145,7 +1142,7 @@ export function ComparisonReportContent({
               </li>
             ))}
           </ul>
-        </div>
+        </details>
       ) : null}
 
       {showOverview ? (
@@ -1204,21 +1201,12 @@ export function ComparisonReportContent({
           <Card title="Investment Interpretation" sub="Outperformance signal | Hidden risk | Misleading metric warnings | FCF signal">
             <div className="space-y-2">
               {n.investmentInterpretation.map((item, index) => {
-                const label = index === 0 ? "Lead" : index === 1 ? "Risk" : index === 2 ? "Alert" : "Signal";
-                const tone =
-                  index === 0
-                    ? "border-slate-200 bg-slate-50"
-                    : index === 1
-                      ? "border-amber-100 bg-amber-50/60"
-                      : index === 2
-                        ? "border-red-100 bg-red-50/50"
-                        : "border-blue-100 bg-blue-50/40";
-
+                const meta = interpretationMeta(index);
                 return (
-                  <div key={`${label}-${index}`} className={`flex items-start gap-3 rounded-lg border px-3 py-2.5 ${tone}`}>
-                    <span className="mt-0.5 rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
-                      {label}
-                    </span>
+                  <div key={`${meta.label}-${index}`} className={`flex items-start gap-3 rounded-lg border px-3 py-2.5 ${meta.rowClass}`}>
+                    <StatusPill variant={meta.variant} size="sm" uppercase className="mt-0.5">
+                      {meta.label}
+                    </StatusPill>
                     <p className="text-xs leading-relaxed text-slate-700">{item}</p>
                   </div>
                 );
@@ -1304,14 +1292,17 @@ export function ComparisonReportContent({
               </Card>
               <Card title="Investment Interpretation" sub="Outperformance signal | Hidden risk | Misleading metric warnings | FCF signal">
                 <div className="space-y-2">
-                  {(viewMode === "summary" ? n.investmentInterpretation.slice(0, 2) : n.investmentInterpretation).map((item, index) => (
-                    <div key={`${index}-${item}`} className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
-                      <span className="mt-0.5 rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
-                        {index === 0 ? "Lead" : index === 1 ? "Risk" : "Signal"}
-                      </span>
-                      <p className="text-xs leading-relaxed text-slate-700">{item}</p>
-                    </div>
-                  ))}
+                  {(viewMode === "summary" ? n.investmentInterpretation.slice(0, 2) : n.investmentInterpretation).map((item, index) => {
+                    const meta = interpretationMeta(index);
+                    return (
+                      <div key={`${index}-${item}`} className={`flex items-start gap-3 rounded-lg border px-3 py-2.5 ${meta.rowClass}`}>
+                        <StatusPill variant={meta.variant} size="sm" uppercase className="mt-0.5">
+                          {meta.label}
+                        </StatusPill>
+                        <p className="text-xs leading-relaxed text-slate-700">{item}</p>
+                      </div>
+                    );
+                  })}
                 </div>
               </Card>
               {viewMode === "detailed" && !isMulti && result.relativePerformance.length > 0 ? (
@@ -1701,27 +1692,27 @@ export function ComparisonReportContent({
           </Card>
 
           {isMulti && result.multiTrends ? (
-            <div className="grid gap-4 xl:grid-cols-2">
-              <MultiTrendCard title="Revenue Trend" data={result.multiTrends.revenue} tickers={multiTickers} />
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <MultiTrendCard title="Revenue" data={result.multiTrends.revenue} tickers={multiTickers} />
               <MultiTrendCard
-                title="Operating Margin Trend"
+                title="Operating Margin"
                 data={result.multiTrends.operatingMargin}
                 tickers={multiTickers}
                 isPercent
               />
-              <MultiTrendCard title="Gross Margin Trend" data={result.multiTrends.grossMargin} tickers={multiTickers} isPercent />
-              <MultiTrendCard title="Net Margin Trend" data={result.multiTrends.netMargin} tickers={multiTickers} isPercent />
-              <MultiTrendCard title="Free Cash Flow Trend" data={result.multiTrends.freeCashFlow} tickers={multiTickers} />
-              <MultiTrendCard title="SG&A Expense Trend" data={result.multiTrends.sgaExpense} tickers={multiTickers} />
+              <MultiTrendCard title="Gross Margin" data={result.multiTrends.grossMargin} tickers={multiTickers} isPercent />
+              <MultiTrendCard title="Net Margin" data={result.multiTrends.netMargin} tickers={multiTickers} isPercent />
+              <MultiTrendCard title="Free Cash Flow" data={result.multiTrends.freeCashFlow} tickers={multiTickers} />
+              <MultiTrendCard title="SG&A Expense" data={result.multiTrends.sgaExpense} tickers={multiTickers} />
             </div>
           ) : (
-            <div className="grid gap-4 xl:grid-cols-2">
-              <TrendCard title="Revenue Trend" data={result.trends.revenue} labelA={tA} labelB={tB} />
-              <TrendCard title="Operating Margin Trend" data={result.trends.operatingMargin} labelA={tA} labelB={tB} isPercent />
-              <TrendCard title="Gross Margin Trend" data={result.trends.grossMargin} labelA={tA} labelB={tB} isPercent />
-              <TrendCard title="Net Margin Trend" data={result.trends.netMargin} labelA={tA} labelB={tB} isPercent />
-              <TrendCard title="Free Cash Flow Trend" data={result.trends.freeCashFlow} labelA={tA} labelB={tB} />
-              <TrendCard title="SG&A Expense Trend" data={result.trends.sgaExpense} labelA={tA} labelB={tB} />
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <TrendCard title="Revenue" data={result.trends.revenue} labelA={tA} labelB={tB} />
+              <TrendCard title="Operating Margin" data={result.trends.operatingMargin} labelA={tA} labelB={tB} isPercent />
+              <TrendCard title="Gross Margin" data={result.trends.grossMargin} labelA={tA} labelB={tB} isPercent />
+              <TrendCard title="Net Margin" data={result.trends.netMargin} labelA={tA} labelB={tB} isPercent />
+              <TrendCard title="Free Cash Flow" data={result.trends.freeCashFlow} labelA={tA} labelB={tB} />
+              <TrendCard title="SG&A Expense" data={result.trends.sgaExpense} labelA={tA} labelB={tB} />
             </div>
           )}
 
@@ -1746,22 +1737,22 @@ export function ComparisonReportContent({
               </Card>
 
               {isMulti && result.multiTrends ? (
-                <div className="grid gap-4 xl:grid-cols-2">
-                  <MultiTrendCard title="Revenue Trend" data={result.multiTrends.revenue} tickers={multiTickers} />
-                  <MultiTrendCard title="Operating Margin Trend" data={result.multiTrends.operatingMargin} tickers={multiTickers} isPercent />
-                  <MultiTrendCard title="Gross Margin Trend" data={result.multiTrends.grossMargin} tickers={multiTickers} isPercent />
-                  <MultiTrendCard title="Net Margin Trend" data={result.multiTrends.netMargin} tickers={multiTickers} isPercent />
-                  <MultiTrendCard title="Free Cash Flow Trend" data={result.multiTrends.freeCashFlow} tickers={multiTickers} />
-                  <MultiTrendCard title="SG&A Expense Trend" data={result.multiTrends.sgaExpense} tickers={multiTickers} />
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  <MultiTrendCard title="Revenue" data={result.multiTrends.revenue} tickers={multiTickers} />
+                  <MultiTrendCard title="Operating Margin" data={result.multiTrends.operatingMargin} tickers={multiTickers} isPercent />
+                  <MultiTrendCard title="Gross Margin" data={result.multiTrends.grossMargin} tickers={multiTickers} isPercent />
+                  <MultiTrendCard title="Net Margin" data={result.multiTrends.netMargin} tickers={multiTickers} isPercent />
+                  <MultiTrendCard title="Free Cash Flow" data={result.multiTrends.freeCashFlow} tickers={multiTickers} />
+                  <MultiTrendCard title="SG&A Expense" data={result.multiTrends.sgaExpense} tickers={multiTickers} />
                 </div>
               ) : (
-                <div className="grid gap-4 xl:grid-cols-2">
-                  <TrendCard title="Revenue Trend" data={result.trends.revenue} labelA={tA} labelB={tB} />
-                  <TrendCard title="Operating Margin Trend" data={result.trends.operatingMargin} labelA={tA} labelB={tB} isPercent />
-                  <TrendCard title="Gross Margin Trend" data={result.trends.grossMargin} labelA={tA} labelB={tB} isPercent />
-                  <TrendCard title="Net Margin Trend" data={result.trends.netMargin} labelA={tA} labelB={tB} isPercent />
-                  <TrendCard title="Free Cash Flow Trend" data={result.trends.freeCashFlow} labelA={tA} labelB={tB} />
-                  <TrendCard title="SG&A Expense Trend" data={result.trends.sgaExpense} labelA={tA} labelB={tB} />
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  <TrendCard title="Revenue" data={result.trends.revenue} labelA={tA} labelB={tB} />
+                  <TrendCard title="Operating Margin" data={result.trends.operatingMargin} labelA={tA} labelB={tB} isPercent />
+                  <TrendCard title="Gross Margin" data={result.trends.grossMargin} labelA={tA} labelB={tB} isPercent />
+                  <TrendCard title="Net Margin" data={result.trends.netMargin} labelA={tA} labelB={tB} isPercent />
+                  <TrendCard title="Free Cash Flow" data={result.trends.freeCashFlow} labelA={tA} labelB={tB} />
+                  <TrendCard title="SG&A Expense" data={result.trends.sgaExpense} labelA={tA} labelB={tB} />
                 </div>
               )}
 

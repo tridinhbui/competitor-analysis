@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, Plus, Search, TrendingUp, UploadCloud, X } from "lucide-react";
+import { Loader2, PanelLeftClose, PanelLeftOpen, Plus, Search, TrendingUp, UploadCloud, X } from "lucide-react";
 import type { CompanyComparisonPayload } from "@/lib/companyComparison";
 import {
   ComparisonReportContent,
@@ -75,7 +75,15 @@ function resolveQuarterKey(entry: ParsedEntry): QuarterKey {
   return detectQuarterFromPeriodEnd(entry.analysis.meta.periodEnd);
 }
 
-export function PeerComparisonView() {
+interface PeerComparisonViewProps {
+  sidebarCollapsed?: boolean;
+  onToggleSidebar?: () => void;
+}
+
+export function PeerComparisonView({
+  sidebarCollapsed = false,
+  onToggleSidebar,
+}: PeerComparisonViewProps) {
   const [options, setOptions] = useState<CompanyOption[]>([]);
   const [selectedTickers, setSelectedTickers] = useState<string[]>([]);
   const [loadingOpts, setLoadingOpts] = useState(true);
@@ -85,7 +93,7 @@ export function PeerComparisonView() {
   const [activeTab, setActiveTab] = useState<CompareTab>("overview");
 
   // Full-screen guidance state
-  const [showGuidance, setShowGuidance] = useState(true);
+  const [showGuidance, setShowGuidance] = useState(false);
   const [guidanceStep, setGuidanceStep] = useState<1 | 2 | 3 | 4>(1);
   const [queuedFiles, setQueuedFiles] = useState<File[]>([]);
   const [parsedAnalyses, setParsedAnalyses] = useState<ParsedEntry[]>([]);
@@ -307,6 +315,7 @@ export function PeerComparisonView() {
               ticker: ticker || undefined,
               periodEnd: analysis.meta.periodEnd,
               source: "pdf",
+              workflowOrigin: "competitor",
               analysis,
             }),
           });
@@ -370,7 +379,7 @@ export function PeerComparisonView() {
         onReset={() => {
           setResult(null);
           setError("");
-          setShowGuidance(true);
+          setShowGuidance(false);
           setGuidanceStep(1);
           setQueuedFiles([]);
         }}
@@ -472,7 +481,7 @@ export function PeerComparisonView() {
                 <button
                   type="button"
                   onClick={() => setGuidanceStep(2)}
-                  className="workspace-interactive workspace-press guidance-glow inline-flex h-10 items-center rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white hover:bg-slate-800"
+                  className="workspace-interactive workspace-press guidance-glow inline-flex h-10 items-center rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
                 >
                   Continue to Step 2
                 </button>
@@ -757,10 +766,23 @@ export function PeerComparisonView() {
         </div>
       ) : null}
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-subtle">
-        <div className="mb-4 flex items-center gap-2">
-          <TrendingUp className="h-5 w-5 text-primary" strokeWidth={2.5} />
-          <h3 className="text-base font-bold text-slate-900">Peer Comparison</h3>
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-subtle">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="h-5 w-5 text-primary" strokeWidth={2.5} />
+            <h3 className="text-base font-bold text-slate-900">Peer Comparison</h3>
+          </div>
+          {onToggleSidebar ? (
+            <button
+              type="button"
+              onClick={onToggleSidebar}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 shadow-subtle transition hover:bg-slate-50 hover:text-slate-800"
+              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            >
+              {sidebarCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+            </button>
+          ) : null}
         </div>
 
         {loadingOpts ? (
@@ -774,25 +796,21 @@ export function PeerComparisonView() {
           </p>
         ) : (
           <>
-            <p className="mb-2 text-sm text-slate-500">
-              Compare financial metrics across up to {MAX_COMPANIES} companies side-by-side. Load historical quarters first via the
-              Analyze page.
-            </p>
-            <p className="mb-4 text-xs text-slate-400">
-              The first company is the margin benchmark (gaps vs that ticker). Add or remove rows below.
+            <p className="mb-3 text-xs text-slate-500">
+              Compare up to {MAX_COMPANIES} companies. <span className="text-slate-400">Company 1 is the margin benchmark.</span>
             </p>
 
-            <div className="space-y-3">
+            <div className="grid gap-2 sm:grid-cols-2">
               {selectedTickers.map((ticker, index) => (
-                <div key={`${index}-${ticker}`} className="flex flex-wrap items-end gap-2">
-                  <div className="min-w-[200px] flex-1">
-                    <label className="mb-1.5 block text-xs font-semibold text-slate-600">
-                      {index === 0 ? "Company 1 (benchmark)" : `Company ${index + 1}`}
+                <div key={`${index}-${ticker}`} className="flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                      {index === 0 ? "Company 1 · benchmark" : `Company ${index + 1}`}
                     </label>
                     <select
                       value={ticker}
                       onChange={(event) => updateRow(index, event.target.value)}
-                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
+                      className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-900 outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
                     >
                       {options.map((option) => (
                         <option key={option.ticker} value={option.ticker}>
@@ -805,7 +823,7 @@ export function PeerComparisonView() {
                     <button
                       type="button"
                       onClick={() => removeRow(index)}
-                      className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                      className="mt-5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
                       aria-label={`Remove company ${index + 1}`}
                     >
                       <X className="h-4 w-4" />
@@ -815,37 +833,31 @@ export function PeerComparisonView() {
               ))}
             </div>
 
-            <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={addRow}
+                  disabled={!canAdd}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Add company
+                </button>
+                <span className="text-xs text-slate-400">
+                  {selectedTickers.length}/{MAX_COMPANIES}
+                </span>
+              </div>
               <button
                 type="button"
-                onClick={addRow}
-                disabled={!canAdd}
-                className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-40"
+                onClick={compare}
+                disabled={comparing || uniqueTickers(selectedTickers).length < 2 || hasDuplicateSelection}
+                className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <Plus className="h-4 w-4" />
-                Add company
-              </button>
-              <span className="text-xs text-slate-400">
-                {selectedTickers.length}/{MAX_COMPANIES} selected
-              </span>
-              <button
-                type="button"
-                onClick={() => setShowGuidance(true)}
-                className="ml-auto inline-flex h-10 items-center rounded-xl border border-slate-200 px-3 text-xs font-semibold text-slate-500 hover:bg-slate-50"
-              >
-                Open guidance
+                {comparing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                {comparing ? "Comparing..." : "Compare"}
               </button>
             </div>
-
-            <button
-              type="button"
-              onClick={compare}
-              disabled={comparing || uniqueTickers(selectedTickers).length < 2 || hasDuplicateSelection}
-              className="mt-4 inline-flex h-10 items-center gap-2 rounded-xl bg-slate-700 px-5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {comparing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-              {comparing ? "Comparing..." : "Compare"}
-            </button>
             {hasDuplicateSelection ? (
               <p className="mt-2 text-xs text-amber-700">Each ticker must be unique.</p>
             ) : null}

@@ -89,7 +89,8 @@ export async function POST(request: Request) {
       periodEnd,
       normalizedAnalysis.meta.source,
       normalizedAnalysis,
-      null
+      null,
+      "competitor"
     );
 
     // Enrich the saved filing with quarter metadata

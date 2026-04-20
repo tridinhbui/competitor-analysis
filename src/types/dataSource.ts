@@ -8,6 +8,7 @@
 export interface DataSourceRow {
   /** Filing UUID (ticker + periodEnd composite key) */
   id: string;
+  workflowOrigin: "analyze" | "competitor";
   ticker: string;
   companyName: string;
   periodEnd: string;

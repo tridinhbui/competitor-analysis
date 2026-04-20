@@ -95,7 +95,7 @@ export async function POST(request: Request) {
       const ebitda = ebit != null && depItem?.value != null ? ebit + Math.abs(depItem.value) : null;
 
       allRows.push({
-        id: f.id, ticker: f.ticker, companyName: company?.name ?? f.ticker,
+        id: f.id, workflowOrigin: a.meta.workflowOrigin === "competitor" ? "competitor" : "analyze", ticker: f.ticker, companyName: company?.name ?? f.ticker,
         periodEnd: f.period_end, quarterLabel: m.quarterLabel,
         revenue: m.revenue, grossProfit: m.grossProfit, operatingIncome: m.operatingIncome,
         netIncome: m.netIncome, totalAssets: m.totalAssets, totalLiabilities: m.totalLiabilities,

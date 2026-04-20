@@ -15,7 +15,6 @@ const NAV_ITEMS = [
   { href: "/data-source", label: "Data Source" },
   { href: "/workspace", label: "Competitor Analysis" },
   { href: "/#pricing", label: "Pricing" },
-  { href: "/history", label: "History" },
 ] as const;
 
 function isItemActive(pathname: string, href: string): boolean {
@@ -101,15 +100,6 @@ export function AppShellChrome() {
           </div>
 
           <div className="flex items-center gap-2">
-            {showAppNav && (
-              <Link
-                href="/analyze"
-                className="hidden rounded-full bg-primary px-3.5 py-1.5 text-[11px] font-semibold text-white shadow-subtle transition hover:bg-[#b7491a] sm:inline-flex"
-              >
-                Explore now
-              </Link>
-            )}
-
             {/* Auth / user menu */}
             {!authLoading && (
               user ? (
@@ -206,15 +196,6 @@ export function AppShellChrome() {
                     </Link>
                   );
                 })}
-              {showAppNav && (
-                <Link
-                  href="/analyze"
-                  onClick={() => setMobileOpen(false)}
-                  className="mt-1 inline-flex items-center justify-center rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white hover:bg-[#b7491a]"
-                >
-                  Explore now
-                </Link>
-              )}
               {!authLoading && !user && (
                 <button
                   type="button"

@@ -180,7 +180,8 @@ export async function saveFiling(
   periodEnd: string,
   source: "sec" | "pdf",
   analysis: FullAnalysis,
-  quarterHint?: FiscalQuarterHint | null
+  quarterHint?: FiscalQuarterHint | null,
+  workflowOrigin: "analyze" | "competitor" = "analyze"
 ): Promise<Filing> {
   const upper = ticker.toUpperCase();
   const quarter = quarterHint
@@ -213,7 +214,13 @@ export async function saveFiling(
     source,
     filing_type: "10-Q",
     filing_date: analysis.meta.filingDate ?? now.split("T")[0],
-    analysis: analysis as unknown,
+    analysis: {
+      ...analysis,
+      meta: {
+        ...analysis.meta,
+        workflowOrigin,
+      },
+    } as unknown,
     saved_at: now,
   };
 
@@ -229,7 +236,13 @@ export async function saveFiling(
     periodEnd,
     source,
     savedAt: now,
-    analysis,
+    analysis: {
+      ...analysis,
+      meta: {
+        ...analysis.meta,
+        workflowOrigin,
+      },
+    },
     filingType: "10-Q",
     filingDate: analysis.meta.filingDate,
     quarter,

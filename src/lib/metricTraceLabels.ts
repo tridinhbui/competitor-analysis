@@ -76,13 +76,14 @@ export function buildMetricTraceLabelMap(result: FullAnalysis): Record<string, M
     },
     "Net Debt": {
       value: debt.netDebt,
-      tags: ["GrossDebt", "CashAndCashEquivalentsAtCarryingValue"],
+      tags: ["TotalNetDebtSupplemental", "GrossDebt", "CashAndCashEquivalentsAtCarryingValue"],
       sourceTags: [
+        "TotalNetDebtSupplemental",
         "GrossDebt",
         "CashAndCashEquivalentsAtCarryingValue",
         "CashAndCashEquivalents",
       ],
-      pdfMatchLabel: "Net Debt",
+      pdfMatchLabel: "Total net debt",
     },
     "Cash & Equivalents": { value: bs.cashAndEquivalents, tags: ["CashAndCashEquivalents"] },
     "Operating CF": {
@@ -101,16 +102,30 @@ export function buildMetricTraceLabelMap(result: FullAnalysis): Record<string, M
       value: cf.capitalExpenditures,
       tags: ["CapitalExpenditure", "PaymentsToAcquirePropertyPlantAndEquipment"],
       sourceTags: ["PaymentsToAcquirePropertyPlantAndEquipment", "CapitalExpenditure"],
-      pdfMatchLabel: "Capital expenditures",
+      pdfMatchLabel: "Additions to property, plant and equipment",
     },
     "CapEx (Reinvestment)": {
       value: cf.capitalExpenditures,
       tags: ["CapitalExpenditure", "PaymentsToAcquirePropertyPlantAndEquipment"],
       sourceTags: ["PaymentsToAcquirePropertyPlantAndEquipment", "CapitalExpenditure"],
-      pdfMatchLabel: "Capital expenditures",
+      pdfMatchLabel: "Additions to property, plant and equipment", 
     },
-    "Free Cash Flow": { value: cf.freeCashFlow, tags: ["FreeCashFlow"] },
-    FCF: { value: cf.freeCashFlow, tags: ["FreeCashFlow"] },
+    "Free Cash Flow": {
+      value: cf.freeCashFlow,
+      tags: ["FreeCashFlow"],
+      derivation: {
+        formula: "Operating cash flow − Capital expenditures",
+        inputs: ["Operating CF", "Capital Expenditures"],
+      },
+    },
+    FCF: {
+      value: cf.freeCashFlow,
+      tags: ["FreeCashFlow"],
+      derivation: {
+        formula: "Operating cash flow − Capital expenditures",
+        inputs: ["Operating CF", "Capital Expenditures"],
+      },
+    },
     "Dividends Paid": {
       value: cf.dividendsPaid,
       tags: ["PaymentsOfDividends", "PaymentsOfDividendsCommonStock"],

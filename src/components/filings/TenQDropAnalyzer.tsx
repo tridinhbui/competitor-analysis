@@ -10,7 +10,6 @@ import { PdfViewer, type TraceTarget } from "./PdfViewer";
 import { AnalyzeExtractPanel } from "./AnalyzeExtractPanel";
 import { analyzePdf } from "@/lib/pdfAnalysis";
 import {
-  parseSseBlock,
   isFullAnalysisPayload,
   isStepEventPayload,
 } from "@/lib/sseClient";
@@ -18,13 +17,99 @@ import { RotateCcw, FileText } from "lucide-react";
 import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import { normalizeCompanyName, resolveTicker } from "@/lib/filingIdentity";
 type Phase = "idle" | "analyzing" | "done" | "error";
+const ANALYZE_SESSION_KEY = "analyze-latest-session-v1";
+const ANALYZE_PDF_DB = "analyze-pdf-cache-v1";
+const ANALYZE_PDF_STORE = "files";
+const ANALYZE_PDF_KEY = "latest-pdf";
+let latestPdfFileMemory: File | null = null;
+
+type PersistedAnalyzeSession = {
+  phase: Extract<Phase, "done" | "error">;
+  result: FullAnalysis | null;
+  events: StepEvent[];
+  error: string;
+  persistNotice: { kind: "ok" | "warn"; text: string } | null;
+};
+
+interface CachedPdfRecord {
+  name: string;
+  type: string;
+  lastModified: number;
+  blob: Blob;
+}
+
+function openPdfDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = window.indexedDB.open(ANALYZE_PDF_DB, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(ANALYZE_PDF_STORE)) {
+        db.createObjectStore(ANALYZE_PDF_STORE);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error ?? new Error("Failed to open PDF cache"));
+  });
+}
+
+async function cachePdfFile(file: File): Promise<void> {
+  if (typeof window === "undefined") return;
+  latestPdfFileMemory = file;
+  const db = await openPdfDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(ANALYZE_PDF_STORE, "readwrite");
+    const store = tx.objectStore(ANALYZE_PDF_STORE);
+    const record: CachedPdfRecord = {
+      name: file.name,
+      type: file.type || "application/pdf",
+      lastModified: file.lastModified || Date.now(),
+      blob: file,
+    };
+    store.put(record, ANALYZE_PDF_KEY);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error("Failed to cache PDF file"));
+  });
+  db.close();
+}
+
+async function loadCachedPdfFile(): Promise<File | null> {
+  if (typeof window === "undefined") return null;
+  if (latestPdfFileMemory) return latestPdfFileMemory;
+  const db = await openPdfDb();
+  const record = await new Promise<CachedPdfRecord | null>((resolve, reject) => {
+    const tx = db.transaction(ANALYZE_PDF_STORE, "readonly");
+    const store = tx.objectStore(ANALYZE_PDF_STORE);
+    const req = store.get(ANALYZE_PDF_KEY);
+    req.onsuccess = () => resolve((req.result as CachedPdfRecord | undefined) ?? null);
+    req.onerror = () => reject(req.error ?? new Error("Failed to read cached PDF file"));
+  });
+  db.close();
+  if (!record?.blob) return null;
+  return new File([record.blob], record.name, {
+    type: record.type || "application/pdf",
+    lastModified: record.lastModified || Date.now(),
+  });
+}
+
+async function clearCachedPdfFile(): Promise<void> {
+  if (typeof window === "undefined") return;
+  latestPdfFileMemory = null;
+  const db = await openPdfDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(ANALYZE_PDF_STORE, "readwrite");
+    const store = tx.objectStore(ANALYZE_PDF_STORE);
+    store.delete(ANALYZE_PDF_KEY);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error("Failed to clear cached PDF file"));
+  });
+  db.close();
+}
 
 export function TenQDropAnalyzer() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [events, setEvents] = useState<StepEvent[]>([]);
   const [result, setResult] = useState<FullAnalysis | null>(null);
   const [error, setError] = useState<string>("");
-  const [ticker, setTicker] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [showPdf, setShowPdf] = useState(true);
@@ -37,6 +122,51 @@ export function TenQDropAnalyzer() {
   const resizeContainerRef = useRef<HTMLDivElement>(null);
   const savedResultKeyRef = useRef<string | null>(null);
   const [traceTarget, setTraceTarget] = useState<TraceTarget | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    void (async () => {
+      try {
+        const raw = window.localStorage.getItem(ANALYZE_SESSION_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw) as Partial<PersistedAnalyzeSession>;
+        if (parsed.result && isFullAnalysisPayload(parsed.result)) {
+          setResult(parsed.result);
+          setEvents(Array.isArray(parsed.events) ? parsed.events.filter(isStepEventPayload) : []);
+          setError(typeof parsed.error === "string" ? parsed.error : "");
+          setPersistNotice(parsed.persistNotice && (parsed.persistNotice.kind === "ok" || parsed.persistNotice.kind === "warn")
+            ? parsed.persistNotice
+            : null);
+          setPhase(parsed.phase === "error" ? "error" : "done");
+
+          const restoredPdf = await loadCachedPdfFile().catch(() => null);
+          if (restoredPdf) {
+            latestPdfFileMemory = restoredPdf;
+            setPdfFile(restoredPdf);
+            setShowPdf(true);
+          } else {
+            setShowPdf(false);
+          }
+        }
+      } catch {
+        // Ignore broken local cache and start fresh.
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (phase !== "done" && phase !== "error") return;
+    if (!result) return;
+    const payload: PersistedAnalyzeSession = {
+      phase,
+      result,
+      events,
+      error,
+      persistNotice,
+    };
+    window.localStorage.setItem(ANALYZE_SESSION_KEY, JSON.stringify(payload));
+  }, [phase, result, events, error, persistNotice]);
 
   // Auto-save: Supabase via /api/filings/save for PDF; SEC saved server-side too.
   useEffect(() => {
@@ -55,6 +185,7 @@ export function TenQDropAnalyzer() {
               ticker: result.meta.ticker,
               periodEnd: result.meta.periodEnd,
               source: "pdf",
+              workflowOrigin: "analyze",
               analysis: result,
             }),
           });
@@ -134,74 +265,23 @@ export function TenQDropAnalyzer() {
   }, []);
 
   const reset = useCallback(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(ANALYZE_SESSION_KEY);
+    }
+    void clearCachedPdfFile().catch(() => {});
     savedResultKeyRef.current = null;
     setPersistNotice(null);
     setPhase("idle");
     setEvents([]);
     setResult(null);
     setError("");
-    setTicker("");
     setPdfFile(null);
     setShowPdf(true);
   }, []);
 
-  const analyzeViaSec = useCallback(async (t: string) => {
-    const clean = t.trim().toUpperCase();
-    if (!clean) return;
-    savedResultKeyRef.current = null;
-    setPersistNotice(null);
-    setPhase("analyzing");
-    setEvents([]);
-    setResult(null);
-    setError("");
-    setPdfFile(null);
-
-    let receivedResult = false;
-    const processBlock = (rawBlock: string) => {
-      const block = rawBlock.trim();
-      if (!block) return;
-      const { event, data } = parseSseBlock(block);
-      if (!data) return;
-      let parsed: unknown;
-      try { parsed = JSON.parse(data); } catch { return; }
-      if ((event === "result" || isFullAnalysisPayload(parsed)) && isFullAnalysisPayload(parsed)) {
-        receivedResult = true;
-        setResult(parsed);
-        setPhase("done");
-        return;
-      }
-      if (isStepEventPayload(parsed)) {
-        setEvents((prev) => [...prev, parsed]);
-        if (parsed.status === "error" && parsed.message) setError(parsed.message);
-      }
-    };
-
-    try {
-      const resp = await fetch(`/api/analyze?ticker=${encodeURIComponent(clean)}`);
-      if (!resp.ok || !resp.body) throw new Error(`Server returned ${resp.status}`);
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split("\n\n");
-        buffer = parts.pop() ?? "";
-        for (const part of parts) processBlock(part);
-      }
-      if (buffer.trim()) processBlock(buffer);
-      if (!receivedResult) {
-        setPhase("error");
-        setError((prev) => prev.trim() || "Stream ended without analysis result.");
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setPhase("error");
-    }
-  }, []);
-
   const analyzePdfFile = useCallback(async (file: File) => {
+    latestPdfFileMemory = file;
+    void cachePdfFile(file).catch(() => {});
     savedResultKeyRef.current = null;
     setPersistNotice(null);
     setPdfFile(file);
@@ -213,7 +293,6 @@ export function TenQDropAnalyzer() {
     try {
       const analysis = await analyzePdf(file, (evt) => setEvents((prev) => [...prev, evt]));
       const resolvedTicker = resolveTicker({
-        inputTicker: ticker,
         metaTicker: analysis.meta.ticker,
         fileName: file.name,
         companyName: analysis.meta.companyName,
@@ -240,7 +319,7 @@ export function TenQDropAnalyzer() {
       setError(err instanceof Error ? err.message : String(err));
       setPhase("error");
     }
-  }, [ticker]);
+  }, []);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -281,13 +360,10 @@ export function TenQDropAnalyzer() {
     writeFile(wb, `${name}-analysis.xlsx`);
   }, [result]);
 
-  /* ───── IDLE: extract entry (SEC ticker + PDF only) ───── */
+  /* ───── IDLE: PDF extract entry only ───── */
   if (phase === "idle") {
     return (
       <AnalyzeExtractPanel
-        ticker={ticker}
-        setTicker={setTicker}
-        analyzeViaSec={analyzeViaSec}
         dragOver={dragOver}
         setDragOver={setDragOver}
         handleDrop={handleDrop}
@@ -319,13 +395,11 @@ export function TenQDropAnalyzer() {
             </span>
           </div>
           <AgentWorkflow events={events} isRunning={phase === "analyzing"} horizontal />
-          {persistNotice && (
+          {persistNotice?.kind === "warn" && (
             <div
               className={cn(
                 "rounded-lg border px-3 py-2 text-[11px] leading-snug",
-                persistNotice.kind === "ok"
-                  ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                  : "border-amber-200 bg-amber-50 text-amber-950"
+                "border-amber-200 bg-amber-50 text-amber-950"
               )}
             >
               {persistNotice.text}
@@ -392,13 +466,11 @@ export function TenQDropAnalyzer() {
           Processing filing stream: ingesting source, mapping statements, and preparing dashboard blocks.
         </div>
       )}
-      {persistNotice && (
+      {persistNotice?.kind === "warn" && (
         <div
           className={cn(
             "rounded-xl border px-4 py-2.5 text-xs leading-snug",
-            persistNotice.kind === "ok"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-              : "border-amber-200 bg-amber-50 text-amber-950"
+            "border-amber-200 bg-amber-50 text-amber-950"
           )}
         >
           {persistNotice.text}

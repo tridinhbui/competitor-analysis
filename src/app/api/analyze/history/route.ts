@@ -106,7 +106,7 @@ export async function GET(request: Request) {
               extractionMethod: "sec",
             });
 
-            await saveFiling(ticker, periodEnd, "sec", result);
+            await saveFiling(ticker, periodEnd, "sec", result, undefined, "analyze");
             saved++;
 
             send({

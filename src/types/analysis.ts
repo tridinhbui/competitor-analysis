@@ -194,6 +194,7 @@ export interface ReconcileResult {
 export interface FullAnalysis {
   meta: {
     source: "sec" | "pdf";
+    workflowOrigin?: "analyze" | "competitor";
     ticker?: string;
     cik?: string;
     companyName?: string;
