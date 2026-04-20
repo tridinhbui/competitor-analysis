@@ -9,6 +9,9 @@
  *    - Segments: business/channel/geography segment breakdown
  *    - Non-recurring items: legal, restructuring, impairment, etc.
  * 3. Fallback to heuristic regex extraction if AI unavailable
+ *
+ * Pdf.js: text extraction loads /public/pdf.min.mjs here (on PDF analyze only).
+ * Canvas page preview loads the same scripts from PdfViewer when the PDF split UI mounts — both are on-demand, not bundled.
  */
 
 import type { BSItem, FullAnalysis, StepEvent } from "@/types/analysis";

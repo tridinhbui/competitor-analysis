@@ -4,9 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { FullAnalysis, StepEvent } from "@/types/analysis";
 import { AgentWorkflow } from "./AgentWorkflow";
-import { AnalysisDashboard, type TraceMetric } from "./AnalysisDashboard";
-import { AnalysisChatPanel } from "./AnalysisChatPanel";
-import { PdfViewer, type TraceTarget } from "./PdfViewer";
+import type { TraceMetric } from "./AnalysisDashboard";
+import type { TraceTarget } from "./PdfViewer";
+import {
+  LazyAnalysisChatPanel,
+  LazyAnalysisDashboard,
+  LazyPdfViewer,
+} from "./analyzeDynamic";
 import { AnalyzeExtractPanel } from "./AnalyzeExtractPanel";
 import { analyzePdf } from "@/lib/pdfAnalysis";
 import {
@@ -17,7 +21,11 @@ import {
 import { RotateCcw, FileText } from "lucide-react";
 import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import { normalizeCompanyName, resolveTicker } from "@/lib/filingIdentity";
+
 type Phase = "idle" | "analyzing" | "done" | "error";
+
+/** Cap SSE / PDF step events so long streams do not grow unbounded. */
+const MAX_PIPELINE_EVENTS = 400;
 
 export function TenQDropAnalyzer() {
   const [phase, setPhase] = useState<Phase>("idle");
@@ -37,6 +45,13 @@ export function TenQDropAnalyzer() {
   const resizeContainerRef = useRef<HTMLDivElement>(null);
   const savedResultKeyRef = useRef<string | null>(null);
   const [traceTarget, setTraceTarget] = useState<TraceTarget | null>(null);
+
+  const appendPipelineEvent = useCallback((evt: StepEvent) => {
+    setEvents((prev) => {
+      const next = [...prev, evt];
+      return next.length > MAX_PIPELINE_EVENTS ? next.slice(-MAX_PIPELINE_EVENTS) : next;
+    });
+  }, []);
 
   // Auto-save: Supabase via /api/filings/save for PDF; SEC saved server-side too.
   useEffect(() => {
@@ -171,7 +186,7 @@ export function TenQDropAnalyzer() {
         return;
       }
       if (isStepEventPayload(parsed)) {
-        setEvents((prev) => [...prev, parsed]);
+        appendPipelineEvent(parsed);
         if (parsed.status === "error" && parsed.message) setError(parsed.message);
       }
     };
@@ -199,7 +214,7 @@ export function TenQDropAnalyzer() {
       setError(err instanceof Error ? err.message : String(err));
       setPhase("error");
     }
-  }, []);
+  }, [appendPipelineEvent]);
 
   const analyzePdfFile = useCallback(async (file: File) => {
     savedResultKeyRef.current = null;
@@ -211,7 +226,7 @@ export function TenQDropAnalyzer() {
     setResult(null);
     setError("");
     try {
-      const analysis = await analyzePdf(file, (evt) => setEvents((prev) => [...prev, evt]));
+      const analysis = await analyzePdf(file, appendPipelineEvent);
       const resolvedTicker = resolveTicker({
         inputTicker: ticker,
         metaTicker: analysis.meta.ticker,
@@ -240,7 +255,7 @@ export function TenQDropAnalyzer() {
       setError(err instanceof Error ? err.message : String(err));
       setPhase("error");
     }
-  }, [ticker]);
+  }, [ticker, appendPipelineEvent]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -340,7 +355,7 @@ export function TenQDropAnalyzer() {
             className="flex min-h-0 min-w-0 shrink-0 flex-col overflow-hidden"
             style={{ flex: `0 0 ${pdfWidthPct}%` }}
           >
-            <PdfViewer file={pdfFile} fullHeight traceTarget={traceTarget} onClearTrace={() => setTraceTarget(null)} />
+            <LazyPdfViewer file={pdfFile} fullHeight traceTarget={traceTarget} onClearTrace={() => setTraceTarget(null)} />
           </div>
 
           {/* Resize handle */}
@@ -356,7 +371,7 @@ export function TenQDropAnalyzer() {
           {/* Analysis dashboard */}
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto border-l border-slate-200/80 bg-white p-3 sm:p-4">
             {result && phase === "done" ? (
-              <AnalysisDashboard result={result} onExport={handleExport} onTraceMetric={(m: TraceMetric) => setTraceTarget(m)} />
+              <LazyAnalysisDashboard result={result} onExport={handleExport} onTraceMetric={(m: TraceMetric) => setTraceTarget(m)} />
             ) : (
               <div className="flex flex-1 items-center justify-center p-6 text-center">
                 <div>
@@ -379,7 +394,7 @@ export function TenQDropAnalyzer() {
           </div>
         )}
 
-        <AnalysisChatPanel analysis={result} disableAutoSummary />
+        <LazyAnalysisChatPanel analysis={result} disableAutoSummary />
       </div>
     );
   }
@@ -431,12 +446,12 @@ export function TenQDropAnalyzer() {
           <div className="rounded-2xl border border-slate-200/80 bg-white p-3 shadow-elevation sm:p-4">
             <AgentWorkflow events={events} isRunning={phase === "analyzing"} />
           </div>
-          <AnalysisChatPanel analysis={result} inline />
+          <LazyAnalysisChatPanel analysis={result} inline />
         </div>
 
         {result && phase === "done" && (
           <div className="min-w-0 rounded-2xl border border-slate-200/80 bg-white p-3 shadow-elevation sm:p-5">
-            <AnalysisDashboard
+            <LazyAnalysisDashboard
               result={result}
               onExport={handleExport}
               onTraceMetric={hasPdf ? (m: TraceMetric) => setTraceTarget(m) : undefined}

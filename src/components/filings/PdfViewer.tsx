@@ -1,5 +1,8 @@
 "use client";
 
+/* Canvas PDF preview: pdf.js loads from /public when this component mounts with a file.
+   Plain-text extraction for the pipeline lives in src/lib/pdfAnalysis.ts (same /public scripts, separate entry). */
+
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import {

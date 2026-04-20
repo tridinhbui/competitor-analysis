@@ -1,10 +1,23 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { TenQDropAnalyzer } from "./TenQDropAnalyzer";
-import { OverviewSnapshotPanel } from "@/components/overview/OverviewSnapshotPanel";
+
+const OverviewSnapshotPanel = dynamic(
+  () =>
+    import("@/components/overview/OverviewSnapshotPanel").then((m) => ({
+      default: m.OverviewSnapshotPanel,
+    })),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="mx-auto w-full max-w-6xl px-4 py-8 text-sm text-slate-500">Loading snapshot…</div>
+    ),
+  }
+);
 
 type AnalyzeTab = "extract" | "snapshot";
 
