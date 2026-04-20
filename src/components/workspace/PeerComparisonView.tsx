@@ -863,18 +863,6 @@ export function PeerComparisonView({
             <h3 className="text-base font-bold text-slate-900">Peer Comparison</h3>
           </div>
           <div className="flex items-center gap-2">
-            {options.length > 0 ? (
-              <button
-                type="button"
-                onClick={clearAllCompanies}
-                disabled={clearingAll}
-                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 text-xs font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
-                title="Clear all companies and uploaded competitor analysis data"
-              >
-                {clearingAll ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                Clear all companies
-              </button>
-            ) : null}
             {onToggleSidebar ? (
               <button
                 type="button"

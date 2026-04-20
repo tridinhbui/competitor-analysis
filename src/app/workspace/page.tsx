@@ -20,6 +20,7 @@ import {
   ChevronRight,
   Plus,
   RotateCcw,
+  Trash2,
 } from "lucide-react";
 
 export default function WorkspacePage() {
@@ -31,6 +32,30 @@ export default function WorkspacePage() {
   const [companiesOpen, setCompaniesOpen] = useState(true);
   const [analysisModulesOpen, setAnalysisModulesOpen] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [clearingAll, setClearingAll] = useState(false);
+
+  const clearAllCompanies = useCallback(async () => {
+    const confirmation = window.prompt(
+      'This will remove all companies and uploaded competitor analysis data.\nAnalysis history stays intact.\n\nType "delete all" to confirm.'
+    );
+    if ((confirmation ?? "").trim().toLowerCase() !== "delete all") {
+      if (confirmation !== null) window.alert('Confirmation did not match. Type exactly: delete all');
+      return;
+    }
+    setClearingAll(true);
+    try {
+      const res = await fetch("/api/workspace/clear-all", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmationText: "delete all" }),
+      });
+      const data = await res.json();
+      if (!res.ok) { window.alert(data.error ?? "Failed to clear companies."); return; }
+      await loadRegistry();
+    } finally {
+      setClearingAll(false);
+    }
+  }, []);
   const [overviewReadiness, setOverviewReadiness] = useState<(WorkspaceReadiness & { timeline?: TimelineSlot[] }) | null>(null);
   const panelActionsRef = useRef<WorkspacePanelActions | null>(null);
   const handleActionsReady = useCallback((actions: WorkspacePanelActions) => {
@@ -205,6 +230,19 @@ export default function WorkspacePage() {
                 <span>Companies</span>
                 {companiesOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
               </button>
+              {/* Clear all button — shown when companies exist */}
+              {registry && registry.companies.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={clearAllCompanies}
+                  disabled={clearingAll}
+                  className="workspace-interactive mb-2 flex w-full items-center gap-1.5 rounded-lg px-2 py-1 text-[10px] font-semibold text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  title="Clear all companies and uploaded competitor analysis data"
+                >
+                  {clearingAll ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                  Clear all
+                </button>
+              ) : null}
               {companiesOpen ? (
                 <div className="space-y-1">
                   {registry.companies.map((c) => (

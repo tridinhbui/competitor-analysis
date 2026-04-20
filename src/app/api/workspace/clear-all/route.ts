@@ -16,23 +16,18 @@ export async function DELETE(request: Request) {
     );
   }
 
-  const [{ data: filings, error: filingsError }, { data: companies, error: companiesError }, { data: adjustments, error: adjustmentsError }] = await Promise.all([
+  const [{ data: filings, error: filingsError }, { data: companies, error: companiesError }] = await Promise.all([
     supabase.from("filings").select("id"),
     supabase.from("companies").select("ticker"),
-    supabase.from("adjustments").select("ticker"),
   ]);
 
   if (filingsError) return Response.json({ error: filingsError.message }, { status: 500 });
   if (companiesError) return Response.json({ error: companiesError.message }, { status: 500 });
-  if (adjustmentsError) return Response.json({ error: adjustmentsError.message }, { status: 500 });
 
   const filingIds = (filings ?? [])
     .map((row) => row.id)
     .filter((id): id is string => typeof id === "string" && id.length > 0);
   const companyTickers = (companies ?? [])
-    .map((row) => row.ticker)
-    .filter((ticker): ticker is string => typeof ticker === "string" && ticker.length > 0);
-  const adjustmentTickers = (adjustments ?? [])
     .map((row) => row.ticker)
     .filter((ticker): ticker is string => typeof ticker === "string" && ticker.length > 0);
 
@@ -41,9 +36,14 @@ export async function DELETE(request: Request) {
     if (error) return Response.json({ error: error.message }, { status: 500 });
   }
 
-  if (adjustmentTickers.length > 0) {
-    const { error } = await supabase.from("adjustments").delete().in("ticker", adjustmentTickers);
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+  // Attempt to delete adjustments — skip if table doesn't exist in schema
+  const { data: adjustments } = await supabase.from("adjustments").select("ticker").limit(1);
+  if (adjustments !== null) {
+    const { data: allAdj } = await supabase.from("adjustments").select("ticker");
+    const adjTickers = (allAdj ?? []).map((r) => r.ticker).filter((t): t is string => typeof t === "string" && t.length > 0);
+    if (adjTickers.length > 0) {
+      await supabase.from("adjustments").delete().in("ticker", adjTickers);
+    }
   }
 
   if (companyTickers.length > 0) {
@@ -55,7 +55,6 @@ export async function DELETE(request: Request) {
     ok: true,
     deletedFilings: filingIds.length,
     deletedCompanies: companyTickers.length,
-    deletedAdjustments: adjustmentTickers.length,
     historyPreserved: true,
   });
 }
