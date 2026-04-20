@@ -71,6 +71,9 @@ const METRIC_ALIASES: Record<string, string[]> = {
   "Operating CF":      ["operating cash flow", "cash from operations", "cash provided by operating", "net cash provided by operating"],
   "Free Cash Flow":    ["free cash flow"],
   "EBITDA":            ["ebitda", "ebitda (calculated", "adjusted ebitda"],
+  "D&A":               ["depreciation and amortization", "depreciation, depletion and amortization", "depreciation & amortization", "depreciation", "depreciation expense"],
+  "D&A Total":         ["depreciation and amortization", "depreciation, depletion and amortization", "depreciation & amortization", "depreciation", "depreciation expense"],
+  "Depreciation and Amortization": ["depreciation and amortization", "depreciation, depletion and amortization", "depreciation & amortization", "depreciation", "depreciation expense"],
   "Cost of Revenue":   ["cost of revenue", "cost of sales", "cost of goods sold", "cogs"],
   "Capital Expenditures": ["additions to property, plant and equipment","payments to acquire property", "capital expenditures", "purchases of property"],
   /**
@@ -907,6 +910,22 @@ export function PdfViewer({ file, fullHeight, traceTarget, onClearTrace }: Props
           <span className="min-w-[36px] text-center text-[10px] tabular-nums text-slate-500">{Math.round(scale * 100)}%</span>
           <button onClick={() => setScale(s => Math.min(3, +(s + 0.2).toFixed(1)))} className="rounded p-1 text-slate-500 transition hover:bg-slate-200/60" aria-label="Zoom in"><ZoomIn className="h-3.5 w-3.5" /></button>
           <div className="mx-1 h-4 w-px bg-slate-200" />
+          <button
+            onClick={() => {
+              setManualSearchOpen((prev) => !prev);
+              if (!manualSearchOpen) {
+                window.setTimeout(() => searchInputRef.current?.focus(), 0);
+              }
+            }}
+            className={cn(
+              "rounded p-1 transition",
+              manualSearchOpen ? "bg-primary/10 text-primary" : "text-slate-500 hover:bg-slate-200/60"
+            )}
+            aria-label="Search in PDF"
+            title="Search in PDF (Ctrl+F)"
+          >
+            <Search className="h-3.5 w-3.5" />
+          </button>
           <button onClick={() => setExpanded(!expanded)} className="rounded p-1 text-slate-500 transition hover:bg-slate-200/60" aria-label={expanded ? "Minimize" : "Maximize"}>
             {expanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
           </button>
@@ -915,6 +934,62 @@ export function PdfViewer({ file, fullHeight, traceTarget, onClearTrace }: Props
           )}
         </div>
       </div>
+
+      {manualSearchOpen && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-3 py-2">
+          <Search className="h-3.5 w-3.5 text-slate-500" />
+          <input
+            ref={searchInputRef}
+            value={manualSearchQuery}
+            onChange={(event) => setManualSearchQuery(event.target.value)}
+            placeholder="Find in PDF..."
+            className="h-8 flex-1 rounded-md border border-slate-200 px-2 text-xs outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
+          />
+          {manualSearching && (
+            <span className="text-[10px] text-slate-500">Searching…</span>
+          )}
+          {!manualSearching && manualSearchQuery.trim().length > 0 && (
+            <span className="text-[10px] tabular-nums text-slate-600">
+              {manualCandidates.length > 0 ? `${manualCandidateIdx + 1}/${manualCandidates.length}` : "0/0"}
+            </span>
+          )}
+          <button
+            onClick={goPrevManualMatch}
+            disabled={manualCandidates.length === 0}
+            className="rounded p-1 text-slate-500 transition hover:bg-slate-100 disabled:opacity-30"
+            aria-label="Previous search match"
+          >
+            <ArrowUp className="h-3.5 w-3.5" />
+          </button>
+          <button
+            onClick={goNextManualMatch}
+            disabled={manualCandidates.length === 0}
+            className="rounded p-1 text-slate-500 transition hover:bg-slate-100 disabled:opacity-30"
+            aria-label="Next search match"
+          >
+            <ArrowDown className="h-3.5 w-3.5" />
+          </button>
+          <button
+            onClick={() => {
+              setManualSearchOpen(false);
+              setManualSearchQuery("");
+              setManualCandidates([]);
+              setManualCandidateIdx(0);
+              setManualNoMatch(false);
+            }}
+            className="rounded p-1 text-slate-500 transition hover:bg-slate-100"
+            aria-label="Close search"
+          >
+            <XCircle className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
+      {manualSearchOpen && manualNoMatch && manualSearchQuery.trim().length > 0 && !manualSearching && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-800">
+          <span>No text match for "{manualSearchQuery.trim()}"</span>
+        </div>
+      )}
 
       {/* Trace bar */}
       {hasTrace && (

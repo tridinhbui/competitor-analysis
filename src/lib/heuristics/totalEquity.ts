@@ -33,7 +33,7 @@ export function extractTotalEquityHeuristic(
   const liabilitiesAndEquityPattern = LIABILITIES_AND_EQUITY_LINE_RE;
   const totalLiabilitiesPattern = /^total\s+liabilities\b/i;
   const companySpecificPattern =
-    /^company\s+shareholders?['\u2019]?\s+equity\b/i;
+    /^(?:company|[a-z0-9&.,\-\s]{2,80})\s+shareholders?['\u2019]?\s+(?:equity|investments?)\b/i;
 
   const equityPatterns: Array<{
     pattern: RegExp;
@@ -71,12 +71,37 @@ export function extractTotalEquityHeuristic(
       isTotal: true,
     },
     {
+      pattern: /^total\s+shareholders?['\u2019]?\s+investments?\b/i,
+      confidence: "high",
+      isTotal: true,
+    },
+    {
+      pattern: /^total\s+stockholders?['\u2019]?\s+investments?\b/i,
+      confidence: "high",
+      isTotal: true,
+    },
+    {
+      pattern: /^total\s+.{1,140}?\bshareholders?['\u2019]?\s+investments?\b/i,
+      confidence: "high",
+      isTotal: true,
+    },
+    {
+      pattern: /^total\s+.{1,140}?\bstockholders?['\u2019]?\s+investments?\b/i,
+      confidence: "high",
+      isTotal: true,
+    },
+    {
       pattern: /^total\s+equity\b/i,
       confidence: "medium",
       isTotal: true,
     },
     {
-      pattern: /^shareholders?['\u2019]?\s+investment\b/i,
+      pattern: /^shareholders?['\u2019]?\s+investments?\b/i,
+      confidence: "medium",
+      isTotal: false,
+    },
+    {
+      pattern: /^stockholders?['\u2019]?\s+investments?\b/i,
       confidence: "medium",
       isTotal: false,
     },
