@@ -20,7 +20,6 @@ import {
   AlertTriangle,
   Boxes,
   RotateCcw,
-  Plus,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -337,22 +336,11 @@ export function WorkspacePanel({
       {!hideHeader && <div className="workspace-card-hover workspace-section-enter workspace-stagger-1 rounded-xl border border-slate-200 bg-white shadow-subtle">
         {/* Row 1: company name */}
         <div className="px-4 pt-3 pb-2">
-          <div className="min-w-0">
-            <h3 className="text-[15px] font-bold leading-tight text-slate-900">{company.name}</h3>
-            <p className="mt-1 text-xs text-slate-400">{company.ticker}</p>
-          </div>
-          <div className="mt-2 flex items-center gap-1.5">
-            <button
-              onClick={() => {
-                const firstMissing = readiness.timeline?.find((slot) => !slot.present) ?? readiness.timeline?.[0] ?? null;
-                setActiveSlot(firstMissing);
-                setAutoOpenPicker(false);
-              }}
-              className="workspace-interactive workspace-press inline-flex h-8 items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-white shadow-subtle hover:opacity-90"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Upload
-            </button>
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <h3 className="text-[15px] font-bold leading-tight text-slate-900">{company.name}</h3>
+              <p className="mt-1 text-xs text-slate-400">{company.ticker}</p>
+            </div>
             <button
               type="button"
               onClick={handleResetUploads}

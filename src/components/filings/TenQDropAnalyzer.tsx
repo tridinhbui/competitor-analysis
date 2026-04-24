@@ -16,6 +16,7 @@ import {
 import { RotateCcw, FileText, Sparkles } from "lucide-react";
 import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import { normalizeCompanyName, resolveTicker } from "@/lib/filingIdentity";
+import { useAiExtractionEnabled } from "@/lib/aiExtractionSetting";
 type Phase = "idle" | "analyzing" | "done" | "error";
 const ANALYZE_SESSION_KEY = "analyze-latest-session-v1";
 const ANALYZE_PDF_DB = "analyze-pdf-cache-v1";
@@ -122,19 +123,7 @@ export function TenQDropAnalyzer() {
   const resizeContainerRef = useRef<HTMLDivElement>(null);
   const savedResultKeyRef = useRef<string | null>(null);
   const [traceTarget, setTraceTarget] = useState<TraceTarget | null>(null);
-  const [aiEnabled, setAiEnabled] = useState<boolean>(() => {
-    if (typeof window === "undefined") return true;
-    const stored = window.localStorage.getItem("analyze-ai-enabled");
-    return stored === null ? true : stored !== "false";
-  });
-
-  const toggleAi = useCallback(() => {
-    setAiEnabled((prev) => {
-      const next = !prev;
-      window.localStorage.setItem("analyze-ai-enabled", String(next));
-      return next;
-    });
-  }, []);
+  const [aiEnabled, toggleAi] = useAiExtractionEnabled();
 
   useEffect(() => {
     if (typeof window === "undefined") return;

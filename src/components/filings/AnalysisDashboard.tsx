@@ -14,14 +14,14 @@ export type TraceMetric = PdfTraceTarget;
 import { cn } from "@/lib/utils";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend,
+  PieChart, Pie, Cell, Legend, LabelList,
   LineChart, Line, CartesianGrid, ReferenceLine,
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
 } from "recharts";
 import {
   CheckCircle2, XCircle, Download, AlertCircle,
   TrendingUp, TrendingDown, ShieldCheck, ShieldAlert,
-  ArrowRight, ArrowUpRight, ArrowDownRight, Minus, Info, Search,
+  ArrowRight, ArrowUpRight, ArrowDownRight, Minus, Info, Search, ChevronRight, ChevronDown,
 } from "lucide-react";
 
 interface Props {
@@ -31,9 +31,18 @@ interface Props {
 }
 
 const COLORS = {
-  primary: "#4f46e5", blue: "#3b82f6", emerald: "#10b981",
-  amber: "#f59e0b", red: "#ef4444", slate: "#94a3b8",
-  purple: "#8b5cf6", cyan: "#06b6d4",
+  primary: "#cc521d",
+  blue: "#9f4017",
+  emerald: "#2f7d5d",
+  amber: "#c67b1f",
+  red: "#f44336",
+  slate: "#5a6065",
+  purple: "#7f5a4a",
+  cyan: "#bf6b45",
+  grid: "#e3e5e7",
+  border: "#e3e5e7",
+  tooltipText: "#3b4043",
+  tooltipBg: "#ffffff",
 };
 const PIE_PALETTE = [COLORS.primary, COLORS.blue, COLORS.emerald, COLORS.amber, COLORS.purple, COLORS.cyan];
 
@@ -132,30 +141,28 @@ function lineValueByTags(
 }
 
 const tooltipStyle = {
-  borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 12,
-  background: "#fff", color: "#1e293b", boxShadow: "0 4px 12px rgb(0 0 0/0.08)",
+  borderRadius: 8, border: `1px solid ${COLORS.border}`, fontSize: 12,
+  background: COLORS.tooltipBg, color: COLORS.tooltipText, boxShadow: "0 4px 12px rgb(0 0 0/0.08)",
 };
 
 /* ──────────────────── Tabs ──────────────────── */
 
-type TabId = "summary" | "income" | "balance" | "cashflow" | "insights" | "deep-dive";
+type TabId = "summary" | "segment" | "income" | "balance" | "cashflow" | "analysis";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "summary", label: "Executive Summary" },
+  { id: "segment", label: "Segment" },
   { id: "income", label: "Income & Margins" },
   { id: "balance", label: "Balance Sheet" },
   { id: "cashflow", label: "Cash Flow" },
-  { id: "insights", label: "Insights" },
-  { id: "deep-dive", label: "Deep Dive" },
+  { id: "analysis", label: "Analysis" },
 ];
 
 /* ──────────────────── Main Component ──────────────────── */
 
 export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
   const [activeTab, setActiveTab] = useState<TabId>("summary");
-  /** Single open derivation tooltip across Deep Dive ratio columns (mutual exclusion). */
-  const [deepDiveDerivationKey, setDeepDiveDerivationKey] = useState<string | null>(null);
-  const { balanceSheet: bs, debtStructure: debt, cashFlow: cf, ratios, dividendAnalysis: div, incomeStatement: inc, validation, meta, reconcile } = result;
+  const { balanceSheet: bs, debtStructure: debt, cashFlow: cf, ratios, dividendAnalysis: div, incomeStatement: inc, meta } = result;
   const cfItems = result.cfItems ?? [];
 
   const traceLabelMap = useMemo(() => buildMetricTraceLabelMap(result), [result]);
@@ -172,10 +179,6 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
     () => (onTraceMetric ? { labelMap: traceLabelMap, traceByLabel } : {}),
     [onTraceMetric, traceLabelMap, traceByLabel],
   );
-
-  useEffect(() => {
-    if (activeTab !== "deep-dive") setDeepDiveDerivationKey(null);
-  }, [activeTab]);
 
   const onMetricTableRowClick = useCallback(
     (label: string, extra?: Record<string, MetricTraceSpec>) => {
@@ -334,25 +337,6 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
               </div>
             )}
 
-            {/* Extraction Method Info (for PDF) */}
-            {meta.source === "pdf" && meta.extractionMethod && (
-              <div className="flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 p-3 text-[11px]">
-                <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />
-                <div className="text-blue-800">
-                  <span className="font-semibold">Extraction method:</span>{" "}
-                  {meta.extractionMethod === "pdf-ai-section-split"
-                    ? "Section-based AI extraction for improved coverage"
-                    : meta.extractionMethod === "pdf-vision"
-                    ? "OpenAI Vision API for table extraction"
-                    : meta.extractionMethod === "pdf-ai"
-                    ? "AI-powered text analysis"
-                    : meta.extractionMethod === "pdf-ai-partial"
-                    ? "AI extraction returned partial coverage; results may be incomplete"
-                    : "Pattern matching heuristics"}
-                </div>
-              </div>
-            )}
-
             {/* Financial Overview Table */}
             <Section title="Financial Overview">
               <div className="grid gap-4 lg:grid-cols-2">
@@ -455,46 +439,117 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
               </div>
             </Section>
 
-            {/* Segments if available */}
-            {result.segments && result.segments.length > 0 && (
-              <Section title="Segment Breakdown">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="border-b-2 border-slate-200 text-slate-500">
-                        <th className="px-3 py-2 text-left font-semibold">Segment</th>
-                        <th className="px-3 py-2 text-right font-semibold">Revenue</th>
-                        <th className="px-3 py-2 text-right font-semibold">OP Income</th>
-                        <th className="px-3 py-2 text-right font-semibold">OP Margin</th>
-                        <th className="px-3 py-2 text-right font-semibold">Volume</th>
-                        <th className="px-3 py-2 text-right font-semibold">Rev/Unit</th>
-                        <th className="px-3 py-2 text-right font-semibold">OP/Unit</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {result.segments.map((seg, i) => (
-                        <tr key={i} className="border-b border-slate-100 hover:bg-slate-50/50">
-                          <td className="px-3 py-2 font-medium">{seg.segmentName}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{fmt(seg.revenue)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{fmt(seg.operatingIncome)}</td>
-                          <td className={cn("px-3 py-2 text-right tabular-nums font-semibold", (seg.operatingMargin ?? 0) >= 0 ? "text-emerald-600" : "text-red-500")}>
-                            {fmtPct(seg.operatingMargin)}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums text-slate-500">
-                            {seg.volumeUnits != null ? `${fmtNum(seg.volumeUnits)} ${seg.volumeUnitType ?? ""}` : "—"}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums text-slate-500">
-                            {seg.revenuePerUnit != null ? `$${seg.revenuePerUnit.toFixed(0)}` : "—"}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums text-slate-500">
-                            {seg.operatingIncomePerUnit != null ? `$${seg.operatingIncomePerUnit.toFixed(0)}` : "—"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </Section>
+          </div>
+        )}
+
+        {/* ─── SEGMENT ─── */}
+        {activeTab === "segment" && (
+          <div className="space-y-4">
+            {result.segments && result.segments.length > 0 ? (
+              (() => {
+                const segs = result.segments!.filter((s) => s.revenue != null && s.revenue > 0);
+                const totalRev = segs.reduce((acc, s) => acc + (s.revenue ?? 0), 0);
+                const pieData = segs.map((s, i) => ({
+                  name: s.segmentName,
+                  value: s.revenue ?? 0,
+                  pct: totalRev > 0 ? Math.round(((s.revenue ?? 0) / totalRev) * 1000) / 10 : 0,
+                  fill: PIE_PALETTE[i % PIE_PALETTE.length],
+                }));
+                const barData = segs.map((s) => ({
+                  name: s.segmentName.length > 12 ? `${s.segmentName.slice(0, 12)}…` : s.segmentName,
+                  opMargin: s.operatingMargin ?? 0,
+                }));
+
+                return (
+                  <>
+                    {segs.length > 0 && (
+                      <Section title={`Segment Analysis (${segs.length} segments)`}>
+                        <div className="grid gap-4 lg:grid-cols-2">
+                          <div>
+                            <p className="mb-2 text-[10px] font-bold uppercase text-slate-400">Revenue Mix</p>
+                            <div className="h-52">
+                              <ResponsiveContainer width="100%" height="100%">
+                                <PieChart>
+                                  <Pie
+                                    data={pieData}
+                                    dataKey="value"
+                                    nameKey="name"
+                                    cx="50%"
+                                    cy="50%"
+                                    outerRadius={80}
+                                    label={(props) => `${props.name} ${(props as unknown as { pct: number }).pct}%`}
+                                    labelLine={false}
+                                    fontSize={9}
+                                  >
+                                    {pieData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
+                                  </Pie>
+                                  <Tooltip contentStyle={tooltipStyle} formatter={(v) => `$${Number(v).toLocaleString()}M`} />
+                                </PieChart>
+                              </ResponsiveContainer>
+                            </div>
+                          </div>
+                          <div>
+                            <p className="mb-2 text-[10px] font-bold uppercase text-slate-400">Operating Margin by Segment (%)</p>
+                            <div className="h-52">
+                              <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={barData} layout="vertical" margin={{ left: 4, right: 12 }}>
+                                  <XAxis type="number" tick={{ fontSize: 9 }} unit="%" />
+                                  <YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 9 }} />
+                                  <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${Number(v).toFixed(1)}%`} />
+                                  <Bar dataKey="opMargin" fill={COLORS.primary} radius={[0, 4, 4, 0]} />
+                                </BarChart>
+                              </ResponsiveContainer>
+                            </div>
+                          </div>
+                        </div>
+                      </Section>
+                    )}
+
+                    <Section title="Segment Breakdown">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="border-b-2 border-slate-200 text-slate-500">
+                              <th className="px-3 py-2 text-left font-semibold">Segment</th>
+                              <th className="px-3 py-2 text-right font-semibold">Revenue</th>
+                              <th className="px-3 py-2 text-right font-semibold">OP Income</th>
+                              <th className="px-3 py-2 text-right font-semibold">OP Margin</th>
+                              <th className="px-3 py-2 text-right font-semibold">Volume</th>
+                              <th className="px-3 py-2 text-right font-semibold">Rev/Unit</th>
+                              <th className="px-3 py-2 text-right font-semibold">OP/Unit</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {result.segments.map((seg, i) => (
+                              <tr key={i} className="border-b border-slate-100 hover:bg-slate-50/50">
+                                <td className="px-3 py-2 font-medium">{seg.segmentName}</td>
+                                <td className="px-3 py-2 text-right tabular-nums">{fmt(seg.revenue)}</td>
+                                <td className="px-3 py-2 text-right tabular-nums">{fmt(seg.operatingIncome)}</td>
+                                <td className={cn("px-3 py-2 text-right tabular-nums font-semibold", (seg.operatingMargin ?? 0) >= 0 ? "text-emerald-600" : "text-red-500")}>
+                                  {fmtPct(seg.operatingMargin)}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums text-slate-500">
+                                  {seg.volumeUnits != null ? `${fmtNum(seg.volumeUnits)} ${seg.volumeUnitType ?? ""}` : "—"}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums text-slate-500">
+                                  {seg.revenuePerUnit != null ? `$${seg.revenuePerUnit.toFixed(0)}` : "—"}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums text-slate-500">
+                                  {seg.operatingIncomePerUnit != null ? `$${seg.operatingIncomePerUnit.toFixed(0)}` : "—"}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </Section>
+                  </>
+                );
+              })()
+            ) : (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
+                Segment data is not available for this filing.
+              </div>
             )}
           </div>
         )}
@@ -507,17 +562,63 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
           const ebitda = inc.ebitda ?? 0;
           const netIncome = inc.netIncome ?? 0;
 
-          const bridgeData = [
-            { name: "Revenue", base: 0, amt: revenue, total: revenue, subtotal: true },
-            { name: "COGS", base: revenue, amt: grossProfit - revenue, total: grossProfit, subtotal: false },
-            { name: "Gross Profit", base: grossProfit, amt: 0, total: grossProfit, subtotal: true },
-            { name: "OpEx", base: grossProfit, amt: operatingIncome - grossProfit, total: operatingIncome, subtotal: false },
-            { name: "Operating Income", base: operatingIncome, amt: 0, total: operatingIncome, subtotal: true },
-            { name: "D&A", base: operatingIncome, amt: ebitda - operatingIncome, total: ebitda, subtotal: false },
-            { name: "EBITDA", base: ebitda, amt: 0, total: ebitda, subtotal: true },
-            { name: "Interest, tax & other", base: ebitda, amt: netIncome - ebitda, total: netIncome, subtotal: false },
-            { name: "Net Income", base: 0, amt: netIncome, total: netIncome, subtotal: true },
-          ];
+          const costOfRevenue = inc.costOfRevenue ?? (revenue - grossProfit);
+          const sgaAndOpex = grossProfit - operatingIncome;
+          const daAddback = ebitda - operatingIncome;
+          const interestTaxOther = ebitda - netIncome;
+          const bridgeData: {
+            name: string;
+            base: number;
+            amt: number;
+            total: number;
+            subtotal: boolean;
+            isNegative: boolean;
+          }[] = [];
+          let wfRunning = 0;
+
+          const pushUp = (name: string, amt: number, fromZero = false) => {
+            if (amt === 0) return;
+            bridgeData.push({
+              name,
+              base: fromZero ? 0 : wfRunning,
+              amt: fromZero ? wfRunning + amt : amt,
+              total: wfRunning + amt,
+              subtotal: fromZero,
+              isNegative: false,
+            });
+            wfRunning += amt;
+          };
+
+          const pushDown = (name: string, amt: number) => {
+            if (amt === 0) return;
+            const absAmt = Math.abs(amt);
+            bridgeData.push({
+              name,
+              base: wfRunning - absAmt,
+              amt: absAmt,
+              total: wfRunning - absAmt,
+              subtotal: false,
+              isNegative: true,
+            });
+            wfRunning -= absAmt;
+          };
+
+          pushUp("Revenue", revenue, true);
+          if (costOfRevenue > 0) pushDown("Cost of Revenue", costOfRevenue);
+          if (grossProfit > 0) pushUp("Gross Profit", grossProfit);
+          if (sgaAndOpex > 0) pushDown("OpEx", sgaAndOpex);
+          if (operatingIncome > 0) pushUp("Operating Income", operatingIncome);
+          if (daAddback > 0) pushUp("D&A", daAddback);
+          if (ebitda > 0) pushUp("EBITDA", ebitda);
+          if (interestTaxOther > 0) pushDown("Interest & Tax", interestTaxOther);
+          bridgeData.push({
+            name: "Net Income",
+            base: 0,
+            amt: Math.max(wfRunning, 0),
+            total: wfRunning,
+            subtotal: true,
+            isNegative: wfRunning < 0,
+          });
 
           return (
             <div className="space-y-4">
@@ -526,29 +627,12 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                 <IncomeStatementTable inc={inc} onRowClick={onTraceMetric ? onMetricTableRowClick : undefined} />
               </Section>
 
-              {/* SG&A / R&D / D&A Breakdown */}
-              <Section title="Operating Expense Breakdown">
-                <MetricTable
-                  onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
-                  {...metricTableTraceProps}
-                  rows={[
-                    { label: "SG&A Expense", value: fmt(inc.sgaExpense), sub: inc.revenue && inc.sgaExpense ? `${((inc.sgaExpense / inc.revenue) * 100).toFixed(1)}% of revenue` : undefined, traceable: true },
-                    { label: "R&D Expense", value: fmt(inc.rdExpense), sub: inc.revenue && inc.rdExpense ? `${((inc.rdExpense / inc.revenue) * 100).toFixed(1)}% of revenue` : undefined, traceable: true },
-                    { label: "Depreciation", value: fmt(inc.depreciation), traceable: true },
-                    { label: "Amortization", value: fmt(inc.amortization), traceable: true },
-                    { label: "D&A Total", value: fmt(inc.depreciation != null || inc.amortization != null ? (inc.depreciation ?? 0) + (inc.amortization ?? 0) : null), bold: true, traceable: true },
-                    { label: "Interest Expense", value: fmt(inc.interestExpense), traceable: true },
-                    { label: "Income Tax", value: fmt(inc.incomeTax), traceable: true },
-                  ]}
-                />
-              </Section>
-
               <Section title="Profit Waterfall ($M)">
                 <div className="mx-auto h-60 w-full max-w-4xl">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={bridgeData} margin={{ left: 12, right: 12, top: 8, bottom: 8 }}>
-                      <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#e2e8f0" />
-                      <ReferenceLine y={0} stroke="#94a3b8" />
+                      <CartesianGrid vertical={false} strokeDasharray="3 3" stroke={COLORS.grid} />
+                      <ReferenceLine y={0} stroke={COLORS.slate} />
                       <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} />
                       <YAxis tick={{ fontSize: 10 }} />
                       <Tooltip
@@ -572,17 +656,16 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                         contentStyle={tooltipStyle}
                       />
                       <Bar dataKey="base" stackId="waterfall" fill="transparent" stroke="transparent" isAnimationActive={false} />
-                      <Bar dataKey="amt" stackId="waterfall" radius={[4, 4, 0, 0]} minPointSize={4}>
+                      <Bar dataKey="amt" stackId="waterfall" radius={[4, 4, 0, 0]}>
                         {bridgeData.map((d, i) => (
                           <Cell
                             key={i}
                             fill={
-                              d.name === "Revenue" ||
-                              d.name === "Net Income"
-                                ? COLORS.emerald
-                                : d.amt >= 0
-                                  ? COLORS.blue
-                                  : COLORS.red
+                              d.name === "Revenue" || d.name === "Net Income"
+                                ? "#46a71c"
+                                : d.isNegative
+                                  ? COLORS.red
+                                  : COLORS.primary
                             }
                           />
                         ))}
@@ -590,6 +673,25 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
+              </Section>
+
+              <QoqYoyComparison ticker={result.meta.ticker ?? "UNKNOWN"} />
+
+              {/* SG&A / R&D / D&A Breakdown */}
+              <Section title="Operating Expense Breakdown">
+                <MetricTable
+                  onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
+                  {...metricTableTraceProps}
+                  rows={[
+                    { label: "SG&A Expense", value: fmt(inc.sgaExpense), sub: inc.revenue && inc.sgaExpense ? `${((inc.sgaExpense / inc.revenue) * 100).toFixed(1)}% of revenue` : undefined, traceable: true },
+                    { label: "R&D Expense", value: fmt(inc.rdExpense), sub: inc.revenue && inc.rdExpense ? `${((inc.rdExpense / inc.revenue) * 100).toFixed(1)}% of revenue` : undefined, traceable: true },
+                    { label: "Depreciation", value: fmt(inc.depreciation), traceable: true },
+                    { label: "Amortization", value: fmt(inc.amortization), traceable: true },
+                    { label: "D&A Total", value: fmt(inc.depreciation != null || inc.amortization != null ? (inc.depreciation ?? 0) + (inc.amortization ?? 0) : null), bold: true, traceable: true },
+                    { label: "Interest Expense", value: fmt(inc.interestExpense), traceable: true },
+                    { label: "Income Tax", value: fmt(inc.incomeTax), traceable: true },
+                  ]}
+                />
               </Section>
 
               {/* EPS */}
@@ -601,6 +703,15 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                   </div>
                 </Section>
               )}
+
+              <Section title="Extracted Line Items (Income & Cash Flow)" defaultOpen={false}>
+                <LineItemTable
+                  title="Income & Cash Flow"
+                  items={cfItems}
+                  onRowClick={onTraceMetric ? traceLineItemRow : undefined}
+                />
+              </Section>
+
             </div>
           );
         })()}
@@ -613,14 +724,25 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
             { name: "ST Debt", value: debt.shortTermDebt },
           ].filter(d => d.value > 0);
 
-          const topBs = [...bs.items]
-            .sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
-            .slice(0, 10)
-            .map(i => ({ name: i.label.length > 20 ? `${i.label.slice(0, 20)}...` : i.label, value: Math.abs(i.value) }));
-
           const ar = lineValueByTags(cfItems, bs.items, "AccountsReceivableNetCurrent", "AccountsReceivableNet");
           const inv = lineValueByTags(cfItems, bs.items, "InventoryNet");
           const ap = lineValueByTags(cfItems, bs.items, "AccountsPayableCurrent", "AccountsPayable");
+          const apAbs = ap != null ? Math.abs(ap) : 0;
+          const arAbs = ar != null ? Math.abs(ar) : 0;
+          const invAbs = inv != null ? Math.abs(inv) : 0;
+          const wcComposition = [
+            {
+              name: "Working Capital",
+              apNeg: apAbs > 0 ? -apAbs : 0,
+              ar: arAbs,
+              inv: invAbs,
+            },
+          ];
+          const hasWorkingCapitalComposition = wcComposition.some((row) => row.apNeg !== 0 || row.ar !== 0 || row.inv !== 0);
+          const allVals = [apAbs > 0 ? -apAbs : 0, arAbs + invAbs];
+          const wcMin = Math.min(...allVals, 0);
+          const wcMax = Math.max(...allVals, 0);
+          const wcPadding = Math.max((wcMax - wcMin) * 0.15, 500);
 
           return (
             <div className="space-y-4">
@@ -695,44 +817,97 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                 </div>
               </Section>
 
-              {/* Top Items Chart */}
-              {topBs.length > 0 && (
-                <Section title="Largest Balance Sheet Items">
-                  <div className="h-52">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={topBs} layout="vertical" margin={{ left: 4, right: 8 }}>
-                        <XAxis type="number" hide />
-                        <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 10 }} />
-                        <Tooltip formatter={(v) => `$${Number(v).toLocaleString()}M`} contentStyle={tooltipStyle} />
-                        <Bar dataKey="value" fill={COLORS.primary} radius={[0, 4, 4, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
+              {/* Working capital composition */}
+              {hasWorkingCapitalComposition && (
+                <Section title="WORKING CAPITAL COMPOSITION">
+                  <p className="mb-3 text-xs text-slate-500">All values in millions (USD)</p>
+                  <div className="rounded-2xl border border-slate-200 bg-[#f7f4f1] p-4 shadow-subtle">
+                    <div className="mx-auto h-44 w-full max-w-4xl">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={wcComposition} layout="vertical" margin={{ left: 12, right: 12, top: 6, bottom: 6 }} stackOffset="sign">
+                          <CartesianGrid vertical={false} strokeDasharray="3 3" stroke={COLORS.grid} />
+                          <XAxis
+                            type="number"
+                            domain={[wcMin - wcPadding, wcMax + wcPadding]}
+                            tick={{ fontSize: 10, fill: COLORS.slate }}
+                            tickFormatter={(v) => `$${Math.abs(Math.round(Number(v))).toLocaleString()}M`}
+                          />
+                          <YAxis type="category" dataKey="name" hide />
+                          <ReferenceLine x={0} stroke={COLORS.slate} strokeWidth={1.5} />
+                          <Tooltip
+                            formatter={(value, name) => {
+                              const v = Number(value);
+                              const label = name === "apNeg"
+                                ? "Accounts Payable (-)"
+                                : name === "ar"
+                                  ? "Accounts Receivable (+)"
+                                  : "Inventories (+)";
+                              const signFmt = `${v < 0 ? "-" : ""}$${Math.abs(v).toLocaleString()}M`;
+                              return [signFmt, label];
+                            }}
+                            contentStyle={tooltipStyle}
+                          />
+                          <Bar dataKey="apNeg" stackId="wc" name="apNeg" fill="#9aa0a6" radius={[4, 0, 0, 4]}>
+                            <LabelList
+                              dataKey="apNeg"
+                              position="inside"
+                              formatter={(v) => {
+                                const num = Number(v ?? 0);
+                                return num ? `-$${Math.abs(num).toLocaleString()}M` : "";
+                              }}
+                              fill="#ffffff"
+                              style={{ fontSize: 10, fontWeight: 700 }}
+                            />
+                          </Bar>
+                          <Bar dataKey="ar" stackId="wc" name="Accounts Receivable (+)" fill="#8f4a2b">
+                            <LabelList
+                              dataKey="ar"
+                              position="inside"
+                              formatter={(v) => {
+                                const num = Number(v ?? 0);
+                                return num ? `$${Math.abs(num).toLocaleString()}M` : "";
+                              }}
+                              fill="#ffffff"
+                              style={{ fontSize: 10, fontWeight: 700 }}
+                            />
+                          </Bar>
+                          <Bar dataKey="inv" stackId="wc" name="Inventories (+)" fill="#cc521d" radius={[0, 4, 4, 0]}>
+                            <LabelList
+                              dataKey="inv"
+                              position="insideRight"
+                              formatter={(v) => {
+                                const num = Number(v ?? 0);
+                                return num ? `$${Math.abs(num).toLocaleString()}M` : "";
+                              }}
+                              fill="#ffffff"
+                              style={{ fontSize: 10, fontWeight: 700 }}
+                            />
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center justify-center gap-4 text-[11px] text-slate-600">
+                      <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#9aa0a6]" />Accounts Payable (-)</span>
+                      <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#9f4017]" />Accounts Receivable (+)</span>
+                      <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#cc521d]" />Inventories (+)</span>
+                    </div>
                   </div>
                 </Section>
               )}
+
+              <Section title="Extracted Line Items (Balance Sheet)" defaultOpen={false}>
+                <LineItemTable
+                  title="Balance Sheet"
+                  items={bs.items}
+                  onRowClick={onTraceMetric ? traceLineItemRow : undefined}
+                />
+              </Section>
             </div>
           );
         })()}
 
         {/* ─── CASH FLOW ─── */}
         {activeTab === "cashflow" && (() => {
-          const operatingCf = cf.operatingCashFlow ?? 0;
-          const capexOutflow = cf.capitalExpenditures != null ? -Math.abs(cf.capitalExpenditures) : 0;
-          const freeCashFlow = cf.freeCashFlow ?? (operatingCf + capexOutflow);
-          const dividendsOutflow = cf.dividendsPaid != null ? -Math.abs(cf.dividendsPaid) : 0;
-          const netIncomeValue = cf.netIncome ?? 0;
-          const ocfEnd = operatingCf;
-          const capexEnd = ocfEnd + capexOutflow;
-          const fcfStep = freeCashFlow - capexEnd;
-
-          const cfBridge = [
-            { name: "OCF", base: 0, amt: operatingCf, total: ocfEnd, subtotal: true },
-            { name: "CapEx", base: ocfEnd, amt: capexOutflow, total: capexEnd, subtotal: false },
-            { name: "FCF", base: capexEnd, amt: fcfStep, total: freeCashFlow, subtotal: false },
-            { name: "Dividends", base: freeCashFlow, amt: dividendsOutflow, total: freeCashFlow + dividendsOutflow, subtotal: false },
-            { name: "Net Income", base: 0, amt: netIncomeValue, total: netIncomeValue, subtotal: true },
-          ];
-
           const buyback = cf.shareRepurchases ?? cfItems.find(i => i.tag === "PaymentsForRepurchaseOfCommonStock")?.value ?? null;
           const debtIssuance = cfItems.find(i => i.tag === "ProceedsFromIssuanceOfLongTermDebt")?.value ?? null;
           const debtRepay =
@@ -764,6 +939,28 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
             finCF = hasDerivedFinPart ? Math.round(derivedFin) : null;
           }
           const invCF = cf.investingCashFlow ?? cfItems.find(i => i.tag === "NetCashProvidedByInvestingActivities")?.value ?? null;
+          const rev = inc.revenue;
+          const cogs = inc.costOfRevenue;
+          const ar = lineValueByTags(cfItems, bs.items, "AccountsReceivableNetCurrent", "AccountsReceivableNet");
+          const inv = lineValueByTags(cfItems, bs.items, "InventoryNet");
+          const ap = lineValueByTags(cfItems, bs.items, "AccountsPayableCurrent", "AccountsPayable");
+          const dso = ar != null && rev ? Math.round((ar / rev) * 365) : null;
+          const dio = inv != null && cogs ? Math.round((inv / cogs) * 365) : null;
+          const dpo = ap != null && cogs ? Math.round((ap / cogs) * 365) : null;
+          const ccc = dso != null && dio != null && dpo != null
+            ? { dso, dio, dpo, cycle: dso + dio - dpo }
+            : { dso, dio, dpo, cycle: null as number | null };
+
+          const sbc = cfItems.find(i => i.tag === "ShareBasedCompensation")?.value ?? null;
+          const ocf = cf.operatingCashFlow;
+          const capex = cf.capitalExpenditures;
+          const reinvestmentRate = ocf && capex ? Math.round((Math.abs(capex) / ocf) * 1000) / 10 : null;
+          const totalReturn = (cf.dividendsPaid != null || buyback != null)
+            ? (Math.abs(cf.dividendsPaid ?? 0) + Math.abs(buyback ?? 0))
+            : null;
+          const returnYieldOnEquity = totalReturn && bs.totalEquity > 0
+            ? Math.round((totalReturn / bs.totalEquity) * 1000) / 10
+            : null;
 
           return (
             <div className="space-y-4">
@@ -776,56 +973,7 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                 <RatioCard label="FCF Conversion" value={fmtPct(ratios.fcfConversion)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("FCF Conversion") : undefined} trace={traceByLabel?.["FCF Conversion"]} labelMap={traceLabelMap} />
               </div>
 
-              <div className="grid gap-4 lg:grid-cols-2">
-                {/* CF Bridge */}
-                <Section title="Cash Flow Bridge ($M)">
-                  <div className="h-52">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={cfBridge} margin={{ left: 12, right: 12, top: 8, bottom: 8 }}>
-                        <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#e2e8f0" />
-                        <ReferenceLine y={0} stroke="#94a3b8" />
-                        <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} />
-                        <YAxis tick={{ fontSize: 10 }} />
-                        <Tooltip
-                          formatter={(v, _name, entry) => {
-                            const value = Number(v);
-                            const payload = entry?.payload as { subtotal?: boolean; total?: number } | undefined;
-                            if (payload?.subtotal) {
-                              return [`$${Math.abs(payload.total ?? value).toLocaleString()}M`, "Total"];
-                            }
-                            return [
-                              `${value < 0 ? "($" : "$"}${Math.abs(value).toLocaleString()}M${value < 0 ? ")" : ""}`,
-                              "Change",
-                            ];
-                          }}
-                          labelFormatter={(_label, payload) => {
-                            const point = payload?.[0]?.payload as { name?: string; total?: number } | undefined;
-                            return point?.name
-                              ? `${point.name}${point.total != null ? ` · Total $${Math.abs(point.total).toLocaleString()}M` : ""}`
-                              : "";
-                          }}
-                          contentStyle={tooltipStyle}
-                        />
-                        <Bar dataKey="base" stackId="cash-waterfall" fill="transparent" stroke="transparent" isAnimationActive={false} />
-                        <Bar dataKey="amt" stackId="cash-waterfall" radius={[4, 4, 0, 0]} minPointSize={4}>
-                          {cfBridge.map((d, i) => (
-                            <Cell
-                              key={i}
-                              fill={
-                                d.name === "OCF" || d.name === "Net Income"
-                                  ? COLORS.emerald
-                                  : d.amt >= 0
-                                    ? COLORS.blue
-                                    : COLORS.red
-                              }
-                            />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </Section>
-
+              <div className="grid gap-4">
                 {/* Cash Flow Detail */}
                 <Section title="Cash Flow Statement">
                   <MetricTable
@@ -855,12 +1003,77 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                   <RatioCard label="FCF Coverage" value={div.fcfCoverageYears != null ? `${div.fcfCoverageYears}x` : "—"} />
                 </div>
               </Section>
+
+              {/* Cash Conversion Cycle */}
+              {ccc.cycle != null && (
+                <Section title="Cash Conversion Cycle">
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap items-center justify-center gap-2 text-center">
+                      <DupontFactor label="DSO" value={ccc.dso != null ? `${ccc.dso} days` : "—"} sub="Days Sales Outstanding" />
+                      <span className="text-lg font-bold text-slate-400">+</span>
+                      <DupontFactor label="DIO" value={ccc.dio != null ? `${ccc.dio} days` : "—"} sub="Days Inventory Outstanding" />
+                      <span className="text-lg font-bold text-slate-400">−</span>
+                      <DupontFactor label="DPO" value={ccc.dpo != null ? `${ccc.dpo} days` : "—"} sub="Days Payable Outstanding" />
+                      <span className="text-lg font-bold text-slate-400">=</span>
+                      <DupontFactor label="CCC" value={`${ccc.cycle} days`} highlight sub="Cash Conversion Cycle" />
+                    </div>
+                    <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-3 text-xs text-slate-600">
+                      {ccc.cycle < 0 ? (
+                        <p><span className="font-semibold text-emerald-600">Negative CCC ({ccc.cycle} days):</span> The company gets paid before paying suppliers — excellent working capital efficiency. Common in companies with strong bargaining power.</p>
+                      ) : ccc.cycle < 30 ? (
+                        <p><span className="font-semibold text-emerald-600">Short CCC ({ccc.cycle} days):</span> Efficient cash management. Capital is tied up for less than a month.</p>
+                      ) : ccc.cycle < 90 ? (
+                        <p><span className="font-semibold text-amber-600">Moderate CCC ({ccc.cycle} days):</span> Typical for manufacturing/distribution. Look for trends over time.</p>
+                      ) : (
+                        <p><span className="font-semibold text-red-600">Long CCC ({ccc.cycle} days):</span> Significant capital tied up in working capital. May indicate inventory buildup or slow collections.</p>
+                      )}
+                    </div>
+                  </div>
+                </Section>
+              )}
+
+              {/* Capital Allocation */}
+              <Section title="Capital Allocation">
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <MetricTable
+                    onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
+                    {...metricTableTraceProps}
+                    rows={[
+                      { label: "Operating Cash Flow", value: fmt(cf.operatingCashFlow), bold: true, traceable: true },
+                      { label: "CapEx (Reinvestment)", value: fmt(cf.capitalExpenditures != null ? -Math.abs(cf.capitalExpenditures) : null), dim: true, traceable: true },
+                      { label: "Reinvestment Rate", value: reinvestmentRate != null ? `${reinvestmentRate}%` : "—", sub: "CapEx / OCF" },
+                      { label: "Dividends Paid", value: fmt(cf.dividendsPaid != null ? -Math.abs(cf.dividendsPaid) : null), dim: true, traceable: true },
+                      { label: "Share Repurchases", value: fmt(buyback != null ? -Math.abs(buyback) : null), dim: true, traceable: true },
+                      { label: "Total Shareholder Returns", value: fmt(totalReturn != null ? -Math.abs(totalReturn) : null), bold: true, traceable: true },
+                      { label: "Return Yield on Equity", value: returnYieldOnEquity != null ? `${Math.abs(returnYieldOnEquity).toFixed(1)}%` : "—" },
+                      { label: "Stock-Based Comp", value: fmt(sbc), traceable: true },
+                    ]}
+                  />
+                  <div className="rounded-lg border border-slate-100 p-3">
+                    <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Allocation Insight</p>
+                    <div className="space-y-1.5 text-xs text-slate-600">
+                      {reinvestmentRate != null && reinvestmentRate > 50 && (
+                        <p>High reinvestment rate ({reinvestmentRate}%) — company is investing heavily in growth.</p>
+                      )}
+                      {reinvestmentRate != null && reinvestmentRate < 20 && (
+                        <p>Low reinvestment rate ({reinvestmentRate}%) — mature business returning capital to shareholders.</p>
+                      )}
+                      {cf.freeCashFlow != null && cf.freeCashFlow > 0 && cf.dividendsPaid != null && (
+                        <p>FCF after dividends: <span className="font-semibold">${(cf.freeCashFlow - Math.abs(cf.dividendsPaid)).toLocaleString()}M</span> — {cf.freeCashFlow > Math.abs(cf.dividendsPaid) ? "dividend is well-covered by FCF" : "FCF does not fully cover dividends"}.</p>
+                      )}
+                      {sbc != null && inc.netIncome != null && inc.netIncome > 0 && (
+                        <p>SBC as % of Net Income: <span className="font-semibold">{((sbc / inc.netIncome) * 100).toFixed(1)}%</span> — {sbc / inc.netIncome > 0.15 ? "elevated dilution risk" : "manageable level"}.</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </Section>
             </div>
           );
         })()}
 
-        {/* ─── INSIGHTS ─── */}
-        {activeTab === "insights" && (
+        {/* ─── ANALYSIS ─── */}
+        {activeTab === "analysis" && (
           <InsightsTab
             result={result}
             onMetricTableRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
@@ -868,199 +1081,6 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
             traceByLabel={onTraceMetric ? traceByLabel : undefined}
           />
         )}
-
-        {/* ─── DEEP DIVE ─── */}
-        {activeTab === "deep-dive" && (() => {
-          const footnotes = result.footnotes ?? [];
-          const adjustedMetrics = result.adjustedMetrics ?? [];
-          const passedCount = validation.checks.filter(c => c.passed).length;
-
-          return (
-            <div className="space-y-4">
-              {/* Data Quality */}
-              <Section title="Data Quality">
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  <div className="flex items-center gap-3 rounded-lg bg-slate-50 p-3">
-                    <CheckCircle2 className={cn("h-5 w-5", passedCount === validation.checks.length ? "text-emerald-500" : "text-amber-500")} />
-                    <div>
-                      <p className="text-sm font-bold">{passedCount}/{validation.checks.length} checks passed</p>
-                      <p className="text-[11px] text-slate-500">Data integrity</p>
-                    </div>
-                  </div>
-                  {reconcile && (
-                    <div className="flex items-center gap-3 rounded-lg bg-slate-50 p-3">
-                      {reconcile.status === "ok" ? <CheckCircle2 className="h-5 w-5 text-emerald-500" /> : <ShieldAlert className="h-5 w-5 text-amber-500" />}
-                      <div>
-                        <p className="text-sm font-bold">A = L+E: {reconcile.status.toUpperCase()}</p>
-                        <p className="text-[11px] text-slate-500">Gap: {reconcile.gapPct}% (${Math.abs(reconcile.gapM).toLocaleString()}M)</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                  {validation.checks.map((c, i) => (
-                    <div key={i} className="flex items-start gap-2 rounded-lg border border-slate-100 p-2.5">
-                      {c.passed ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 text-emerald-500" /> : <XCircle className="mt-0.5 h-3.5 w-3.5 text-red-500" />}
-                      <div>
-                        <p className="text-[11px] font-semibold">{c.name}</p>
-                        <p className="text-[10px] text-slate-500 line-clamp-2">{c.note}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </Section>
-
-              {/* All Ratios */}
-              <Section title="Complete Ratio Analysis">
-                <div className="grid gap-4 lg:grid-cols-3">
-                  <div>
-                    <h5 className="mb-2 text-[11px] font-bold uppercase text-slate-400">Profitability</h5>
-                    <MetricTable
-                      compact
-                      onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
-                      {...metricTableTraceProps}
-                      derivationOpenKey={deepDiveDerivationKey}
-                      onDerivationOpenChange={setDeepDiveDerivationKey}
-                      derivationScope="dd-p"
-                      rows={[
-                        { label: "Gross Margin", value: fmtPct(ratios.grossMargin), traceable: true },
-                        { label: "Operating Margin", value: fmtPct(ratios.operatingMargin), traceable: true },
-                        { label: "EBITDA Margin", value: fmtPct(ratios.ebitdaMargin), traceable: true },
-                        { label: "Net Margin", value: fmtPct(ratios.netMargin), traceable: true },
-                        { label: "ROE", value: fmtPct(ratios.returnOnEquity), traceable: true },
-                        { label: "ROA", value: fmtPct(ratios.returnOnAssets), traceable: true },
-                        { label: "ROIC", value: fmtPct(ratios.returnOnInvestedCapital), traceable: true },
-                      ]}
-                    />
-                  </div>
-                  <div>
-                    <h5 className="mb-2 text-[11px] font-bold uppercase text-slate-400">Leverage & Liquidity</h5>
-                    <MetricTable
-                      compact
-                      onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
-                      {...metricTableTraceProps}
-                      derivationOpenKey={deepDiveDerivationKey}
-                      onDerivationOpenChange={setDeepDiveDerivationKey}
-                      derivationScope="dd-l"
-                      rows={[
-                        { label: "Debt / Equity", value: fmtX(ratios.debtToEquity), traceable: true },
-                        { label: "Debt / Capital", value: fmtPct(ratios.debtToCapital), traceable: true },
-                        { label: "Net Debt / EBITDA", value: fmtX(ratios.netDebtToEbitda), traceable: true },
-                        { label: "Interest Coverage", value: fmtX(ratios.interestCoverage), traceable: true },
-                        { label: "Current Ratio", value: fmtX(ratios.currentRatio), traceable: true },
-                        { label: "Working Capital", value: fmt(ratios.workingCapital), traceable: true },
-                      ]}
-                    />
-                  </div>
-                  <div>
-                    <h5 className="mb-2 text-[11px] font-bold uppercase text-slate-400">Efficiency & Cash</h5>
-                    <MetricTable
-                      compact
-                      onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
-                      {...metricTableTraceProps}
-                      derivationOpenKey={deepDiveDerivationKey}
-                      onDerivationOpenChange={setDeepDiveDerivationKey}
-                      derivationScope="dd-e"
-                      rows={[
-                        { label: "Asset Turnover", value: fmtX(ratios.assetTurnover), traceable: true },
-                        { label: "Inventory Turnover", value: fmtX(ratios.inventoryTurnover), traceable: true },
-                        { label: "Receivables Turnover", value: fmtX(ratios.receivablesTurnover), traceable: true },
-                        { label: "FCF Yield", value: fmtPct(ratios.fcfYield), traceable: true },
-                        { label: "FCF Conversion", value: fmtPct(ratios.fcfConversion), traceable: true },
-                      ]}
-                    />
-                  </div>
-                </div>
-              </Section>
-
-              {/* Footnotes */}
-              {footnotes.length > 0 && (
-                <Section title={`Notable Footnotes (${footnotes.length})`}>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {footnotes.map((fn, i) => (
-                      <div key={i} className="rounded-lg border border-slate-100 p-3">
-                        <div className="mb-1 flex items-start justify-between gap-2">
-                          <p className="text-xs font-bold text-slate-800">{fn.title}</p>
-                          <span className={cn(
-                            "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase",
-                            fn.significance === "high" ? "bg-red-100 text-red-700" : fn.significance === "medium" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"
-                          )}>
-                            {fn.significance}
-                          </span>
-                        </div>
-                        <p className="text-[11px] leading-relaxed text-slate-600">{fn.summary}</p>
-                        <span className="mt-1.5 inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">{fn.type}</span>
-                      </div>
-                    ))}
-                  </div>
-                </Section>
-              )}
-
-              {/* Adjusted Metrics */}
-              {adjustedMetrics.length > 0 && (
-                <Section title={`Non-GAAP Adjusted Metrics (${adjustedMetrics.length})`}>
-                  <div className="space-y-3">
-                    {adjustedMetrics.map((am, i) => {
-                      const totalAdj = am.adjustments.reduce((s, a) => s + a.value, 0);
-                      const unit = am.unit === "per-share" ? "" : "M";
-                      return (
-                        <div key={i} className="rounded-lg border border-slate-100 p-3">
-                          <div className="mb-2 flex items-center justify-between">
-                            <div>
-                              <p className="text-xs font-bold text-slate-800">{am.name}</p>
-                              <p className="text-[10px] text-slate-400">{am.period}</p>
-                            </div>
-                            <p className="text-base font-bold tabular-nums text-emerald-600">
-                              {am.adjustedValue != null ? `$${am.adjustedValue.toLocaleString()}${unit}` : "—"}
-                            </p>
-                          </div>
-                          <table className="w-full text-xs">
-                            <tbody>
-                              <tr className="border-b border-slate-100">
-                                <td className="py-1 text-slate-500">GAAP</td>
-                                <td className="py-1 text-right tabular-nums font-semibold">{am.gaapValue != null ? `$${am.gaapValue.toLocaleString()}${unit}` : "—"}</td>
-                              </tr>
-                              {am.adjustments.map((adj, j) => (
-                                <tr key={j} className="border-b border-slate-50">
-                                  <td className="py-1 pl-3 text-slate-400">+ {adj.label}</td>
-                                  <td className={cn("py-1 text-right tabular-nums", adj.value >= 0 ? "text-emerald-600" : "text-red-500")}>
-                                    {adj.value >= 0 ? "+" : ""}${adj.value.toLocaleString()}{unit}
-                                  </td>
-                                </tr>
-                              ))}
-                              <tr className="border-t-2 border-slate-200">
-                                <td className="py-1 font-bold">Total adjustments</td>
-                                <td className={cn("py-1 text-right tabular-nums font-bold", totalAdj >= 0 ? "text-emerald-600" : "text-red-500")}>
-                                  {totalAdj >= 0 ? "+" : ""}${totalAdj.toLocaleString()}{unit}
-                                </td>
-                              </tr>
-                            </tbody>
-                          </table>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </Section>
-              )}
-
-              {/* Raw Line Items */}
-              <Section title="Extracted Line Items">
-                <div className="grid gap-4 lg:grid-cols-2">
-                  <LineItemTable
-                    title="Balance Sheet"
-                    items={bs.items}
-                    onRowClick={onTraceMetric ? traceLineItemRow : undefined}
-                  />
-                  <LineItemTable
-                    title="Income & Cash Flow"
-                    items={cfItems}
-                    onRowClick={onTraceMetric ? traceLineItemRow : undefined}
-                  />
-                </div>
-              </Section>
-            </div>
-          );
-        })()}
       </div>
     </div>
   );
@@ -1121,7 +1141,16 @@ function KpiCell({
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  children,
+  defaultOpen = true,
+}: {
+  title: string;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+}) {
+  const [collapsed, setCollapsed] = useState(!defaultOpen);
   const [expanded, setExpanded] = useState(false);
 
   if (expanded) {
@@ -1146,15 +1175,24 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   return (
     <div className="rounded-xl border border-slate-200/80 bg-white p-4 group">
       <div className="flex items-center justify-between mb-3">
-        <h4 className="text-xs font-bold uppercase tracking-wide text-slate-500">{title}</h4>
         <button
-          onClick={() => setExpanded(true)}
-          className="opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-semibold text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+          type="button"
+          onClick={() => setCollapsed((v) => !v)}
+          className="inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wide text-slate-500"
         >
-          <ArrowUpRight className="h-3 w-3" /> Expand
+          {collapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+          {title}
         </button>
+        {!collapsed && (
+          <button
+            onClick={() => setExpanded(true)}
+            className="opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-semibold text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+          >
+            <ArrowUpRight className="h-3 w-3" /> Expand
+          </button>
+        )}
       </div>
-      {children}
+      {!collapsed && children}
     </div>
   );
 }
@@ -1360,6 +1398,172 @@ function IncomeStatementTable({ inc, onRowClick }: { inc: IncomeStatement; onRow
 
 /* ──────────────────── Insights Tab ──────────────────── */
 
+function QoqYoyComparison({ ticker }: { ticker: string }) {
+  const [allRows, setAllRows] = useState<DataSourceRow[]>([]);
+
+  useEffect(() => {
+    if (!ticker || ticker === "UNKNOWN") return;
+    fetch("/api/data-source")
+      .then(r => r.json())
+      .then((d: { rows?: DataSourceRow[] }) => setAllRows(d.rows ?? []))
+      .catch(() => {});
+  }, [ticker]);
+
+  const historyRows = useMemo(
+    () => allRows
+      .filter(r => r.ticker === ticker && r.periodEnd !== "TTM")
+      .sort((a, b) => a.periodEnd.localeCompare(b.periodEnd)),
+    [allRows, ticker],
+  );
+
+  return (
+    <>
+      {/* ── YoY Comparison (same quarter, prior year) ── */}
+      {historyRows.length >= 5 && (() => {
+        const curr = historyRows[historyRows.length - 1];
+        const currQ = curr.quarterLabel?.match(/Q(\d)/)?.[1];
+        let yago: DataSourceRow | null = null;
+        if (currQ) {
+          for (let i = historyRows.length - 2; i >= 0; i--) {
+            const q = historyRows[i].quarterLabel?.match(/Q(\d)/)?.[1];
+            if (q === currQ && historyRows[i].periodEnd !== curr.periodEnd) {
+              yago = historyRows[i];
+              break;
+            }
+          }
+        }
+        if (!yago && historyRows.length >= 5) {
+          yago = historyRows[historyRows.length - 5];
+        }
+        if (!yago) return null;
+
+        const yoy = (c: number | null, p: number | null) => {
+          if (c == null || p == null || p === 0) return null;
+          return Math.round(((c - p) / Math.abs(p)) * 1000) / 10;
+        };
+        const delta = (c: number | null, p: number | null) => {
+          if (c == null || p == null) return null;
+          return Math.round((c - p) * 10) / 10;
+        };
+
+        const metrics = [
+          { label: "Revenue", change: yoy(curr.revenue, yago.revenue), curr: curr.revenue, prev: yago.revenue, type: "pct" as const },
+          { label: "Gross Profit", change: yoy(curr.grossProfit, yago.grossProfit), curr: curr.grossProfit, prev: yago.grossProfit, type: "pct" as const },
+          { label: "OP Income", change: yoy(curr.operatingIncome, yago.operatingIncome), curr: curr.operatingIncome, prev: yago.operatingIncome, type: "pct" as const },
+          { label: "Net Income", change: yoy(curr.netIncome, yago.netIncome), curr: curr.netIncome, prev: yago.netIncome, type: "pct" as const },
+          { label: "Gross Margin", change: delta(curr.grossMargin, yago.grossMargin), curr: curr.grossMargin, prev: yago.grossMargin, type: "bps" as const },
+          { label: "OP Margin", change: delta(curr.operatingMargin, yago.operatingMargin), curr: curr.operatingMargin, prev: yago.operatingMargin, type: "bps" as const },
+          { label: "Net Margin", change: delta(curr.netMargin, yago.netMargin), curr: curr.netMargin, prev: yago.netMargin, type: "bps" as const },
+          { label: "D/E Ratio", change: delta(curr.debtToEquity, yago.debtToEquity), curr: curr.debtToEquity, prev: yago.debtToEquity, type: "ratio" as const },
+          { label: "FCF", change: yoy(curr.freeCashFlow, yago.freeCashFlow), curr: curr.freeCashFlow, prev: yago.freeCashFlow, type: "pct" as const },
+          { label: "EPS Diluted", change: yoy(curr.epsDiluted, yago.epsDiluted), curr: curr.epsDiluted, prev: yago.epsDiluted, type: "pct" as const },
+        ].filter(m => m.change != null);
+
+        if (metrics.length === 0) return null;
+
+        return (
+          <Section title={`YoY Comparison: ${yago.quarterLabel ?? yago.periodEnd} → ${curr.quarterLabel ?? curr.periodEnd}`}>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b-2 border-slate-200 text-slate-500">
+                    <th className="px-3 py-2 text-left font-semibold">Metric</th>
+                    <th className="px-3 py-2 text-right font-semibold">{yago.quarterLabel ?? yago.periodEnd}</th>
+                    <th className="px-3 py-2 text-right font-semibold">{curr.quarterLabel ?? curr.periodEnd}</th>
+                    <th className="px-3 py-2 text-right font-semibold">Change</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {metrics.map((m, i) => {
+                    const isPositive = m.type === "ratio"
+                      ? (m.change! < 0)
+                      : (m.change! > 0);
+                    const isNegative = m.type === "ratio"
+                      ? (m.change! > 0.2)
+                      : (m.change! < -5);
+                    const changeStr = m.type === "pct"
+                      ? `${m.change! > 0 ? "+" : ""}${m.change}%`
+                      : m.type === "bps"
+                        ? `${m.change! > 0 ? "+" : ""}${(m.change! * 100).toFixed(0)} bps`
+                        : `${m.change! > 0 ? "+" : ""}${m.change!.toFixed(2)}x`;
+                    const fmtVal = (v: number | null) =>
+                      m.type === "pct" ? fmt(v) :
+                        m.type === "bps" ? fmtPct(v) :
+                          fmtX(v);
+                    return (
+                      <tr key={i} className="border-b border-slate-100">
+                        <td className="px-3 py-2 font-medium text-slate-700">{m.label}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-slate-500">{fmtVal(m.prev)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums font-semibold">{fmtVal(m.curr)}</td>
+                        <td className={cn("px-3 py-2 text-right tabular-nums font-bold",
+                          isPositive ? "text-emerald-600" : isNegative ? "text-red-500" : "text-slate-600"
+                        )}>
+                          <span className="inline-flex items-center gap-0.5">
+                            {isPositive ? <ArrowUpRight className="h-3 w-3" /> :
+                              isNegative ? <ArrowDownRight className="h-3 w-3" /> :
+                                <Minus className="h-3 w-3" />}
+                            {changeStr}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Section>
+        );
+      })()}
+
+      {/* ── QoQ Momentum ── */}
+      {historyRows.length >= 2 && (() => {
+        const curr = historyRows[historyRows.length - 1];
+        const prev = historyRows[historyRows.length - 2];
+        const qoq = (c: number | null, p: number | null) => {
+          if (c == null || p == null || p === 0) return null;
+          return Math.round(((c - p) / Math.abs(p)) * 1000) / 10;
+        };
+        const metrics = [
+          { label: "Revenue", change: qoq(curr.revenue, prev.revenue), curr: curr.revenue, prev: prev.revenue },
+          { label: "Gross Profit", change: qoq(curr.grossProfit, prev.grossProfit), curr: curr.grossProfit, prev: prev.grossProfit },
+          { label: "Operating Income", change: qoq(curr.operatingIncome, prev.operatingIncome), curr: curr.operatingIncome, prev: prev.operatingIncome },
+          { label: "Net Income", change: qoq(curr.netIncome, prev.netIncome), curr: curr.netIncome, prev: prev.netIncome },
+          { label: "Operating CF", change: qoq(curr.operatingCashFlow, prev.operatingCashFlow), curr: curr.operatingCashFlow, prev: prev.operatingCashFlow },
+          { label: "FCF", change: qoq(curr.freeCashFlow, prev.freeCashFlow), curr: curr.freeCashFlow, prev: prev.freeCashFlow },
+        ].filter(m => m.change != null);
+
+        if (metrics.length === 0) return null;
+        return (
+          <Section title={`QoQ Momentum: ${prev.quarterLabel ?? prev.periodEnd} → ${curr.quarterLabel ?? curr.periodEnd}`}>
+            <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+              {metrics.map((m, i) => (
+                <div key={i} className={cn("rounded-lg border p-3 text-center",
+                  m.change! > 0 ? "border-emerald-200 bg-emerald-50/50" :
+                  m.change! < -10 ? "border-red-200 bg-red-50/50" :
+                  "border-slate-200 bg-white"
+                )}>
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{m.label}</p>
+                  <div className="flex items-center justify-center gap-1 mt-1">
+                    {m.change! > 0 ? <ArrowUpRight className="h-3.5 w-3.5 text-emerald-600" /> :
+                      m.change! < 0 ? <ArrowDownRight className="h-3.5 w-3.5 text-red-500" /> :
+                        <Minus className="h-3.5 w-3.5 text-slate-400" />}
+                    <span className={cn("text-lg font-black tabular-nums",
+                      m.change! > 0 ? "text-emerald-600" : m.change! < 0 ? "text-red-500" : "text-slate-600"
+                    )}>{m.change! > 0 ? "+" : ""}{m.change}%</span>
+                  </div>
+                  <p className="text-[9px] text-slate-400 tabular-nums mt-0.5">
+                    {fmt(m.prev)} → {fmt(m.curr)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </Section>
+        );
+      })()}
+    </>
+  );
+}
+
 function InsightsTab({
   result,
   onMetricTableRowClick,
@@ -1390,30 +1594,6 @@ function InsightsTab({
     allRows.filter(r => r.ticker === ticker && r.periodEnd !== "TTM").sort((a, b) => a.periodEnd.localeCompare(b.periodEnd)),
     [allRows, ticker]
   );
-
-  // ── Fetch segment history for trend charts
-  interface SegmentQuarter {
-    periodEnd: string;
-    quarterLabel: string;
-    segments: Array<{
-      segmentName: string;
-      revenue: number | null;
-      operatingIncome: number | null;
-      operatingMargin: number | null;
-      revenuePerUnit: number | null;
-      operatingIncomePerUnit: number | null;
-    }>;
-  }
-  const [segmentHistory, setSegmentHistory] = useState<SegmentQuarter[]>([]);
-  useEffect(() => {
-    if (!ticker || ticker === "UNKNOWN") return;
-    fetch(`/api/segment-history?ticker=${encodeURIComponent(ticker)}`)
-      .then(r => r.ok ? r.json() : null)
-      .then((d: { quarters?: SegmentQuarter[] } | null) => {
-        if (d?.quarters) setSegmentHistory(d.quarters);
-      })
-      .catch(() => {});
-  }, [ticker]);
 
   // ── TTM computation: sum last 4 quarters for flow metrics, latest for stock metrics
   const ttm = useMemo(() => {
@@ -1486,58 +1666,6 @@ function InsightsTab({
       "FCF Margin": { value: ttm.fcfMargin, tags: ["FreeCashFlow", "Revenues"] },
     };
   }, [ttm]);
-
-  // ── Peer comparison: compute latest-quarter metrics per company
-  interface PeerSummary {
-    ticker: string;
-    companyName: string;
-    revenue: number | null;
-    grossMargin: number | null;
-    operatingMargin: number | null;
-    netMargin: number | null;
-    ebitdaMargin: number | null;
-    roe: number | null;
-    roa: number | null;
-    debtToEquity: number | null;
-    currentRatio: number | null;
-    fcfMargin: number | null;
-    totalDebt: number | null;
-    totalEquity: number | null;
-    netIncome: number | null;
-    ebitda: number | null;
-    freeCashFlow: number | null;
-  }
-
-  const peers = useMemo((): PeerSummary[] => {
-    // Group by ticker, take most recent quarter. Filter out UNKNOWN, TTM rows.
-    const byTicker = new Map<string, DataSourceRow>();
-    for (const r of allRows) {
-      if (r.ticker === "UNKNOWN" || r.periodEnd === "TTM") continue;
-      const existing = byTicker.get(r.ticker);
-      if (!existing || r.periodEnd > existing.periodEnd) byTicker.set(r.ticker, r);
-    }
-    return [...byTicker.values()]
-      .map(r => ({
-        ticker: r.ticker,
-        companyName: r.companyName,
-        revenue: r.revenue,
-        grossMargin: r.grossMargin,
-        operatingMargin: r.operatingMargin,
-        netMargin: r.netMargin,
-        ebitdaMargin: r.ebitdaMargin ?? null,
-        roe: r.roe ?? null,
-        roa: r.roa ?? null,
-        debtToEquity: r.debtToEquity,
-        currentRatio: r.currentRatio,
-        fcfMargin: r.fcfMargin ?? null,
-        totalDebt: r.totalDebt,
-        totalEquity: r.totalEquity,
-        netIncome: r.netIncome,
-        ebitda: r.ebitda,
-        freeCashFlow: r.freeCashFlow,
-      }))
-      .sort((a, b) => (a.ticker === ticker ? -1 : b.ticker === ticker ? 1 : a.ticker.localeCompare(b.ticker)));
-  }, [allRows, ticker]);
 
   // ── DuPont 3-Factor: ROE = Net Margin × Asset Turnover × Equity Multiplier
   const dupont = useMemo(() => {
@@ -1721,20 +1849,31 @@ function InsightsTab({
 
   // ── AI Commentary state ──
   interface Commentary {
+    overallAssessment: string;
     dupont: string | null;
     zScore: string | null;
     piotroski: string | null;
     earningsQuality: string | null;
     ccc: string | null;
-    peerPositioning: string | null;
     ttmOutlook: string | null;
-    overallAssessment: string;
+    capitalStructure?: string | null;
+    operationalEfficiency?: string | null;
+    footnoteInsight?: string | null;
+    valuationComment?: string | null;
+    keyRisks?: string[] | null;
+    keyStrengths?: string[] | null;
+    contradictions?: string[] | null;
+    forwardImplications?: string[] | null;
   }
   const [commentary, setCommentary] = useState<Commentary | null>(null);
   const [commentaryLoading, setCommentaryLoading] = useState(false);
+  const [commentaryError, setCommentaryError] = useState<string | null>(null);
+  const [commentaryAttemptKey, setCommentaryAttemptKey] = useState<string | null>(null);
+  const commentaryKey = `${ticker ?? "UNKNOWN"}:${result.meta.periodEnd ?? "NA"}`;
 
-  const generateCommentary = async () => {
+  const generateCommentary = useCallback(async () => {
     setCommentaryLoading(true);
+    setCommentaryError(null);
     try {
       const resp = await fetch("/api/insights-commentary", {
         method: "POST",
@@ -1742,43 +1881,93 @@ function InsightsTab({
         body: JSON.stringify({
           ticker,
           companyName: result.meta.companyName,
-          dupont: {
-            netMargin: dupont.netMargin != null ? Math.round(dupont.netMargin * 1000) / 10 : null,
-            assetTurnover: dupont.assetTurnover != null ? Math.round(dupont.assetTurnover * 100) / 100 : null,
-            equityMultiplier: dupont.equityMultiplier != null ? Math.round(dupont.equityMultiplier * 100) / 100 : null,
-            roe: dupont.computed,
+          quarter: result.meta.periodEnd ?? null,
+          metrics: {
+            ticker,
+            companyName: result.meta.companyName ?? null,
+            quarter: result.meta.periodEnd ?? null,
+            confidence: result.meta.confidence ?? null,
+            incomeStatement: inc,
+            balanceSheet: bs,
+            cashFlow: cf,
+            ratios,
+            debtStructure: debt,
+            ttm,
+            dupont,
+            zScore,
+            piotroski,
+            earningsQuality,
+            ccc,
+            valuation: valuation ?? null,
+            healthScore,
           },
-          zScore: zScore ? { score: zScore.z, zone: zScore.zone } : undefined,
-          piotroski: { score: piotroski.score, maxScore: 9 },
-          earningsQuality: {
-            accrualRatio: earningsQuality.accrualRatio,
-            cashConversion: earningsQuality.ocfToNI,
-          },
-          ccc: { dso: ccc.dso, dio: ccc.dio, dpo: ccc.dpo, ccc: ccc.cycle },
-          peerMetrics: peers.slice(0, 6).map(p => ({
-            ticker: p.ticker,
-            operatingMargin: p.operatingMargin,
-            roe: p.roe,
-            debtToEquity: p.debtToEquity,
-          })),
-          ttm: ttm ? {
-            revenue: ttm.revenue,
-            operatingMargin: ttm.operatingMargin,
-            netMargin: ttm.netMargin,
-            fcfMargin: ttm.fcfMargin,
-          } : undefined,
+          footnotes: (result.footnotes ?? []).filter((fn) => fn.significance === "high" || fn.significance === "medium"),
+          nonRecurringItems: (result.nonRecurringItems ?? []).filter((item) => {
+            const rev = inc.revenue ?? null;
+            if (!rev || rev === 0) return false;
+            return (Math.abs(item.amount) / Math.abs(rev)) >= 0.05;
+          }),
         }),
       });
       if (resp.ok) {
         const data = await resp.json();
         setCommentary(data);
+      } else {
+        const err = await resp.json().catch(() => null) as { error?: string; details?: string } | null;
+        setCommentaryError(err?.details || err?.error || "AI commentary request failed");
       }
     } catch (e) {
       console.error("Commentary generation failed:", e);
+      setCommentaryError(e instanceof Error ? e.message : "AI commentary request failed");
     } finally {
       setCommentaryLoading(false);
     }
-  };
+  }, [
+    ticker,
+    result.meta.companyName,
+    dupont.netMargin,
+    dupont.assetTurnover,
+    dupont.equityMultiplier,
+    dupont.computed,
+    zScore,
+    piotroski.score,
+    earningsQuality.accrualRatio,
+    earningsQuality.ocfToNI,
+    ccc.dso,
+    ccc.dio,
+    ccc.dpo,
+    ccc.cycle,
+    ttm,
+    result.meta.periodEnd,
+    result.meta.confidence,
+    result.footnotes,
+    result.nonRecurringItems,
+    inc,
+    bs,
+    cf,
+    ratios,
+    debt,
+    dupont,
+    piotroski,
+    earningsQuality,
+    ccc,
+    valuation,
+    healthScore,
+  ]);
+
+  useEffect(() => {
+    setCommentary(null);
+    setCommentaryError(null);
+    setCommentaryAttemptKey(null);
+  }, [ticker, result.meta.periodEnd]);
+
+  useEffect(() => {
+    if (commentary || commentaryLoading) return;
+    if (!ticker || ticker === "UNKNOWN") return;
+    if (commentaryAttemptKey === commentaryKey) return;
+    setCommentaryAttemptKey(commentaryKey);
+    void generateCommentary();
+  }, [commentary, commentaryLoading, commentaryAttemptKey, commentaryKey, generateCommentary, ticker]);
 
   const [deckLoading, setDeckLoading] = useState(false);
   const exportInsightsDeck = async () => {
@@ -1809,14 +1998,6 @@ function InsightsTab({
       {/* ── Action Buttons ── */}
       <div className="flex justify-end gap-2">
         <button
-          onClick={generateCommentary}
-          disabled={commentaryLoading}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white shadow-subtle transition hover:bg-violet-700 disabled:opacity-50"
-        >
-          <Info className="h-3.5 w-3.5" />
-          {commentaryLoading ? "Analyzing…" : commentary ? "Refresh Commentary" : "Generate AI Commentary"}
-        </button>
-        <button
           onClick={exportInsightsDeck}
           disabled={deckLoading}
           className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-subtle transition hover:bg-indigo-700 disabled:opacity-50"
@@ -1827,15 +2008,34 @@ function InsightsTab({
       </div>
 
       {/* ── Overall AI Assessment ── */}
-      {commentary?.overallAssessment && (
-        <div className="rounded-xl border-2 border-violet-200 bg-violet-50 p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <Info className="h-4 w-4 text-violet-600" />
-            <p className="text-xs font-bold uppercase tracking-wider text-violet-600">AI Analyst Assessment</p>
-          </div>
-          <p className="text-sm text-slate-800 leading-relaxed">{commentary.overallAssessment}</p>
+      <div className="rounded-xl border-2 border-violet-200 bg-violet-50 p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <Info className="h-4 w-4 text-violet-600" />
+          <p className="text-xs font-bold uppercase tracking-wider text-violet-600">AI Overall Assessment</p>
         </div>
-      )}
+        {commentaryLoading && !commentary ? (
+          <div className="h-8 w-3/4 animate-pulse rounded bg-violet-100" />
+        ) : commentary?.overallAssessment ? (
+          <p className="text-sm text-slate-800 leading-relaxed">{commentary.overallAssessment}</p>
+        ) : (
+          <p className="text-sm text-slate-500">AI commentary unavailable for this filing.</p>
+        )}
+        {commentaryError && (
+          <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+            <p className="text-xs text-amber-800">{commentaryError}</p>
+            <button
+              type="button"
+              onClick={() => {
+                setCommentaryAttemptKey(null);
+                void generateCommentary();
+              }}
+              className="rounded-md bg-amber-100 px-2.5 py-1 text-[11px] font-semibold text-amber-800 hover:bg-amber-200"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* ── Financial Health Summary ── */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -1905,413 +2105,83 @@ function InsightsTab({
         </div>
       </div>
 
-      {/* ── Segment Analysis (Insights tab) ── */}
-      {result.segments && result.segments.length > 0 && (() => {
-        const segs = result.segments!.filter(s => s.revenue != null && s.revenue > 0);
-        const totalRev = segs.reduce((acc, s) => acc + (s.revenue ?? 0), 0);
-        const pieData = segs.map((s, i) => ({
-          name: s.segmentName,
-          value: s.revenue ?? 0,
-          pct: totalRev > 0 ? Math.round(((s.revenue ?? 0) / totalRev) * 1000) / 10 : 0,
-          fill: PIE_PALETTE[i % PIE_PALETTE.length],
-        }));
-        const barData = segs.map(s => ({
-          name: s.segmentName.length > 12 ? s.segmentName.slice(0, 12) + "…" : s.segmentName,
-          opMargin: s.operatingMargin ?? 0,
-          opIncome: s.operatingIncome ?? 0,
-        }));
-        return (
-          <Section title={`Segment Analysis (${segs.length} segments)`}>
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div>
-                <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Revenue Mix</p>
-                <div className="h-52">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%"
-                        outerRadius={80} label={(props) => `${props.name} ${(props as unknown as { pct: number }).pct}%`}
-                        labelLine={false} fontSize={9}>
-                        {pieData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
-                      </Pie>
-                      <Tooltip contentStyle={tooltipStyle} formatter={(v) => `$${Number(v).toLocaleString()}M`} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-              <div>
-                <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Operating Margin by Segment (%)</p>
-                <div className="h-52">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={barData} layout="vertical" margin={{ left: 4, right: 12 }}>
-                      <XAxis type="number" tick={{ fontSize: 9 }} unit="%" />
-                      <YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 9 }} />
-                      <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${Number(v).toFixed(1)}%`} />
-                      <Bar dataKey="opMargin" fill={COLORS.primary} radius={[0, 4, 4, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            </div>
-            {/* Segment table */}
-            <div className="overflow-x-auto mt-3">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b-2 border-slate-200 text-slate-500">
-                    <th className="px-2 py-1.5 text-left font-semibold">Segment</th>
-                    <th className="px-2 py-1.5 text-right font-semibold">Revenue</th>
-                    <th className="px-2 py-1.5 text-right font-semibold">Rev %</th>
-                    <th className="px-2 py-1.5 text-right font-semibold">OP Income</th>
-                    <th className="px-2 py-1.5 text-right font-semibold">OP Margin</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {segs.map((seg, i) => (
-                    <tr key={i} className="border-b border-slate-100">
-                      <td className="px-2 py-1.5 font-medium">{seg.segmentName}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums">{fmt(seg.revenue)}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">
-                        {totalRev > 0 ? `${(((seg.revenue ?? 0) / totalRev) * 100).toFixed(1)}%` : "—"}
-                      </td>
-                      <td className="px-2 py-1.5 text-right tabular-nums">{fmt(seg.operatingIncome)}</td>
-                      <td className={cn("px-2 py-1.5 text-right tabular-nums font-semibold",
-                        (seg.operatingMargin ?? 0) >= 0 ? "text-emerald-600" : "text-red-500"
-                      )}>{fmtPct(seg.operatingMargin)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Section>
-        );
-      })()}
-
-      {/* ── Segment Trend Charts (if multi-quarter segment data) ── */}
-      {segmentHistory.length >= 2 && (() => {
-        // Collect all unique segment names across quarters
-        const segNames = [...new Set(segmentHistory.flatMap(q => q.segments.map(s => s.segmentName)))];
-        // Build chart data: { quarter, seg1_rev, seg1_margin, seg2_rev, ... }
-        const revData = segmentHistory.map(q => {
-          const point: Record<string, string | number | null> = { q: q.quarterLabel || q.periodEnd.slice(0, 7) };
-          for (const name of segNames) {
-            const seg = q.segments.find(s => s.segmentName === name);
-            point[name] = seg?.revenue ?? null;
-          }
-          return point;
-        });
-        const marginData = segmentHistory.map(q => {
-          const point: Record<string, string | number | null> = { q: q.quarterLabel || q.periodEnd.slice(0, 7) };
-          for (const name of segNames) {
-            const seg = q.segments.find(s => s.segmentName === name);
-            point[name] = seg?.operatingMargin ?? null;
-          }
-          return point;
-        });
-        const opData = segmentHistory.map(q => {
-          const point: Record<string, string | number | null> = { q: q.quarterLabel || q.periodEnd.slice(0, 7) };
-          for (const name of segNames) {
-            const seg = q.segments.find(s => s.segmentName === name);
-            point[name] = seg?.operatingIncome ?? null;
-          }
-          return point;
-        });
-
-        return (
-          <Section title={`Segment Trends (${segmentHistory.length} quarters × ${segNames.length} segments)`}>
-            <div className="grid gap-4 lg:grid-cols-2">
-              {/* Segment Revenue Trends */}
-              <div>
-                <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Segment Revenue ($M)</p>
-                <div className="h-52">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={revData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                      <XAxis dataKey="q" tick={{ fontSize: 9 }} angle={-30} textAnchor="end" height={40} />
-                      <YAxis tick={{ fontSize: 9 }} />
-                      <Tooltip contentStyle={tooltipStyle} formatter={(v) => `$${Number(v).toLocaleString()}M`} />
-                      {segNames.map((name, i) => (
-                        <Line key={name} type="monotone" dataKey={name} name={name}
-                          stroke={PIE_PALETTE[i % PIE_PALETTE.length]} strokeWidth={2}
-                          dot={{ r: 3 }} connectNulls />
-                      ))}
-                      <Legend wrapperStyle={{ fontSize: 9 }} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-              {/* Segment OP Margin Trends */}
-              <div>
-                <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Segment OP Margin (%)</p>
-                <div className="h-52">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={marginData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                      <XAxis dataKey="q" tick={{ fontSize: 9 }} angle={-30} textAnchor="end" height={40} />
-                      <YAxis tick={{ fontSize: 9 }} />
-                      <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${Number(v).toFixed(1)}%`} />
-                      {segNames.map((name, i) => (
-                        <Line key={name} type="monotone" dataKey={name} name={name}
-                          stroke={PIE_PALETTE[i % PIE_PALETTE.length]} strokeWidth={2}
-                          dot={{ r: 3 }} connectNulls />
-                      ))}
-                      <Legend wrapperStyle={{ fontSize: 9 }} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-              {/* Segment OP Income Trends */}
-              <div className="lg:col-span-2">
-                <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Segment Operating Income ($M)</p>
-                <div className="h-52">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={opData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                      <XAxis dataKey="q" tick={{ fontSize: 9 }} angle={-30} textAnchor="end" height={40} />
-                      <YAxis tick={{ fontSize: 9 }} />
-                      <Tooltip contentStyle={tooltipStyle} formatter={(v) => `$${Number(v).toLocaleString()}M`} />
-                      {segNames.map((name, i) => (
-                        <Bar key={name} dataKey={name} name={name}
-                          fill={PIE_PALETTE[i % PIE_PALETTE.length]} radius={[3, 3, 0, 0]} />
-                      ))}
-                      <Legend wrapperStyle={{ fontSize: 9 }} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            </div>
-          </Section>
-        );
-      })()}
-
-      {/* ── Historical Trend Charts (if multi-quarter data) ── */}
-      {historyRows.length >= 2 && (
-        <Section title={`Quarterly Trends (${historyRows.length} quarters)`}>
-          <div className="grid gap-4 lg:grid-cols-2">
-            {/* Revenue & Net Income */}
-            <div>
-              <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Revenue & Net Income ($M)</p>
-              <div className="h-48">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={historyRows.map(r => ({ q: r.quarterLabel || r.periodEnd.slice(0, 7), rev: r.revenue, ni: r.netIncome }))}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis dataKey="q" tick={{ fontSize: 9 }} interval={historyRows.length > 8 ? 1 : 0} angle={-30} textAnchor="end" height={40} />
-                    <YAxis tick={{ fontSize: 9 }} />
-                    <Tooltip contentStyle={tooltipStyle} formatter={(v) => `$${Number(v).toLocaleString()}M`} />
-                    <Line type="monotone" dataKey="rev" name="Revenue" stroke={COLORS.blue} strokeWidth={2} dot={{ r: 3 }} />
-                    <Line type="monotone" dataKey="ni" name="Net Income" stroke={COLORS.emerald} strokeWidth={2} dot={{ r: 3 }} />
-                    <Legend wrapperStyle={{ fontSize: 10 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-            {/* Margin Trends */}
-            <div>
-              <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Margin Trends (%)</p>
-              <div className="h-48">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={historyRows.map(r => ({ q: r.quarterLabel || r.periodEnd.slice(0, 7), gm: r.grossMargin, om: r.operatingMargin, nm: r.netMargin }))}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis dataKey="q" tick={{ fontSize: 9 }} interval={historyRows.length > 8 ? 1 : 0} angle={-30} textAnchor="end" height={40} />
-                    <YAxis tick={{ fontSize: 9 }} />
-                    <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${Number(v).toFixed(1)}%`} />
-                    <Line type="monotone" dataKey="gm" name="Gross" stroke={COLORS.blue} strokeWidth={2} dot={{ r: 3 }} />
-                    <Line type="monotone" dataKey="om" name="Operating" stroke={COLORS.emerald} strokeWidth={2} dot={{ r: 3 }} />
-                    <Line type="monotone" dataKey="nm" name="Net" stroke={COLORS.purple} strokeWidth={2} dot={{ r: 3 }} />
-                    <Legend wrapperStyle={{ fontSize: 10 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-            {/* Debt & Leverage */}
-            <div>
-              <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Debt & Cash ($M)</p>
-              <div className="h-48">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={historyRows.map(r => ({ q: r.quarterLabel || r.periodEnd.slice(0, 7), debt: r.totalDebt, cash: r.cashAndEquivalents }))}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis dataKey="q" tick={{ fontSize: 9 }} interval={historyRows.length > 8 ? 1 : 0} angle={-30} textAnchor="end" height={40} />
-                    <YAxis tick={{ fontSize: 9 }} />
-                    <Tooltip contentStyle={tooltipStyle} formatter={(v) => `$${Number(v).toLocaleString()}M`} />
-                    <Bar dataKey="debt" name="Total Debt" fill={COLORS.red} radius={[3, 3, 0, 0]} />
-                    <Bar dataKey="cash" name="Cash" fill={COLORS.emerald} radius={[3, 3, 0, 0]} />
-                    <Legend wrapperStyle={{ fontSize: 10 }} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-            {/* Cash Flow Trends */}
-            <div>
-              <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Cash Flow ($M)</p>
-              <div className="h-48">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={historyRows.map(r => ({ q: r.quarterLabel || r.periodEnd.slice(0, 7), ocf: r.operatingCashFlow, fcf: r.freeCashFlow, capex: r.capex != null ? -Math.abs(r.capex) : null }))}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis dataKey="q" tick={{ fontSize: 9 }} interval={historyRows.length > 8 ? 1 : 0} angle={-30} textAnchor="end" height={40} />
-                    <YAxis tick={{ fontSize: 9 }} />
-                    <Tooltip contentStyle={tooltipStyle} formatter={(v) => `$${Number(v).toLocaleString()}M`} />
-                    <Line type="monotone" dataKey="ocf" name="Operating CF" stroke={COLORS.blue} strokeWidth={2} dot={{ r: 3 }} />
-                    <Line type="monotone" dataKey="fcf" name="FCF" stroke={COLORS.emerald} strokeWidth={2} dot={{ r: 3 }} />
-                    <Line type="monotone" dataKey="capex" name="CapEx" stroke={COLORS.red} strokeWidth={2} dot={{ r: 3 }} strokeDasharray="5 5" />
-                    <Legend wrapperStyle={{ fontSize: 10 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
+      {(commentaryLoading || (commentary?.keyRisks?.length ?? 0) > 0 || (commentary?.keyStrengths?.length ?? 0) > 0) && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="rounded-xl border border-red-200 bg-red-50 p-4">
+            <p className="text-xs font-bold uppercase tracking-wide text-red-600">Key Risks</p>
+            <div className="mt-2 space-y-1.5">
+              {commentaryLoading && !commentary ? (
+                <>
+                  <div className="h-4 w-11/12 animate-pulse rounded bg-red-100" />
+                  <div className="h-4 w-10/12 animate-pulse rounded bg-red-100" />
+                </>
+              ) : (
+                (commentary?.keyRisks ?? []).map((risk, idx) => (
+                  <p key={`${risk}-${idx}`} className="text-xs text-red-800">- {risk}</p>
+                ))
+              )}
             </div>
           </div>
-        </Section>
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+            <p className="text-xs font-bold uppercase tracking-wide text-emerald-600">Key Strengths</p>
+            <div className="mt-2 space-y-1.5">
+              {commentaryLoading && !commentary ? (
+                <>
+                  <div className="h-4 w-11/12 animate-pulse rounded bg-emerald-100" />
+                  <div className="h-4 w-9/12 animate-pulse rounded bg-emerald-100" />
+                </>
+              ) : (
+                (commentary?.keyStrengths ?? []).map((strength, idx) => (
+                  <p key={`${strength}-${idx}`} className="text-xs text-emerald-800">- {strength}</p>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
-      {/* ── QoQ Momentum ── */}
-      {historyRows.length >= 2 && (() => {
-        const curr = historyRows[historyRows.length - 1];
-        const prev = historyRows[historyRows.length - 2];
-        const qoq = (c: number | null, p: number | null) => {
-          if (c == null || p == null || p === 0) return null;
-          return Math.round(((c - p) / Math.abs(p)) * 1000) / 10;
-        };
-        const metrics = [
-          { label: "Revenue", change: qoq(curr.revenue, prev.revenue), curr: curr.revenue, prev: prev.revenue },
-          { label: "Gross Profit", change: qoq(curr.grossProfit, prev.grossProfit), curr: curr.grossProfit, prev: prev.grossProfit },
-          { label: "Operating Income", change: qoq(curr.operatingIncome, prev.operatingIncome), curr: curr.operatingIncome, prev: prev.operatingIncome },
-          { label: "Net Income", change: qoq(curr.netIncome, prev.netIncome), curr: curr.netIncome, prev: prev.netIncome },
-          { label: "Operating CF", change: qoq(curr.operatingCashFlow, prev.operatingCashFlow), curr: curr.operatingCashFlow, prev: prev.operatingCashFlow },
-          { label: "FCF", change: qoq(curr.freeCashFlow, prev.freeCashFlow), curr: curr.freeCashFlow, prev: prev.freeCashFlow },
-        ].filter(m => m.change != null);
-
-        if (metrics.length === 0) return null;
-        return (
-          <Section title={`QoQ Momentum: ${prev.quarterLabel ?? prev.periodEnd} → ${curr.quarterLabel ?? curr.periodEnd}`}>
-            <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
-              {metrics.map((m, i) => (
-                <div key={i} className={cn("rounded-lg border p-3 text-center",
-                  m.change! > 0 ? "border-emerald-200 bg-emerald-50/50" :
-                  m.change! < -10 ? "border-red-200 bg-red-50/50" :
-                  "border-slate-200 bg-white"
-                )}>
-                  <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{m.label}</p>
-                  <div className="flex items-center justify-center gap-1 mt-1">
-                    {m.change! > 0 ? <ArrowUpRight className="h-3.5 w-3.5 text-emerald-600" /> :
-                     m.change! < 0 ? <ArrowDownRight className="h-3.5 w-3.5 text-red-500" /> :
-                     <Minus className="h-3.5 w-3.5 text-slate-400" />}
-                    <span className={cn("text-lg font-black tabular-nums",
-                      m.change! > 0 ? "text-emerald-600" : m.change! < 0 ? "text-red-500" : "text-slate-600"
-                    )}>{m.change! > 0 ? "+" : ""}{m.change}%</span>
-                  </div>
-                  <p className="text-[9px] text-slate-400 tabular-nums mt-0.5">
-                    {fmt(m.prev)} → {fmt(m.curr)}
-                  </p>
-                </div>
-              ))}
-            </div>
+      {(commentaryLoading || commentary?.capitalStructure || commentary?.operationalEfficiency || commentary?.valuationComment || commentary?.footnoteInsight) && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Section title="Capital Structure">
+            {(commentaryLoading && !commentary) ? (
+              <div className="h-8 w-3/4 animate-pulse rounded bg-slate-100" />
+            ) : (
+              <p className="text-xs leading-relaxed text-slate-700">{commentary?.capitalStructure ?? "—"}</p>
+            )}
           </Section>
-        );
-      })()}
-
-      {/* ── YoY Comparison (same quarter, prior year) ── */}
-      {historyRows.length >= 5 && (() => {
-        // Match current quarter to same quarter from prior year via quarter label (e.g. Q1 FY2025 → Q1 FY2024)
-        const curr = historyRows[historyRows.length - 1];
-        // Try to find same fiscal quarter from ~4 quarters ago
-        const currQ = curr.quarterLabel?.match(/Q(\d)/)?.[1];
-        let yago: DataSourceRow | null = null;
-        if (currQ) {
-          // Search backwards for matching quarter label with different year
-          for (let i = historyRows.length - 2; i >= 0; i--) {
-            const q = historyRows[i].quarterLabel?.match(/Q(\d)/)?.[1];
-            if (q === currQ && historyRows[i].periodEnd !== curr.periodEnd) {
-              yago = historyRows[i];
-              break;
-            }
-          }
-        }
-        // Fallback: take the row ~4 positions back
-        if (!yago && historyRows.length >= 5) {
-          yago = historyRows[historyRows.length - 5];
-        }
-        if (!yago) return null;
-
-        const yoy = (c: number | null, p: number | null) => {
-          if (c == null || p == null || p === 0) return null;
-          return Math.round(((c - p) / Math.abs(p)) * 1000) / 10;
-        };
-        const delta = (c: number | null, p: number | null) => {
-          if (c == null || p == null) return null;
-          return Math.round((c - p) * 10) / 10;
-        };
-
-        const metrics = [
-          { label: "Revenue", change: yoy(curr.revenue, yago.revenue), curr: curr.revenue, prev: yago.revenue, type: "pct" as const },
-          { label: "Gross Profit", change: yoy(curr.grossProfit, yago.grossProfit), curr: curr.grossProfit, prev: yago.grossProfit, type: "pct" as const },
-          { label: "OP Income", change: yoy(curr.operatingIncome, yago.operatingIncome), curr: curr.operatingIncome, prev: yago.operatingIncome, type: "pct" as const },
-          { label: "Net Income", change: yoy(curr.netIncome, yago.netIncome), curr: curr.netIncome, prev: yago.netIncome, type: "pct" as const },
-          { label: "Gross Margin", change: delta(curr.grossMargin, yago.grossMargin), curr: curr.grossMargin, prev: yago.grossMargin, type: "bps" as const },
-          { label: "OP Margin", change: delta(curr.operatingMargin, yago.operatingMargin), curr: curr.operatingMargin, prev: yago.operatingMargin, type: "bps" as const },
-          { label: "Net Margin", change: delta(curr.netMargin, yago.netMargin), curr: curr.netMargin, prev: yago.netMargin, type: "bps" as const },
-          { label: "D/E Ratio", change: delta(curr.debtToEquity, yago.debtToEquity), curr: curr.debtToEquity, prev: yago.debtToEquity, type: "ratio" as const },
-          { label: "FCF", change: yoy(curr.freeCashFlow, yago.freeCashFlow), curr: curr.freeCashFlow, prev: yago.freeCashFlow, type: "pct" as const },
-          { label: "EPS Diluted", change: yoy(curr.epsDiluted, yago.epsDiluted), curr: curr.epsDiluted, prev: yago.epsDiluted, type: "pct" as const },
-        ].filter(m => m.change != null);
-
-        if (metrics.length === 0) return null;
-
-        return (
-          <Section title={`YoY Comparison: ${yago.quarterLabel ?? yago.periodEnd} → ${curr.quarterLabel ?? curr.periodEnd}`}>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b-2 border-slate-200 text-slate-500">
-                    <th className="px-3 py-2 text-left font-semibold">Metric</th>
-                    <th className="px-3 py-2 text-right font-semibold">{yago.quarterLabel ?? yago.periodEnd}</th>
-                    <th className="px-3 py-2 text-right font-semibold">{curr.quarterLabel ?? curr.periodEnd}</th>
-                    <th className="px-3 py-2 text-right font-semibold">Change</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {metrics.map((m, i) => {
-                    const isPositive = m.type === "ratio"
-                      ? (m.change! < 0) // lower D/E is better
-                      : (m.change! > 0);
-                    const isNegative = m.type === "ratio"
-                      ? (m.change! > 0.2)
-                      : (m.change! < -5);
-                    const changeStr = m.type === "pct"
-                      ? `${m.change! > 0 ? "+" : ""}${m.change}%`
-                      : m.type === "bps"
-                      ? `${m.change! > 0 ? "+" : ""}${(m.change! * 100).toFixed(0)} bps`
-                      : `${m.change! > 0 ? "+" : ""}${m.change!.toFixed(2)}x`;
-                    const fmtVal = (v: number | null) =>
-                      m.type === "pct" ? fmt(v) :
-                      m.type === "bps" ? fmtPct(v) :
-                      fmtX(v);
-                    return (
-                      <tr key={i} className="border-b border-slate-100">
-                        <td className="px-3 py-2 font-medium text-slate-700">{m.label}</td>
-                        <td className="px-3 py-2 text-right tabular-nums text-slate-500">{fmtVal(m.prev)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums font-semibold">{fmtVal(m.curr)}</td>
-                        <td className={cn("px-3 py-2 text-right tabular-nums font-bold",
-                          isPositive ? "text-emerald-600" : isNegative ? "text-red-500" : "text-slate-600"
-                        )}>
-                          <span className="inline-flex items-center gap-0.5">
-                            {isPositive ? <ArrowUpRight className="h-3 w-3" /> :
-                             isNegative ? <ArrowDownRight className="h-3 w-3" /> :
-                             <Minus className="h-3 w-3" />}
-                            {changeStr}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+          <Section title="Operational Efficiency">
+            {(commentaryLoading && !commentary) ? (
+              <div className="h-8 w-3/4 animate-pulse rounded bg-slate-100" />
+            ) : (
+              <p className="text-xs leading-relaxed text-slate-700">{commentary?.operationalEfficiency ?? "—"}</p>
+            )}
           </Section>
-        );
-      })()}
+          <Section title="Valuation Commentary">
+            {(commentaryLoading && !commentary) ? (
+              <div className="h-8 w-3/4 animate-pulse rounded bg-slate-100" />
+            ) : (
+              <p className="text-xs leading-relaxed text-slate-700">{commentary?.valuationComment ?? "—"}</p>
+            )}
+          </Section>
+          <Section title="Footnote Insight">
+            {(commentaryLoading && !commentary) ? (
+              <div className="h-8 w-3/4 animate-pulse rounded bg-slate-100" />
+            ) : (
+              <p className="text-xs leading-relaxed text-slate-700">{commentary?.footnoteInsight ?? "—"}</p>
+            )}
+          </Section>
+        </div>
+      )}
+
+      {/* Quarterly trend charts and peer visuals moved to dedicated workspace modules. */}
 
       {/* ── TTM Summary (if 4+ quarters) ── */}
       {ttm && (
         <Section title={ttm.label}>
           <div className="space-y-3">
-            {commentary?.ttmOutlook && (
+            {(commentaryLoading && !commentary) ? (
+              <div className="h-8 w-3/4 animate-pulse rounded bg-slate-100" />
+            ) : commentary?.ttmOutlook && (
               <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2">
                 <p className="text-xs text-violet-700 leading-relaxed"><span className="font-bold">AI:</span> {commentary.ttmOutlook}</p>
               </div>
@@ -2338,133 +2208,7 @@ function InsightsTab({
         </Section>
       )}
 
-      {/* ── Peer Comparison (if 2+ companies in Data Source) ── */}
-      {peers.length >= 2 && (
-        <>
-          {commentary?.peerPositioning && (
-            <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2">
-              <p className="text-xs text-violet-700 leading-relaxed"><span className="font-bold">AI Peer Analysis:</span> {commentary.peerPositioning}</p>
-            </div>
-          )}
-          {/* Margin Comparison */}
-          <Section title={`Peer Margin Comparison (${peers.length} companies)`}>
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div>
-                <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Operating Margin (%)</p>
-                <div className="h-52">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={peers.map(p => ({ name: p.ticker, gm: p.grossMargin, om: p.operatingMargin, nm: p.netMargin }))} layout="vertical" margin={{ left: 4 }}>
-                      <XAxis type="number" tick={{ fontSize: 9 }} />
-                      <YAxis type="category" dataKey="name" width={50} tick={{ fontSize: 10, fontWeight: 600 }} />
-                      <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${Number(v).toFixed(1)}%`} />
-                      <Bar dataKey="gm" name="Gross" fill={COLORS.blue} radius={[0, 3, 3, 0]} />
-                      <Bar dataKey="om" name="Operating" fill={COLORS.emerald} radius={[0, 3, 3, 0]} />
-                      <Bar dataKey="nm" name="Net" fill={COLORS.purple} radius={[0, 3, 3, 0]} />
-                      <Legend wrapperStyle={{ fontSize: 10 }} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-              <div>
-                <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Return & Efficiency (%)</p>
-                <div className="h-52">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={peers.map(p => ({ name: p.ticker, roe: p.roe, roa: p.roa, fcf: p.fcfMargin }))} layout="vertical" margin={{ left: 4 }}>
-                      <XAxis type="number" tick={{ fontSize: 9 }} />
-                      <YAxis type="category" dataKey="name" width={50} tick={{ fontSize: 10, fontWeight: 600 }} />
-                      <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${Number(v).toFixed(1)}%`} />
-                      <Bar dataKey="roe" name="ROE" fill={COLORS.primary} radius={[0, 3, 3, 0]} />
-                      <Bar dataKey="roa" name="ROA" fill={COLORS.cyan} radius={[0, 3, 3, 0]} />
-                      <Bar dataKey="fcf" name="FCF Margin" fill={COLORS.amber} radius={[0, 3, 3, 0]} />
-                      <Legend wrapperStyle={{ fontSize: 10 }} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            </div>
-          </Section>
-
-          {/* Radar Chart */}
-          <Section title="Peer Financial Profile — Radar">
-            <div className="flex justify-center">
-              <div className="h-72 w-full max-w-lg">
-                <ResponsiveContainer width="100%" height="100%">
-                  <RadarChart data={[
-                    { metric: "Gross Margin", ...Object.fromEntries(peers.map(p => [p.ticker, Math.max(0, p.grossMargin ?? 0)])) },
-                    { metric: "OP Margin", ...Object.fromEntries(peers.map(p => [p.ticker, Math.max(0, p.operatingMargin ?? 0)])) },
-                    { metric: "Net Margin", ...Object.fromEntries(peers.map(p => [p.ticker, Math.max(0, p.netMargin ?? 0)])) },
-                    { metric: "ROE", ...Object.fromEntries(peers.map(p => [p.ticker, Math.max(0, p.roe ?? 0)])) },
-                    { metric: "Current Ratio", ...Object.fromEntries(peers.map(p => [p.ticker, Math.min((p.currentRatio ?? 0) * 10, 50)])) },
-                    { metric: "FCF Margin", ...Object.fromEntries(peers.map(p => [p.ticker, Math.max(0, p.fcfMargin ?? 0)])) },
-                  ]}>
-                    <PolarGrid stroke="#e2e8f0" />
-                    <PolarAngleAxis dataKey="metric" tick={{ fontSize: 10 }} />
-                    <PolarRadiusAxis tick={{ fontSize: 8 }} />
-                    {peers.slice(0, 6).map((p, i) => (
-                      <Radar key={p.ticker} name={p.ticker} dataKey={p.ticker}
-                        stroke={PIE_PALETTE[i % PIE_PALETTE.length]}
-                        fill={PIE_PALETTE[i % PIE_PALETTE.length]}
-                        fillOpacity={p.ticker === ticker ? 0.25 : 0.08}
-                        strokeWidth={p.ticker === ticker ? 2.5 : 1.5} />
-                    ))}
-                    <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Tooltip contentStyle={tooltipStyle} />
-                  </RadarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          </Section>
-
-          {/* Relative Valuation / Comparison Table */}
-          <Section title="Peer Comparison Table">
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b-2 border-slate-200">
-                    <th className="px-2 py-2 text-left font-bold text-slate-600">Company</th>
-                    <th className="px-2 py-2 text-right font-semibold text-slate-500">Revenue</th>
-                    <th className="px-2 py-2 text-right font-semibold text-slate-500">EBITDA</th>
-                    <th className="px-2 py-2 text-right font-semibold text-slate-500">Net Inc.</th>
-                    <th className="px-2 py-2 text-right font-semibold text-slate-500">FCF</th>
-                    <th className="px-2 py-2 text-right font-semibold text-slate-500">GM %</th>
-                    <th className="px-2 py-2 text-right font-semibold text-slate-500">OP %</th>
-                    <th className="px-2 py-2 text-right font-semibold text-slate-500">NM %</th>
-                    <th className="px-2 py-2 text-right font-semibold text-slate-500">ROE %</th>
-                    <th className="px-2 py-2 text-right font-semibold text-slate-500">D/E</th>
-                    <th className="px-2 py-2 text-right font-semibold text-slate-500">Curr.</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {peers.map((p, i) => {
-                    const isSubject = p.ticker === ticker;
-                    return (
-                      <tr key={i} className={cn("border-b border-slate-100", isSubject && "bg-indigo-50/50 font-semibold")}>
-                        <td className="px-2 py-2">
-                          <div className="flex items-center gap-1.5">
-                            {isSubject && <span className="h-2 w-2 rounded-full bg-indigo-500" />}
-                            <span className={cn("font-bold", isSubject ? "text-indigo-700" : "text-slate-800")}>{p.ticker}</span>
-                            <span className="text-[10px] text-slate-400 truncate max-w-[100px]">{p.companyName}</span>
-                          </div>
-                        </td>
-                        <td className="px-2 py-2 text-right tabular-nums">{fmt(p.revenue)}</td>
-                        <td className="px-2 py-2 text-right tabular-nums">{fmt(p.ebitda)}</td>
-                        <td className={cn("px-2 py-2 text-right tabular-nums", p.netIncome != null && p.netIncome < 0 && "text-red-500")}>{fmt(p.netIncome)}</td>
-                        <td className={cn("px-2 py-2 text-right tabular-nums", p.freeCashFlow != null && p.freeCashFlow < 0 && "text-red-500")}>{fmt(p.freeCashFlow)}</td>
-                        <td className="px-2 py-2 text-right tabular-nums">{fmtPct(p.grossMargin)}</td>
-                        <td className="px-2 py-2 text-right tabular-nums">{fmtPct(p.operatingMargin)}</td>
-                        <td className="px-2 py-2 text-right tabular-nums">{fmtPct(p.netMargin)}</td>
-                        <td className="px-2 py-2 text-right tabular-nums">{fmtPct(p.roe)}</td>
-                        <td className="px-2 py-2 text-right tabular-nums">{fmtX(p.debtToEquity)}</td>
-                        <td className="px-2 py-2 text-right tabular-nums">{fmtX(p.currentRatio)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Section>
-        </>
-      )}
+      {/* Peer comparison visuals/tables moved to dedicated workspace peer views. */}
 
       {/* ── Valuation Multiples ── */}
       <Section title="Valuation Multiples">
@@ -2529,7 +2273,9 @@ function InsightsTab({
       {/* ── DuPont ROE Decomposition ── */}
       <Section title="DuPont ROE Decomposition">
         <div className="space-y-3">
-          {commentary?.dupont && (
+          {(commentaryLoading && !commentary) ? (
+            <div className="h-8 w-3/4 animate-pulse rounded bg-slate-100" />
+          ) : commentary?.dupont && (
             <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2">
               <p className="text-xs text-violet-700 leading-relaxed"><span className="font-bold">AI:</span> {commentary.dupont}</p>
             </div>
@@ -2589,7 +2335,9 @@ function InsightsTab({
       {/* ── Altman Z-Score Detail ── */}
       {zScore && (
         <Section title="Altman Z-Score Breakdown">
-          {commentary?.zScore && (
+          {(commentaryLoading && !commentary) ? (
+            <div className="h-8 w-3/4 animate-pulse rounded bg-slate-100 mb-3" />
+          ) : commentary?.zScore && (
             <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2 mb-3">
               <p className="text-xs text-violet-700 leading-relaxed"><span className="font-bold">AI:</span> {commentary.zScore}</p>
             </div>
@@ -2630,7 +2378,9 @@ function InsightsTab({
 
       {/* ── Piotroski F-Score Detail ── */}
       <Section title="Piotroski F-Score Analysis">
-        {commentary?.piotroski && (
+        {(commentaryLoading && !commentary) ? (
+          <div className="h-8 w-3/4 animate-pulse rounded bg-slate-100 mb-3" />
+        ) : commentary?.piotroski && (
           <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2 mb-3">
             <p className="text-xs text-violet-700 leading-relaxed"><span className="font-bold">AI:</span> {commentary.piotroski}</p>
           </div>
@@ -2656,7 +2406,9 @@ function InsightsTab({
 
       {/* ── Earnings Quality Deep Dive ── */}
       <Section title="Earnings Quality Analysis">
-        {commentary?.earningsQuality && (
+        {(commentaryLoading && !commentary) ? (
+          <div className="h-8 w-3/4 animate-pulse rounded bg-slate-100 mb-3" />
+        ) : commentary?.earningsQuality && (
           <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2 mb-3">
             <p className="text-xs text-violet-700 leading-relaxed"><span className="font-bold">AI:</span> {commentary.earningsQuality}</p>
           </div>
@@ -2691,76 +2443,39 @@ function InsightsTab({
         </div>
       </Section>
 
-      {/* ── Cash Conversion Cycle ── */}
-      {ccc.cycle != null && (
-        <Section title="Cash Conversion Cycle">
-          {commentary?.ccc && (
-            <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2 mb-3">
-              <p className="text-xs text-violet-700 leading-relaxed"><span className="font-bold">AI:</span> {commentary.ccc}</p>
+      {((commentary?.contradictions?.length ?? 0) > 0 || (commentaryLoading && !commentary)) && (
+        <Section title="Contradictions">
+          {commentaryLoading && !commentary ? (
+            <div className="space-y-2">
+              <div className="h-5 w-full animate-pulse rounded bg-slate-100" />
+              <div className="h-5 w-10/12 animate-pulse rounded bg-slate-100" />
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {(commentary?.contradictions ?? []).map((item, idx) => (
+                <p key={`${item}-${idx}`} className="text-xs text-slate-700">- {item}</p>
+              ))}
             </div>
           )}
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-center justify-center gap-2 text-center">
-              <DupontFactor label="DSO" value={ccc.dso != null ? `${ccc.dso} days` : "—"} sub="Days Sales Outstanding" />
-              <span className="text-lg font-bold text-slate-400">+</span>
-              <DupontFactor label="DIO" value={ccc.dio != null ? `${ccc.dio} days` : "—"} sub="Days Inventory Outstanding" />
-              <span className="text-lg font-bold text-slate-400">−</span>
-              <DupontFactor label="DPO" value={ccc.dpo != null ? `${ccc.dpo} days` : "—"} sub="Days Payable Outstanding" />
-              <span className="text-lg font-bold text-slate-400">=</span>
-              <DupontFactor label="CCC" value={`${ccc.cycle} days`} highlight sub="Cash Conversion Cycle" />
-            </div>
-            <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-3 text-xs text-slate-600">
-              {ccc.cycle < 0 ? (
-                <p><span className="font-semibold text-emerald-600">Negative CCC ({ccc.cycle} days):</span> The company gets paid before paying suppliers — excellent working capital efficiency. Common in companies with strong bargaining power.</p>
-              ) : ccc.cycle < 30 ? (
-                <p><span className="font-semibold text-emerald-600">Short CCC ({ccc.cycle} days):</span> Efficient cash management. Capital is tied up for less than a month.</p>
-              ) : ccc.cycle < 90 ? (
-                <p><span className="font-semibold text-amber-600">Moderate CCC ({ccc.cycle} days):</span> Typical for manufacturing/distribution. Look for trends over time.</p>
-              ) : (
-                <p><span className="font-semibold text-red-600">Long CCC ({ccc.cycle} days):</span> Significant capital tied up in working capital. May indicate inventory buildup or slow collections.</p>
-              )}
-            </div>
-          </div>
         </Section>
       )}
 
-      {/* ── Capital Allocation ── */}
-      <Section title="Capital Allocation">
-        <div className="grid gap-4 lg:grid-cols-2">
-          <MetricTable
-            onRowClick={onMetricTableRowClick ?? undefined}
-            labelMap={traceLabelMap ?? undefined}
-            traceByLabel={traceByLabel ?? undefined}
-            rows={[
-              { label: "Operating Cash Flow", value: fmt(cf.operatingCashFlow), bold: true, traceable: true },
-              { label: "CapEx (Reinvestment)", value: fmt(cf.capitalExpenditures != null ? -Math.abs(cf.capitalExpenditures) : null), dim: true, traceable: true },
-              { label: "Reinvestment Rate", value: capAlloc.reinvestmentRate != null ? `${capAlloc.reinvestmentRate}%` : "—", sub: "CapEx / OCF" },
-              { label: "Dividends Paid", value: fmt(cf.dividendsPaid != null ? -Math.abs(cf.dividendsPaid) : null), dim: true, traceable: true },
-              { label: "Share Repurchases", value: fmt(capAlloc.buyback != null ? -Math.abs(capAlloc.buyback) : null), dim: true, traceable: true },
-              { label: "Total Shareholder Returns", value: fmt(capAlloc.totalReturn != null ? -Math.abs(capAlloc.totalReturn) : null), bold: true, traceable: true },
-              { label: "Return Yield on Equity", value: capAlloc.returnYieldOnEquity != null ? `${Math.abs(capAlloc.returnYieldOnEquity).toFixed(1)}%` : "—" },
-              { label: "Stock-Based Comp", value: fmt(capAlloc.sbc), traceable: true },
-            ]}
-          />
-          <div className="rounded-lg border border-slate-100 p-3">
-            <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Allocation Insight</p>
-            <div className="space-y-1.5 text-xs text-slate-600">
-              {capAlloc.reinvestmentRate != null && capAlloc.reinvestmentRate > 50 && (
-                <p>High reinvestment rate ({capAlloc.reinvestmentRate}%) — company is investing heavily in growth.</p>
-              )}
-              {capAlloc.reinvestmentRate != null && capAlloc.reinvestmentRate < 20 && (
-                <p>Low reinvestment rate ({capAlloc.reinvestmentRate}%) — mature business returning capital to shareholders.</p>
-              )}
-              {cf.freeCashFlow != null && cf.freeCashFlow > 0 && cf.dividendsPaid != null && (
-                <p>FCF after dividends: <span className="font-semibold">${(cf.freeCashFlow - Math.abs(cf.dividendsPaid)).toLocaleString()}M</span> — {cf.freeCashFlow > Math.abs(cf.dividendsPaid) ? "dividend is well-covered by FCF" : "FCF does not fully cover dividends"}.</p>
-              )}
-              {capAlloc.sbc != null && inc.netIncome != null && inc.netIncome > 0 && (
-                <p>SBC as % of Net Income: <span className="font-semibold">{((capAlloc.sbc / inc.netIncome) * 100).toFixed(1)}%</span> — {capAlloc.sbc / inc.netIncome > 0.15 ? "elevated dilution risk" : "manageable level"}.</p>
-              )}
+      {((commentary?.forwardImplications?.length ?? 0) > 0 || (commentaryLoading && !commentary)) && (
+        <Section title="Forward Implications">
+          {commentaryLoading && !commentary ? (
+            <div className="space-y-2">
+              <div className="h-5 w-full animate-pulse rounded bg-slate-100" />
+              <div className="h-5 w-9/12 animate-pulse rounded bg-slate-100" />
             </div>
-          </div>
-        </div>
-      </Section>
+          ) : (
+            <div className="space-y-2">
+              {(commentary?.forwardImplications ?? []).map((item, idx) => (
+                <p key={`${item}-${idx}`} className="text-xs text-slate-700">- {item}</p>
+              ))}
+            </div>
+          )}
+        </Section>
+      )}
 
       {/* ── Non-Recurring Items & Comparability Adjustments ── */}
       {result.nonRecurringItems && result.nonRecurringItems.length > 0 && (() => {

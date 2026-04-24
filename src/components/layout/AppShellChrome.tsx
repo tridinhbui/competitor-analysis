@@ -3,10 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, X, LogIn, LogOut, User, Settings, ChevronDown, CreditCard } from "lucide-react";
+import { Menu, X, LogIn, LogOut, User, Settings, ChevronDown, CreditCard, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/authContext";
 import { useProfile } from "@/lib/profileContext";
+import { useAiExtractionEnabled } from "@/lib/aiExtractionSetting";
 import { AuthModal } from "@/components/auth/AuthModal";
 import { SmithfieldCorporateLogo } from "@/components/branding/SmithfieldCorporateLogo";
 
@@ -30,6 +31,7 @@ export function AppShellChrome() {
   const userMenuRef = useRef<HTMLDivElement>(null);
   const { user, signOut, loading: authLoading } = useAuth();
   const { profile, needsOnboarding } = useProfile();
+  const [aiEnabled, toggleAi] = useAiExtractionEnabled();
 
   const displayName =
     profile?.full_name?.trim() ||
@@ -98,6 +100,22 @@ export function AppShellChrome() {
           </div>
 
           <div className="flex items-center gap-2">
+            {showAppNav && (
+              <button
+                type="button"
+                onClick={toggleAi}
+                title={aiEnabled ? "AI extraction ON — click to disable" : "AI extraction OFF — click to enable"}
+                className={cn(
+                  "hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition sm:inline-flex",
+                  aiEnabled
+                    ? "border-primary/30 bg-primary/10 text-primary hover:bg-primary/20"
+                    : "border-slate-200 bg-slate-100 text-slate-500 hover:bg-slate-200"
+                )}
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                AI {aiEnabled ? "on" : "off"}
+              </button>
+            )}
             {/* Auth / user menu */}
             {!authLoading && (
               user ? (

@@ -319,6 +319,111 @@ interface SegmentExtraction {
   corporateAndOther?: { operatingIncome?: number | null };
 }
 
+function classifySegmentType(name: string): "business" | "channel" | "geography" {
+  const n = name.toLowerCase();
+  if (
+    /\b(retail|foodservice|e-?commerce|club|wholesale|distribution|channel)\b/i.test(
+      n
+    )
+  ) {
+    return "channel";
+  }
+  if (
+    /\b(international|north america|latin america|europe|asia|china|apac|emea|u\.?s\.?|us)\b/i.test(
+      n
+    )
+  ) {
+    return "geography";
+  }
+  return "business";
+}
+
+function parseSegmentNumberToken(raw: string): number | null {
+  const token = raw.trim();
+  if (!token || /^-+$/.test(token)) return null;
+  const isNegative = token.startsWith("(") && token.endsWith(")");
+  const normalized = token.replace(/[(),$]/g, "").replace(/\s+/g, "");
+  if (!normalized) return null;
+  const value = Number(normalized);
+  if (!Number.isFinite(value)) return null;
+  return Math.round(isNegative ? -value : value);
+}
+
+/**
+ * Deterministic segment fallback used when AI segment extraction is unavailable.
+ * Expected row shape examples:
+ * - "Retail 1,858 123 6.6% 2,127"
+ * - "Foodservice | 987 | 141 | 14.3%"
+ */
+function extractSegmentsHeuristic(
+  text: string
+): NonNullable<SegmentExtraction["segments"]> {
+  const candidateRows: Array<{
+    segmentName: string;
+    revenue: number | null;
+    operatingIncome: number | null;
+  }> = [];
+  const rows = text
+    .split(/\r?\n/)
+    .map((r) => r.replace(/\s{2,}/g, " ").trim())
+    .filter(Boolean);
+  const badNamePatterns = [
+    /^(total|consolidated|subtotal|three months ended|nine months ended|segment results|reportable segments?)\b/i,
+    /^(net sales|sales|revenue|operating income|gross profit|assets|liabilities|equity)\b/i,
+    /\b(eliminations?|corporate|other)\b/i,
+  ];
+  const numericTokenRe = /\(?\$?\d{1,3}(?:,\d{3})*(?:\.\d+)?\)?/g;
+
+  for (const row of rows) {
+    const firstNumber = row.search(/\(?\$?\d/);
+    if (firstNumber <= 1) continue;
+    const segmentName = row.slice(0, firstNumber).replace(/[|:–-]\s*$/, "").trim();
+    if (!segmentName || segmentName.length > 40) continue;
+    if (badNamePatterns.some((p) => p.test(segmentName))) continue;
+    if (!/[a-z]/i.test(segmentName)) continue;
+
+    const numericTokens = row.match(numericTokenRe) ?? [];
+    if (numericTokens.length < 2) continue;
+    const numbers = numericTokens
+      .map(parseSegmentNumberToken)
+      .filter((n): n is number => n != null);
+    if (numbers.length < 2) continue;
+
+    const revenue = numbers[0] > 0 ? numbers[0] : null;
+    const operatingIncome = numbers[1];
+    if (revenue == null) continue;
+    if (Math.abs(revenue) < 10 || Math.abs(revenue) > 1_000_000) continue;
+
+    candidateRows.push({ segmentName, revenue, operatingIncome });
+  }
+
+  const deduped = new Map<string, { revenue: number | null; operatingIncome: number | null }>();
+  for (const row of candidateRows) {
+    const key = row.segmentName.toLowerCase();
+    const existing = deduped.get(key);
+    if (!existing || (row.revenue ?? 0) > (existing.revenue ?? 0)) {
+      deduped.set(key, { revenue: row.revenue, operatingIncome: row.operatingIncome });
+    }
+  }
+
+  return Array.from(deduped.entries())
+    .map(([name, vals]) => ({
+      segmentName: name
+        .split(" ")
+        .map((part) => (part ? part[0]!.toUpperCase() + part.slice(1) : part))
+        .join(" "),
+      segmentType: classifySegmentType(name),
+      revenue: vals.revenue,
+      operatingIncome: vals.operatingIncome,
+      depreciation: null,
+      capitalExpenditures: null,
+      totalAssets: null,
+      volumeUnits: null,
+      volumeUnitType: null,
+    }))
+    .slice(0, 8);
+}
+
 const BS_TAG_SET = new Set([
   "Assets", "AssetsCurrent", "AssetsNoncurrent",
   "CashAndCashEquivalentsAtCarryingValue", "CashAndCashEquivalents",
@@ -1331,10 +1436,16 @@ export async function POST(request: Request) {
       analysis.nonRecurringItems = nonRecurringItems;
     }
 
-    // Attach segments
-    if (segExtraction.segments && Array.isArray(segExtraction.segments) && segExtraction.segments.length > 0) {
+    // Attach segments (AI first, deterministic heuristic fallback).
+    const aiSegments: NonNullable<SegmentExtraction["segments"]> =
+      segExtraction.segments && Array.isArray(segExtraction.segments)
+        ? segExtraction.segments
+        : [];
+    const fallbackSegments = aiSegments.length === 0 ? extractSegmentsHeuristic(segInput) : [];
+    const segmentsToUse = aiSegments.length > 0 ? aiSegments : fallbackSegments;
+    if (segmentsToUse.length > 0) {
       const validVolumeTypes = new Set(["head", "cwt", "lbs", "cases"]);
-      analysis.segments = segExtraction.segments.map((seg) => {
+      analysis.segments = segmentsToUse.map((seg) => {
         const revenue = seg.revenue != null ? Math.round(Number(seg.revenue)) : null;
         const operatingIncome = seg.operatingIncome != null ? Math.round(Number(seg.operatingIncome)) : null;
         const opMargin = revenue && operatingIncome ? Math.round((operatingIncome / revenue) * 1000) / 10 : null;
@@ -1362,6 +1473,9 @@ export async function POST(request: Request) {
           operatingIncomePerUnit: opPerUnit,
         };
       });
+      if (aiSegments.length === 0 && fallbackSegments.length > 0) {
+        warnLog("[analyze-pdf] Segment heuristic fallback used:", fallbackSegments.map((s) => s.segmentName));
+      }
     }
 
     return NextResponse.json({ analysis });
