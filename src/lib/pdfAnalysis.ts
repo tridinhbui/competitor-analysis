@@ -418,7 +418,17 @@ const BS_DEFS: ItemDef[] = [
   },
   { tag: "RedeemableNoncontrollingInterestEquityCarryingAmount", label: "Redeemable noncontrolling interests", keywords: [/^redeemable\s+noncontrolling\s+interests?/i] },
   { tag: "RetainedEarningsAccumulatedDeficit", label: "Retained earnings", keywords: [/^retained\s+earnings/i, /^accumulated\s+deficit/i] },
-  { tag: "LiabilitiesAndStockholdersEquity", label: "Total liab. + equity", keywords: [/^total\s+liabilities\s+(and|&)\s+(stock|share)holders/i, /^total\s+liabilities\s+(and|&)\s+equity/i] },
+  {
+    tag: "LiabilitiesAndStockholdersEquity",
+    label: "Total liab. + equity",
+    keywords: [
+      /^total\s+liabilities\s+(and|&)\s+(stock|share)holders/i,
+      /^total\s+liabilities\s+(and|&)\s+equity/i,
+      /^total\s+liabilities\s+(and|&)\s+(stock|share)holders['\u2019]?\s+investment/i,
+      /^total\s+liabilities\s+(and|&)\s+shareowners?['\u2019]?\s+(equity|investment)/i,
+      /^total\s+liabilities\s+(and|&)\s+members?['\u2019]?\s+equity/i,
+    ],
+  },
   { tag: "AccumulatedOtherComprehensiveIncomeLoss", label: "AOCI", keywords: [/^accumulated\s+other\s+comprehensive/i] },
   { tag: "AdditionalPaidInCapital", label: "APIC", keywords: [/^additional\s+paid-?in\s+capital/i] },
   { tag: "IntangibleAssetsNet", label: "Intangible assets", keywords: [/^intangible\s+assets/i] },

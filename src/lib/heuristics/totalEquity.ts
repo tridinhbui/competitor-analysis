@@ -91,12 +91,27 @@ export function extractTotalEquityHeuristic(
       isTotal: true,
     },
     {
+      pattern: /^total\s+shareowners?['\u2019]?\s+(?:equity|investments?)\b/i,
+      confidence: "high",
+      isTotal: true,
+    },
+    {
       pattern: /^total\s+equity\b/i,
       confidence: "medium",
       isTotal: true,
     },
     {
+      pattern: /(?:company\s+name\s+)?shareholders?['\u2019]?\s+investment\b/i,
+      confidence: "medium",
+      isTotal: false,
+    },
+    {
       pattern: /^shareholders?['\u2019]?\s+investments?\b/i,
+      confidence: "medium",
+      isTotal: false,
+    },
+    {
+      pattern: /\bshareholders?['\u2019]?\s+investment\b/i,
       confidence: "medium",
       isTotal: false,
     },

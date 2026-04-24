@@ -4,7 +4,7 @@
 
 /** Combined L+E line matches /^total\s+liabilities\b/ but is not the standalone liabilities row. */
 export const LIABILITIES_AND_EQUITY_LINE_RE =
-  /total\s+liabilities\s+(and|&)\s+((stock|share)holders?['\u2019]?\s+equity|equity)/i;
+  /total\s+liabilities\s+(and|&)\s+(((stock|share)holders?['\u2019]?\s+(equity|investments?))|shareowners?['\u2019]?\s+(equity|investments?)|members?['\u2019]?\s+equity|equity)/i;
 
 export function parseNumbersForPdfHeuristic(input: string): number[] {
   const out: number[] = [];
