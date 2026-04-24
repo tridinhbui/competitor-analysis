@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, PanelLeftClose, PanelLeftOpen, Plus, Search, TrendingUp, UploadCloud, X, Trash2 } from "lucide-react";
 import type { CompanyComparisonPayload } from "@/lib/companyComparison";
 import {
@@ -28,7 +28,20 @@ interface ParsedEntry {
   sourceFileName: string;
 }
 
+interface SetupCompanySlot {
+  mode: "existing" | "new";
+  existingTicker: string;
+  newName: string;
+}
+
 const MAX_COMPANIES = 7;
+const NEW_COMPANY_VALUE = "__NEW_COMPANY__";
+
+function slugTickerFromName(name: string): string {
+  const letters = name.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!letters) return "";
+  return letters.slice(0, 5);
+}
 
 function uniqueTickers(list: string[]): string[] {
   return [...new Set(list.map((t) => t.trim().toUpperCase()).filter(Boolean))];
@@ -94,22 +107,35 @@ interface PeerComparisonViewProps {
   sidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
   onRegistryChanged?: () => void | Promise<void>;
+  newThreadSignal?: number;
+  onComparisonRecorded?: (label: string) => void;
 }
 
 export function PeerComparisonView({
   sidebarCollapsed = false,
   onToggleSidebar,
   onRegistryChanged,
+  newThreadSignal = 0,
+  onComparisonRecorded,
 }: PeerComparisonViewProps) {
+  type Mode = "setup" | "analysis";
   const [options, setOptions] = useState<CompanyOption[]>([]);
   const [selectedTickers, setSelectedTickers] = useState<string[]>([]);
+  const [mode, setMode] = useState<Mode>("analysis");
   const [loadingOpts, setLoadingOpts] = useState(true);
   const [comparing, setComparing] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<CompanyComparisonPayload | null>(null);
   const [activeTab, setActiveTab] = useState<CompareTab>("overview");
   const [setupCompanyCount, setSetupCompanyCount] = useState(2);
-  const [setupYearCount, setSetupYearCount] = useState(2);
+  const currentYear = new Date().getFullYear();
+  const minStartYear = 2020;
+  const [setupStartYear, setSetupStartYear] = useState(Math.max(currentYear - 1, minStartYear));
+  const [setupEndYear, setSetupEndYear] = useState(currentYear);
+  const [setupCompanies, setSetupCompanies] = useState<SetupCompanySlot[]>([
+    { mode: "existing", existingTicker: "", newName: "" },
+    { mode: "existing", existingTicker: "", newName: "" },
+  ]);
 
   // Full-screen guidance state
   const [showGuidance, setShowGuidance] = useState(false);
@@ -160,12 +186,71 @@ export function PeerComparisonView({
     };
   }, [showGuidance]);
 
-  const canAdd =
-    selectedTickers.length < MAX_COMPANIES &&
-    options.some((option) => !selectedTickers.includes(option.ticker));
+  useEffect(() => {
+    if (newThreadSignal <= 0) return;
+    // "+" = create new thread and reset to setup mode.
+    setMode("setup");
+    setError("");
+    setResult(null);
+    setSelectedTickers([]);
+    setQueuedFiles([]);
+    setParsedAnalyses([]);
+    setSetupCompanies(
+      Array.from({ length: setupCompanyCount }, (_, index) => ({
+        mode: "existing",
+        existingTicker: options[index]?.ticker ?? "",
+        newName: "",
+      }))
+    );
+    setGuidanceStatus("");
+    setShowGuidance(false);
+    setGuidanceStep(1);
+  }, [newThreadSignal, options, setupCompanyCount]);
+
+  useEffect(() => {
+    setSetupCompanies((current) => {
+      return Array.from({ length: setupCompanyCount }, (_, idx) => {
+        const existing = current[idx];
+        if (existing) return existing;
+        return {
+          mode: "existing",
+          existingTicker: options[idx]?.ticker ?? "",
+          newName: "",
+        };
+      });
+    });
+  }, [options, setupCompanyCount]);
+
+  const canAdd = selectedTickers.length < MAX_COMPANIES;
   const hasDuplicateSelection = new Set(selectedTickers).size !== selectedTickers.length;
-  const expectedFileCount = setupCompanyCount * setupYearCount * 4;
-  const uploadProgress = expectedFileCount > 0 ? Math.min(100, Math.round((queuedFiles.length / expectedFileCount) * 100)) : 0;
+  const yearCount = setupEndYear - setupStartYear + 1;
+  const resolvedSetupCompanies = useMemo(() => {
+    return setupCompanies
+      .slice(0, setupCompanyCount)
+      .map((entry, index) => {
+        if (entry.mode === "new") {
+          const name = entry.newName.trim();
+          const ticker = slugTickerFromName(name);
+          return {
+            index,
+            mode: entry.mode,
+            ticker,
+            name,
+            valid: Boolean(name && ticker),
+          };
+        }
+        const ticker = entry.existingTicker.trim().toUpperCase();
+        const company = options.find((candidate) => candidate.ticker === ticker);
+        return {
+          index,
+          mode: entry.mode,
+          ticker,
+          name: company?.name ?? ticker,
+          valid: Boolean(company && ticker),
+        };
+      });
+  }, [options, setupCompanies, setupCompanyCount]);
+  const expectedFileCount = setupCompanyCount * yearCount * 4;
 
   const updateRow = useCallback((index: number, ticker: string) => {
     setSelectedTickers((rows) => {
@@ -179,12 +264,30 @@ export function PeerComparisonView({
     setSelectedTickers((rows) => rows.filter((_, i) => i !== index));
   }, []);
 
+  const updateSetupCompany = useCallback((index: number, update: Partial<SetupCompanySlot>) => {
+    setSetupCompanies((rows) => {
+      const next = [...rows];
+      const current = next[index] ?? {
+        mode: "existing" as const,
+        existingTicker: "",
+        newName: "",
+      };
+      next[index] = { ...current, ...update };
+      return next;
+    });
+  }, []);
+
   const addRow = useCallback(() => {
     setSelectedTickers((rows) => {
       if (rows.length >= MAX_COMPANIES) return rows;
       const used = new Set(rows);
       const pick = options.find((o) => !used.has(o.ticker))?.ticker;
-      if (!pick) return rows;
+      if (!pick) {
+        setSetupCompanyCount(Math.min(MAX_COMPANIES, rows.length + 1));
+        setMode("setup");
+        setError("No additional companies on file. Add more companies in setup, then build comparison.");
+        return rows;
+      }
       return [...rows, pick];
     });
   }, [options]);
@@ -423,17 +526,55 @@ export function PeerComparisonView({
   }, [ingestAnalyses, parseDroppedFiles, parsedAnalyses]);
 
   const processSetupUploads = useCallback(async () => {
-    setGuidanceLoading(true);
     setError("");
+    if (setupEndYear < setupStartYear) {
+      setError("End Year must be greater than or equal to Start Year.");
+      return;
+    }
+    if (resolvedSetupCompanies.filter((entry) => entry.valid).length < 2) {
+      setError("Configure at least 2 valid companies.");
+      return;
+    }
+    const normalizedCompanies = resolvedSetupCompanies.filter((entry) => entry.valid);
+    const usedTickers = new Set(options.map((entry) => entry.ticker.toUpperCase()));
+    const activeCompanies = normalizedCompanies.map((entry, idx) => {
+      if (entry.mode !== "new") {
+        usedTickers.add(entry.ticker.toUpperCase());
+        return entry;
+      }
+      let base = entry.ticker.toUpperCase();
+      if (!base) base = `NEW${idx + 1}`;
+      let candidate = base;
+      let suffix = 1;
+      while (usedTickers.has(candidate)) {
+        const trimmed = base.slice(0, Math.max(1, 5 - String(suffix).length));
+        candidate = `${trimmed}${suffix}`;
+        suffix += 1;
+      }
+      usedTickers.add(candidate);
+      return { ...entry, ticker: candidate };
+    });
+    setGuidanceLoading(true);
     try {
-      const analyses = parsedAnalyses.length > 0 ? parsedAnalyses : await parseDroppedFiles();
-      await ingestAnalyses(analyses, setupCompanyCount);
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Failed to process uploaded filings");
+      for (const company of activeCompanies.filter((entry) => entry.mode === "new")) {
+        await fetch("/api/filings/peer", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ticker: company.ticker,
+            name: company.name || company.ticker,
+            peerType: "diversified-protein",
+          }),
+        });
+      }
+      await loadOptions();
+      await onRegistryChanged?.();
     } finally {
       setGuidanceLoading(false);
     }
-  }, [ingestAnalyses, parseDroppedFiles, parsedAnalyses, setupCompanyCount]);
+    setSelectedTickers(activeCompanies.map((company) => company.ticker).slice(0, MAX_COMPANIES));
+    setMode("analysis");
+  }, [loadOptions, onRegistryChanged, options, resolvedSetupCompanies, setupEndYear, setupStartYear]);
 
   const compare = useCallback(async () => {
     const tickers = uniqueTickers(selectedTickers);
@@ -452,13 +593,17 @@ export function PeerComparisonView({
         throw new Error(payload.error || `HTTP ${response.status}`);
       }
 
+      const comparisonLabel = tickers
+        .map((ticker) => options.find((entry) => entry.ticker === ticker)?.name || ticker)
+        .join(" vs ");
+      onComparisonRecorded?.(comparisonLabel);
       setResult(await response.json());
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Comparison failed");
     } finally {
       setComparing(false);
     }
-  }, [selectedTickers]);
+  }, [onComparisonRecorded, options, selectedTickers]);
 
   if (result) {
     return (
@@ -882,7 +1027,7 @@ export function PeerComparisonView({
             <Loader2 className="h-4 w-4 animate-spin" />
             Loading analyzed companies...
           </div>
-        ) : options.length < 2 ? (
+        ) : mode === "setup" ? (
           <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-5">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">Setup</p>
@@ -890,7 +1035,7 @@ export function PeerComparisonView({
               <p className="mt-1 text-sm text-slate-500">Pick the size first, then upload the PDF quarters.</p>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-3">
               <div>
                 <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Companies</label>
                 <select
@@ -907,15 +1052,30 @@ export function PeerComparisonView({
               </div>
 
               <div>
-                <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Years</label>
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Start year</label>
                 <select
-                  value={setupYearCount}
-                  onChange={(event) => setSetupYearCount(Number(event.target.value))}
+                  value={setupStartYear}
+                  onChange={(event) => setSetupStartYear(Number(event.target.value))}
                   className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
                 >
-                  {[1, 2, 3, 4, 5].map((count) => (
-                    <option key={count} value={count}>
-                      {count} year{count > 1 ? "s" : ""}
+                  {Array.from({ length: currentYear - minStartYear + 1 }, (_, index) => currentYear - index).map((year) => (
+                    <option key={year} value={year}>
+                      {year}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">End year</label>
+                <select
+                  value={setupEndYear}
+                  onChange={(event) => setSetupEndYear(Number(event.target.value))}
+                  className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
+                >
+                  {Array.from({ length: currentYear - setupStartYear + 1 }, (_, index) => setupStartYear + index).map((year) => (
+                    <option key={year} value={year}>
+                      {year}
                     </option>
                   ))}
                 </select>
@@ -924,82 +1084,66 @@ export function PeerComparisonView({
 
             <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
               Target: <span className="font-semibold text-slate-900">{expectedFileCount}</span> filings
-              <span className="text-slate-400"> · {queuedFiles.length} queued · {uploadProgress}%</span>
+              <span className="text-slate-400"> · range {setupStartYear}-{setupEndYear}</span>
             </div>
 
-            <button
-              type="button"
-              onClick={() => inputRef.current?.click()}
-              onDragOver={(event) => {
-                event.preventDefault();
-                setDragActive(true);
-              }}
-              onDragLeave={() => setDragActive(false)}
-              onDrop={(event) => {
-                event.preventDefault();
-                setDragActive(false);
-                addFiles(event.dataTransfer.files);
-              }}
-              className={`w-full rounded-2xl border-2 border-dashed p-6 text-left transition ${
-                dragActive ? "border-primary bg-primary/5" : "border-slate-200 bg-white hover:border-primary/30"
-              }`}
-            >
-              <div className="flex items-start gap-3">
-                <UploadCloud className="mt-0.5 h-6 w-6 text-slate-400" />
-                <div>
-                  <p className="text-base font-semibold text-slate-800">Drop PDF filings here</p>
-                  <p className="mt-1 text-sm text-slate-500">10-Q or 10-K PDFs are supported.</p>
-                </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-3">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Company slots</p>
+              <div className="space-y-3">
+                {Array.from({ length: setupCompanyCount }, (_, index) => (
+                  <div key={index} className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
+                    <select
+                      value={
+                        setupCompanies[index]?.mode === "new"
+                          ? NEW_COMPANY_VALUE
+                          : (setupCompanies[index]?.existingTicker || "")
+                      }
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        if (value === NEW_COMPANY_VALUE) {
+                          updateSetupCompany(index, {
+                            mode: "new",
+                            existingTicker: "",
+                            newName: "",
+                          });
+                          return;
+                        }
+                        updateSetupCompany(index, {
+                          mode: "existing",
+                          existingTicker: value,
+                          newName: "",
+                        });
+                      }}
+                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
+                    >
+                      <option value="">Select company {index + 1}</option>
+                      {options.map((option) => (
+                        <option key={option.ticker} value={option.ticker}>
+                          {option.ticker} - {option.name}
+                        </option>
+                      ))}
+                      <option value={NEW_COMPANY_VALUE}>New Company</option>
+                    </select>
+                    {setupCompanies[index]?.mode === "new" ? (
+                      <div className="rounded-md border border-slate-200 bg-white p-2">
+                        <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                          Company name
+                        </label>
+                        <input
+                          type="text"
+                          value={setupCompanies[index]?.newName || ""}
+                          onChange={(event) => updateSetupCompany(index, { newName: event.target.value })}
+                          placeholder="Enter company name"
+                          className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-900 outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
+                        />
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          Upload filings later in Quarter Coverage.
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
               </div>
-            </button>
-            <input
-              ref={inputRef}
-              type="file"
-              accept=".pdf"
-              multiple
-              className="hidden"
-              onChange={(event) => {
-                if (event.target.files) addFiles(event.target.files);
-                event.currentTarget.value = "";
-              }}
-            />
-
-            {queuedFiles.length > 0 ? (
-              <div className="rounded-xl border border-slate-200 bg-white p-3">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Queued filings</p>
-                  <span className="text-[11px] text-slate-400">{queuedFiles.length} file(s)</span>
-                </div>
-                <div className="space-y-1">
-                  {queuedFiles.map((file, idx) => (
-                    <div key={`${file.name}-${idx}`} className="flex items-center justify-between rounded-md bg-slate-50 px-2 py-1.5 text-xs text-slate-700">
-                      <span className="truncate">{file.name}</span>
-                      <button type="button" onClick={() => removeQueuedFile(idx)} className="rounded p-1 hover:bg-slate-200">
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => inputRef.current?.click()}
-                className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-              >
-                Browse PDFs
-              </button>
-              <button
-                type="button"
-                onClick={processSetupUploads}
-                disabled={guidanceLoading || queuedFiles.length === 0}
-                className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {guidanceLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
-                {guidanceLoading ? "Processing..." : "Build comparison"}
-              </button>
             </div>
 
             {options.length === 1 ? (
@@ -1007,6 +1151,18 @@ export function PeerComparisonView({
                 One company is already on file. Add at least one more company to compare side by side.
               </div>
             ) : null}
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={processSetupUploads}
+                disabled={guidanceLoading}
+                className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {guidanceLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
+                {guidanceLoading ? "Processing..." : "Build comparison"}
+              </button>
+            </div>
           </div>
         ) : (
           <>

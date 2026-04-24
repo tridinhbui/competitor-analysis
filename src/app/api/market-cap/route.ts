@@ -22,7 +22,16 @@ export async function GET(req: NextRequest) {
     });
 
     if (!res.ok) {
-      return NextResponse.json({ error: `Yahoo API returned ${res.status}` }, { status: 502 });
+      return NextResponse.json({
+        ticker,
+        name: ticker,
+        price: null,
+        marketCapM: null,
+        sharesOutstandingM: null,
+        currency: "USD",
+        source: "yahoo-finance",
+        warning: `Yahoo API returned ${res.status}`,
+      });
     }
 
     const data = await res.json() as {
@@ -42,7 +51,16 @@ export async function GET(req: NextRequest) {
 
     const meta = data.chart?.result?.[0]?.meta;
     if (!meta) {
-      return NextResponse.json({ error: "No data found for ticker" }, { status: 404 });
+      return NextResponse.json({
+        ticker,
+        name: ticker,
+        price: null,
+        marketCapM: null,
+        sharesOutstandingM: null,
+        currency: "USD",
+        source: "yahoo-finance",
+        warning: "No data found for ticker",
+      });
     }
 
     const price = meta.regularMarketPrice ?? meta.previousClose ?? null;
@@ -96,9 +114,15 @@ export async function GET(req: NextRequest) {
       source: "yahoo-finance",
     });
   } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Failed to fetch market data" },
-      { status: 502 }
-    );
+    return NextResponse.json({
+      ticker,
+      name: ticker,
+      price: null,
+      marketCapM: null,
+      sharesOutstandingM: null,
+      currency: "USD",
+      source: "yahoo-finance",
+      warning: e instanceof Error ? e.message : "Failed to fetch market data",
+    });
   }
 }

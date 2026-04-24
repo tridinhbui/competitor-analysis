@@ -1,14 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AnalysisModulesSidebar, WorkspacePanel, type WorkspacePanelActions } from "@/components/workspace/WorkspacePanel";
+import { WorkspacePanel, type WorkspacePanelActions } from "@/components/workspace/WorkspacePanel";
 import { AnalysisResults } from "@/components/workspace/AnalysisResults";
 import { SlideBlocksPanel } from "@/components/workspace/SlideBlocksPanel";
 import { PeerModulePanel } from "@/components/workspace/PeerModulePanel";
 import { PeerComparisonView } from "@/components/workspace/PeerComparisonView";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { MacroInsightsPanel } from "@/components/workspace/MacroInsightsPanel";
-import type { CompanyRegistry, ModuleReadiness, TimelineSlot, WorkspaceReadiness } from "@/types/competitor";
+import type { CompanyRegistry, TimelineSlot, WorkspaceReadiness } from "@/types/competitor";
 import {
   Boxes,
   Loader2,
@@ -30,9 +30,10 @@ export default function WorkspacePage() {
   const [activeSection, setActiveSection] = useState<WorkspaceSection>("overview");
   const [loading, setLoading] = useState(true);
   const [companiesOpen, setCompaniesOpen] = useState(true);
-  const [analysisModulesOpen, setAnalysisModulesOpen] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [clearingAll, setClearingAll] = useState(false);
+  const [newThreadSignal, setNewThreadSignal] = useState(0);
+  const [comparisonHistory, setComparisonHistory] = useState<string[]>([]);
 
   const clearAllCompanies = useCallback(async () => {
     const confirmation = window.prompt(
@@ -93,9 +94,15 @@ export default function WorkspacePage() {
   }, [selectedTicker]);
 
   useEffect(() => {
-    setAnalysisModulesOpen(true);
     setOverviewReadiness(null);
   }, [selectedTicker]);
+
+  const recordComparison = useCallback((label: string) => {
+    setComparisonHistory((current) => {
+      const next = [label, ...current.filter((entry) => entry !== label)];
+      return next.slice(0, 12);
+    });
+  }, []);
 
   const handleDeleteCompany = useCallback(async (ticker: string) => {
     if (deletingTicker) return;
@@ -164,7 +171,7 @@ export default function WorkspacePage() {
               </div>
             </div>
           </div>
-          <PeerComparisonView onRegistryChanged={() => loadRegistry()} />
+          <PeerComparisonView onRegistryChanged={() => loadRegistry()} onComparisonRecorded={recordComparison} />
         </div>
       ) : (
         <div className={`grid gap-4 ${sidebarCollapsed ? "lg:grid-cols-[56px_1fr]" : "lg:grid-cols-[240px_1fr]"}`}>
@@ -195,20 +202,13 @@ export default function WorkspacePage() {
             {activeSection === "overview" && overviewReadiness ? (
               <div className="rounded-xl border border-slate-200 bg-white shadow-subtle">
                 <div className="px-3 pt-3 pb-2">
-                  <div className="min-w-0">
-                    <h3 className="text-[15px] font-bold leading-tight text-slate-900">
-                      {overviewReadiness.company.name}
-                    </h3>
-                    <p className="mt-1 text-xs text-slate-400">{overviewReadiness.company.ticker}</p>
-                  </div>
-                  <div className="mt-2 flex items-center gap-1">
-                    <button
-                      onClick={() => panelActionsRef.current?.upload()}
-                      className="workspace-interactive inline-flex h-8 items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
-                    >
-                      <Plus className="h-3 w-3" />
-                      Upload
-                    </button>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <h3 className="text-[15px] font-bold leading-tight text-slate-900">
+                        {overviewReadiness.company.name}
+                      </h3>
+                      <p className="mt-1 text-xs text-slate-400">{overviewReadiness.company.ticker}</p>
+                    </div>
                     <button
                       type="button"
                       onClick={() => panelActionsRef.current?.reset()}
@@ -249,13 +249,51 @@ export default function WorkspacePage() {
 
             {/* Company list */}
             <div>
+              <div className="mb-2 rounded-lg border border-slate-200 bg-white p-2">
+                <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-slate-400">Comparison History</p>
+                {comparisonHistory.length > 0 ? (
+                  <div className="space-y-1">
+                    {comparisonHistory.map((entry, index) => (
+                      <div key={`${entry}-${index}`} className="truncate rounded bg-slate-50 px-2 py-1 text-[11px] text-slate-600">
+                        {entry}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-400">No comparisons yet.</p>
+                )}
+              </div>
+
               <button
                 type="button"
                 onClick={() => setCompaniesOpen((current) => !current)}
                 className="workspace-interactive mb-2 flex w-full items-center justify-between rounded-lg px-2 py-1 [font-family:var(--font-body)] text-[10px] font-semibold uppercase tracking-widest text-slate-400 hover:bg-slate-50"
               >
                 <span>Companies</span>
-                {companiesOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                <span className="flex items-center gap-1.5">
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setActiveSection("overview");
+                      setNewThreadSignal((current) => current + 1);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setActiveSection("overview");
+                      setNewThreadSignal((current) => current + 1);
+                    }}
+                    className="workspace-interactive inline-flex h-5 w-5 items-center justify-center rounded border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
+                    title="Create new thread"
+                    aria-label="Create new thread"
+                  >
+                    <Plus className="h-3 w-3" />
+                  </span>
+                  {companiesOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                </span>
               </button>
               {/* Clear all button — shown when companies exist */}
               {registry && registry.companies.length > 0 ? (
@@ -312,15 +350,6 @@ export default function WorkspacePage() {
               ) : null}
             </div>
 
-            {/* Analysis modules */}
-            {activeSection === "overview" && overviewReadiness?.modules?.length ? (
-              <AnalysisModulesSidebar
-                modules={overviewReadiness.modules as ModuleReadiness[]}
-                readyCount={overviewReadiness.modules.filter((module) => module.ready).length}
-                open={analysisModulesOpen}
-                onToggle={() => setAnalysisModulesOpen((current) => !current)}
-              />
-            ) : null}
               </>
             )}
           </div>
@@ -359,7 +388,6 @@ export default function WorkspacePage() {
               <div className="space-y-3 workspace-section-enter">
                 <WorkspacePanel
                   ticker={selectedTicker}
-                  showAnalysisModules={false}
                   hideHeader
                   onReadinessLoaded={setOverviewReadiness}
                   onActionsReady={handleActionsReady}
@@ -368,6 +396,8 @@ export default function WorkspacePage() {
                   sidebarCollapsed={sidebarCollapsed}
                   onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
                   onRegistryChanged={() => loadRegistry()}
+                  newThreadSignal={newThreadSignal}
+                  onComparisonRecorded={recordComparison}
                 />
               </div>
             ) : null}
