@@ -189,6 +189,12 @@ export function buildDebtStructure(bs: BSItem[]): DebtStructure {
         ? grossFromNetPlusCash
         : computedGross;
 
+  // Fallback when non-current debt line is missing but gross debt exists.
+  if (ltDebt <= 0 && total > 0) {
+    const impliedLt = total - stDebt - financeLease;
+    if (impliedLt > 0) ltDebt = impliedLt;
+  }
+
   const cash = cashForDebt;
   const netDebt = total - cash;
 

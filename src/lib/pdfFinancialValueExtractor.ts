@@ -114,6 +114,19 @@ interface ParsedLine {
   section: PdfSection;
 }
 
+function pickPrimaryValue(numbers: number[]): number | null {
+  if (numbers.length === 0) return null;
+  if (numbers.length === 1) return numbers[0];
+  const absVals = numbers.map((n) => Math.abs(n));
+  const maxAbs = Math.max(...absVals);
+  if (maxAbs <= 0) return numbers[0];
+
+  // Skip small inline footnote amounts (e.g., allowance values) and keep first material column value.
+  const materialThreshold = Math.max(50, maxAbs * 0.1);
+  const firstMaterial = numbers.find((n) => Math.abs(n) >= materialThreshold);
+  return firstMaterial ?? numbers[0];
+}
+
 const METRICS: Record<PdfFinancialMetric, MetricConfig> = {
   revenue: {
     tag: "Revenues",
@@ -352,11 +365,15 @@ const METRICS: Record<PdfFinancialMetric, MetricConfig> = {
     patterns: [
       /^long[-\s]term\s+debt\b/i,
       /^long[-\s]term\s+debt\s+excluding\b/i,
+      /^long[-\s]term\s+debt\s+less\s+current\s+maturities\b/i,
+      /^long[-\s]term\s+debt,?\s+less\s+current\s+maturities\b/i,
+      /^long[-\s]term\s+debt,?\s+net\s+of\s+current\b/i,
+      /^long[-\s]term\s+portion\s+of\s+debt\b/i,
     ],
-    exactLabel: /^long[-\s]term\s+debt$/i,
+    exactLabel: /^long[-\s]term\s+debt(?:\s+less\s+current\s+maturities)?$/i,
     preferredSections: ["balance_sheet"],
     reject:
-      /\b(interest\s+expense|fair\s+value|derivative|net\s+of|current\s+portion|maturities|weighted|average|rate)\b/i,
+      /\b(interest\s+expense|fair\s+value|derivative|weighted|average|rate|current\s+maturities\s+of|current\s+portion\s+of)\b/i,
     abs: true,
   },
   currentMaturitiesLongTermDebt: {
@@ -396,10 +413,14 @@ const METRICS: Record<PdfFinancialMetric, MetricConfig> = {
   accountsReceivable: {
     tag: "AccountsReceivableNetCurrent",
     label: "Accounts receivable, net",
-    patterns: [/^accounts\s+receivable\b/i, /^trade\s+receivable\b/i],
+    patterns: [
+      /^accounts\s+receivable\b/i,
+      /^trade\s+receivables?\b/i,
+      /^receivables?,?\s+net\b/i,
+    ],
     exactLabel: /^accounts\s+receivable(?:,\s*net)?$/i,
     preferredSections: ["balance_sheet"],
-    reject: /\b(increase|decrease|change\s+in|allowance|turnover|days|segment)\b/i,
+    reject: /\b(increase|decrease|change\s+in|turnover|days|segment)\b/i,
     abs: true,
   },
   propertyPlantAndEquipment: {
@@ -408,9 +429,12 @@ const METRICS: Record<PdfFinancialMetric, MetricConfig> = {
     patterns: [
       /^(?:net\s+)?property,?\s*plant\s+and\s+equipment\b/i,
       /^property\s+and\s+equipment,?\s*net\b/i,
+      /^net\s+property,?\s+plant,?\s+and\s+equipment\b/i,
+      /^net\s+property\s+and\s+equipment\b/i,
+      /^property,?\s*plant\s+and\s+equipment,?\s*net\b/i,
     ],
     exactLabel:
-      /^(?:net\s+)?property,?\s*plant\s+and\s+equipment(?:,?\s*net)?$/i,
+      /^(?:net\s+)?property,?\s*plant(?:,?\s+and\s+equipment)?(?:,?\s*net)?$/i,
     preferredSections: ["balance_sheet"],
     reject:
       /\b(additions|depreciation|accumulated|purchase|capital\s+expenditure|impairment|disposal|segment)\b/i,
@@ -610,7 +634,25 @@ function parseLines(text: string): ParsedLine[] {
     }
 
     const line = parseLine(lines[i], i, section);
-    if (line) parsed.push(line);
+    if (!line) continue;
+
+    const prev = parsed.length > 0 ? parsed[parsed.length - 1] : null;
+    const isNumericContinuation =
+      line.numbers.length > 0 &&
+      line.label.length === 0 &&
+      prev != null &&
+      prev.section === line.section &&
+      prev.label.length > 0 &&
+      prev.numbers.length === 0;
+
+    if (isNumericContinuation && prev) {
+      prev.numbers = line.numbers;
+      prev.raw = `${prev.raw} ${line.raw}`.trim();
+      prev.dashCount += line.dashCount;
+      continue;
+    }
+
+    parsed.push(line);
   }
 
   return parsed;
@@ -667,7 +709,8 @@ export function extractPdfFinancialValue(
     if (!config.patterns.some((pattern) => pattern.test(line.label))) continue;
     if (line.numbers.length === 0) continue;
 
-    const selected = line.numbers[0];
+    const selected = pickPrimaryValue(line.numbers);
+    if (selected == null) continue;
     const rawValue = config.abs ? Math.abs(selected) : selected;
     const value = Math.round(rawValue * scale * 100) / 100;
     if (config.minAbs != null && Math.abs(value) < config.minAbs) continue;

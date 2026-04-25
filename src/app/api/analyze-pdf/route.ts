@@ -58,7 +58,7 @@ Items MUST use ONLY these EXACT tags (do not output income or cash flow tags in 
 - AccountsReceivableNetCurrent -> Accounts receivable current
 - InventoryNet -> Inventories
 - PrepaidExpenseAndOtherAssetsCurrent -> Prepaid expenses & other current assets
-- PropertyPlantAndEquipmentNet -> Property, plant & equipment, net
+- PropertyPlantAndEquipmentNet -> Property, plant & equipment, net; also match "Net Property, Plant, and Equipment", "Net property, plant and equipment", "PP&E, net", "Net PP&E"
 - Goodwill -> Goodwill
 - IntangibleAssetsNet -> Intangible assets, net
 - OtherAssetsNoncurrent -> Other non-current assets
@@ -71,7 +71,7 @@ Items MUST use ONLY these EXACT tags (do not output income or cash flow tags in 
 - AccruedLiabilitiesCurrent -> Accrued expenses / accrued liabilities
 - DeferredRevenueCurrent -> Deferred revenue (current)
 - DebtCurrent -> Current portion of long-term debt / short-term borrowings / notes payable current
-- LongTermDebtNoncurrent -> Long-term debt (non-current portion)
+- LongTermDebtNoncurrent -> Long-term debt (non-current portion); also match "Long-term Debt Less Current Maturities", "Long-term debt, less current maturities", "Long-term debt, net of current portion", "Long-term portion of debt"
 - LongTermDebt -> Long-term debt (if only one debt line is shown)
 - ShortTermBorrowings -> Short-term borrowings / revolving credit (if separate from current portion of LT debt)
 - LongTermDebtCurrent -> Current maturities of long-term debt (if shown as separate line from DebtCurrent)
@@ -82,13 +82,13 @@ Items MUST use ONLY these EXACT tags (do not output income or cash flow tags in 
 - FinanceLeaseLiabilityNoncurrent -> Finance lease obligations (non-current portion)
 - PensionAndOtherPostretirementDefinedBenefitPlansLiabilitiesNoncurrent -> Pension / OPEB obligations (non-current)
 - RedeemableNoncontrollingInterestEquityCarryingAmount -> Redeemable noncontrolling interests (mezzanine)
-- StockholdersEquity -> Total stockholders' equity / shareholders' equity (NET after treasury & AOCI)
+- StockholdersEquity -> Total stockholders' equity / shareholders' equity / shareholders' investment / shareowners' equity / members' equity; also match "Total Shareholders' Investment", "Hormel Foods Corporation Shareholders' Investment", "Total shareowners' equity", "Total members' equity" (NET after treasury & AOCI)
 - CommonStockValue -> Common stock
 - AdditionalPaidInCapital -> Additional paid-in capital / APIC
 - RetainedEarningsAccumulatedDeficit -> Retained earnings / accumulated deficit
 - TreasuryStockValue -> Treasury stock (NEGATIVE when parenthesized)
 - AccumulatedOtherComprehensiveIncomeLoss -> AOCI
-- LiabilitiesAndStockholdersEquity -> Total liabilities and stockholders' equity
+- LiabilitiesAndStockholdersEquity -> Total liabilities and stockholders' equity / total liabilities and shareholders' investment; also match "Total Liabilities and Shareholders' Investment"
 - MinorityInterest -> Noncontrolling interests inside total equity
 
 Balance-sheet rules:
@@ -98,7 +98,7 @@ Balance-sheet rules:
 - If a line item matches multiple tags, pick the most specific one.
 - ALL parenthesized values (1,234) are NEGATIVE where applicable (TreasuryStockValue, AOCI, etc.).
 - TreasuryStockValue MUST be negative when shown in parentheses.
-- StockholdersEquity: prefer the FINAL total line; if Company vs Total exist, choose TOTAL (includes NCI).
+- StockholdersEquity: prefer the FINAL total line; if Company vs Total exist, choose TOTAL (includes NCI); treat "Total Shareholders' Investment" as equity.
 - Validate Assets ~ Liabilities + Equity; if mismatch, re-check StockholdersEquity.
 - Do NOT invent numbers.
 `;
@@ -460,6 +460,29 @@ const CF_TAG_SET = new Set([
   "PaymentsOfDividendsCommonStock", "PaymentsForRepurchaseOfCommonStock", "NetCashProvidedByFinancingActivities",
 ]);
 
+const TAG_ALIASES: Record<string, string> = {
+  // Balance sheet aliases seen in non-standard filings/model output
+  PropertyPlantAndEquipment: "PropertyPlantAndEquipmentNet",
+  PropertyPlantAndEquipmentGross: "PropertyPlantAndEquipmentNet",
+  NetPropertyPlantAndEquipment: "PropertyPlantAndEquipmentNet",
+  PropertyPlantEquipmentNet: "PropertyPlantAndEquipmentNet",
+  AccountsReceivable: "AccountsReceivableNetCurrent",
+  TradeAccountsReceivable: "AccountsReceivableNetCurrent",
+  AccountsReceivableCurrent: "AccountsReceivableNetCurrent",
+  LongTermDebtLessCurrentMaturities: "LongTermDebtNoncurrent",
+  LongTermDebtNetOfCurrentPortion: "LongTermDebtNoncurrent",
+  LongTermPortionOfDebt: "LongTermDebtNoncurrent",
+  TotalShareholdersInvestment: "StockholdersEquity",
+  ShareholdersInvestment: "StockholdersEquity",
+  TotalLiabilitiesAndShareholdersInvestment: "LiabilitiesAndStockholdersEquity",
+
+};
+
+function canonicalTag(tag: string): string {
+  const t = tag.trim();
+  return TAG_ALIASES[t] ?? t;
+}
+
 function parseAiEnvelope(raw: unknown): { meta: ExtractionMeta; items: RawAiItem[] } {
   const meta: ExtractionMeta = {};
   const items: RawAiItem[] = [];
@@ -533,7 +556,7 @@ function itemValueForTag(tag: string, v: number | string | null | undefined): nu
 }
 
 function rawAiToBSItem(it: RawAiItem, period: string, kind: "bs" | "cf"): BSItem | null {
-  const tag = String(it.tag ?? "").trim();
+  const tag = canonicalTag(String(it.tag ?? ""));
   if (!tag) return null;
   return {
     tag,
@@ -576,6 +599,20 @@ function normalizeScaleNote(s: string | undefined): string | undefined {
   return undefined;
 }
 
+function detectScaleFromText(text: string): string | undefined {
+  const first8000 = text.slice(0, 8000);
+  if (/in\s+thousands?,\s+except\s+(?:per\s+share|share)/i.test(first8000)) {
+    return "thousands";
+  }
+  if (/amounts?\s+in\s+thousands/i.test(first8000)) return "thousands";
+  if (/\(\s*in\s+thousands?\s*\)/i.test(first8000)) return "thousands";
+  if (/in\s+millions?,\s+except\s+(?:per\s+share|share)/i.test(first8000)) {
+    return "millions";
+  }
+  if (/\(\s*in\s+millions?\s*\)/i.test(first8000)) return "millions";
+  return undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Section detection ├â┬ó├óΓÇÜ┬¼├óΓé¼┬¥ find the right text for each AI call
 // ---------------------------------------------------------------------------
@@ -595,7 +632,7 @@ function findSection(text: string, patterns: RegExp[], maxLen: number): string {
     const globalRe = new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
     let match: RegExpExecArray | null;
     while ((match = globalRe.exec(text)) !== null) {
-      const idx = match.index;
+      const idx = Math.max(0, match.index - 3000);
       // Skip if this offset is within an already-captured range
       const rounded = Math.floor(idx / 1000) * 1000;
       if (usedOffsets.has(rounded)) continue;
@@ -623,7 +660,9 @@ function extractSections(text: string): {
   const bsText = findSection(text, [
     /(?:condensed\s+)?(?:consolidated\s+)?balance\s+sheet/i,
     /(?:condensed\s+)?(?:consolidated\s+)?(?:statements?\s+of\s+)?financial\s+position/i,
-  ], 22_000);
+    /total\s+current\s+assets\b/i,
+    /current\s+assets\b/i,
+  ], 32_000);
 
   const isText = findSection(text, [
     /(?:condensed\s+)?(?:consolidated\s+)?statements?\s+of\s+(?:operations?|income|earnings)/i,
@@ -942,7 +981,9 @@ export async function POST(request: Request) {
       bsExtraction.scaleNote ??
       isCfParsed.meta.scaleNote;
     const scaleForHeuristics =
-      normalizeScaleNote(mergedScaleRaw) ?? bsExtraction.scaleNote;
+      normalizeScaleNote(mergedScaleRaw) ??
+      normalizeScaleNote(bsExtraction.scaleNote) ??
+      detectScaleFromText(filingText);
 
     const mergedCompanyName =
       bsParsed.meta.companyName ??
@@ -953,12 +994,12 @@ export async function POST(request: Request) {
     // Build BSItem arrays with exact tags + PDF provenance when model provides it.
     // Keep compatibility with legacy model JSON shape (`items: [{tag,label,value}]`).
     const bsFromParsed = bsParsed.items
-      .filter((it) => BS_TAG_SET.has(String(it.tag ?? "")))
+      .filter((it) => BS_TAG_SET.has(canonicalTag(String(it.tag ?? ""))))
       .map((it) => rawAiToBSItem(it, period, "bs"))
       .filter((x): x is BSItem => x != null);
     const bsFromLegacy = toBsItems(
       (bsExtraction.items as Array<{ tag: string; label: string; value: number | string | null }> | undefined)
-        ?.filter((it) => BS_TAG_SET.has(String(it.tag ?? ""))),
+        ?.filter((it) => BS_TAG_SET.has(canonicalTag(String(it.tag ?? "")))),
       period,
       "AI:bs"
     );
@@ -976,7 +1017,7 @@ export async function POST(request: Request) {
       const existingEquityItem = bsItems.find((item) => item.tag === "StockholdersEquity");
       const existingEquityValue = existingEquityItem?.value ?? null;
       const existingEquityLooksCompanySpecific = existingEquityItem
-        ? /^company\s+shareholders?['\u2019]?\s+equity/i.test(existingEquityItem.label)
+        ? /^company\s+shareholders?['\u2019]?\s+(?:equity|investments?)/i.test(existingEquityItem.label)
         : false;
 
       const currentGap = computeBalanceGapPct(assetsValue, liabilitiesValue, existingEquityValue);
@@ -1080,12 +1121,12 @@ export async function POST(request: Request) {
     }
 
     const cfFromParsed = isCfParsed.items
-      .filter((it) => CF_TAG_SET.has(String(it.tag ?? "")))
+      .filter((it) => CF_TAG_SET.has(canonicalTag(String(it.tag ?? ""))))
       .map((it) => rawAiToBSItem(it, period, "cf"))
       .filter((x): x is BSItem => x != null);
     const cfFromLegacy = toBsItems(
       (isCfExtraction.items as Array<{ tag: string; label: string; value: number | string | null }> | undefined)
-        ?.filter((it) => CF_TAG_SET.has(String(it.tag ?? ""))),
+        ?.filter((it) => CF_TAG_SET.has(canonicalTag(String(it.tag ?? "")))),
       period,
       "AI:cf"
     );

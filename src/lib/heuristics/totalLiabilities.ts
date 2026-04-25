@@ -26,6 +26,10 @@ export function extractTotalLiabilitiesHeuristic(
     .filter(Boolean);
 
   const liabilitiesAndEquityPattern = LIABILITIES_AND_EQUITY_LINE_RE;
+  const liabilitiesAndInvestmentPattern =
+    /total\s+liabilities\s+and\s+shareholders?['\u2019]?\s+investment/i;
+  const liabilitiesAndShareownersPattern =
+    /total\s+liabilities\s+and\s+shareowners?['\u2019]?\s+(?:equity|investment)/i;
   const totalLiabilitiesPattern = /^total\s+liabilities\b/i;
 
   let leIdx = -1;
@@ -64,7 +68,9 @@ export function extractTotalLiabilitiesHeuristic(
   for (let i = scanHi; i >= scanLo; i--) {
     if (
       totalLiabilitiesPattern.test(lines[i]) &&
-      !liabilitiesAndEquityPattern.test(lines[i])
+      !liabilitiesAndEquityPattern.test(lines[i]) &&
+      !liabilitiesAndInvestmentPattern.test(lines[i]) &&
+      !liabilitiesAndShareownersPattern.test(lines[i])
     ) {
       const parsed = tryParseLine(i);
       if (!parsed) continue;
@@ -78,7 +84,9 @@ export function extractTotalLiabilitiesHeuristic(
     for (let i = lines.length - 1; i >= 0; i--) {
       if (
         totalLiabilitiesPattern.test(lines[i]) &&
-        !liabilitiesAndEquityPattern.test(lines[i])
+        !liabilitiesAndEquityPattern.test(lines[i]) &&
+        !liabilitiesAndInvestmentPattern.test(lines[i]) &&
+        !liabilitiesAndShareownersPattern.test(lines[i])
       ) {
         const parsed = tryParseLine(i);
         if (!parsed) continue;
