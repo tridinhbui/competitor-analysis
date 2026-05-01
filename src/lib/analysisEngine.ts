@@ -78,6 +78,17 @@ function pct(a: number | null, b: number | null): number | null {
   return r != null ? Math.round(r * 1000) / 10 : null;
 }
 
+function fmt2(v: number): string {
+  return v.toFixed(2);
+}
+
+function fmtM2(v: number): string {
+  return v.toLocaleString("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Balance sheet
 // ---------------------------------------------------------------------------
@@ -151,7 +162,7 @@ export function buildBalanceSheet(bs: BSItem[]): BalanceSheet {
 
 export function buildDebtStructure(bs: BSItem[]): DebtStructure {
   // Sum all short-term / current debt pieces (do NOT use || — that drops components when DebtCurrent is non-zero).
-  const stDebt =
+  let stDebt =
     find(bs, "DebtCurrent") +
     find(bs, "ShortTermBorrowings") +
     find(bs, "LongTermDebtCurrent");
@@ -174,33 +185,56 @@ export function buildDebtStructure(bs: BSItem[]): DebtStructure {
     findOrNull(bs, "CashAndCashEquivalentsAtCarryingValue") ??
     findOrNull(bs, "CashAndCashEquivalents") ??
     0;
+  const shortTermInvestmentsForDebt =
+    Math.abs(findOrNull(bs, "ShortTermInvestments") ?? 0);
+  const netDebtLiquidityOffsets = cashForDebt + shortTermInvestmentsForDebt;
 
   const grossFromTag = findOrNull(bs, "GrossDebt");
   const netDebtSupplemental = findOrNull(bs, "TotalNetDebtSupplemental");
   const grossFromNetPlusCash =
-    netDebtSupplemental != null && cashForDebt > 0
-      ? Math.abs(netDebtSupplemental) + cashForDebt
+    netDebtSupplemental != null && netDebtLiquidityOffsets > 0
+      ? Math.abs(netDebtSupplemental) + netDebtLiquidityOffsets
       : null;
 
+  // Sanity-guard GrossDebt: if the tag value is suspiciously smaller than what we
+  // computed from individual lines, it was likely extracted from a supplemental note
+  // (e.g. "net debt" or a partial figure) rather than the true gross total.
+  const grossTagValue = grossFromTag != null ? Math.abs(grossFromTag) : null;
+  const grossTagReliable =
+    grossTagValue != null &&
+    grossTagValue > 400 &&
+    (computedGross <= 0 || grossTagValue >= computedGross * 0.8);
+
   const total =
-    grossFromTag != null && Math.abs(grossFromTag) > 400
-      ? Math.abs(grossFromTag)
+    grossTagReliable
+      ? grossTagValue!
       : grossFromNetPlusCash != null && grossFromNetPlusCash > 400
         ? grossFromNetPlusCash
         : computedGross;
 
-  // Fallback when non-current debt line is missing but gross debt exists.
+  // Fallback when non-current debt line is missing but gross debt and ST debt exist.
   if (ltDebt <= 0 && total > 0) {
     const impliedLt = total - stDebt - financeLease;
     if (impliedLt > 0) ltDebt = impliedLt;
   }
 
+  // Symmetric fallback: if ST debt is missing but LT and total are known, derive it.
+  if (stDebt <= 0 && ltDebt > 0 && total > 0) {
+    const impliedSt = total - ltDebt - financeLease;
+    if (impliedSt > 0) stDebt = impliedSt;
+  }
+
   const cash = cashForDebt;
-  const netDebt = total - cash;
+  const netDebt =
+    netDebtSupplemental != null && Math.abs(netDebtSupplemental) > 1
+      ? Math.abs(netDebtSupplemental)
+      : total - netDebtLiquidityOffsets;
 
   const items = bs.filter((i) =>
     [
       "GrossDebt",
+      "TotalNetDebtSupplemental",
+      "ShortTermInvestments",
       "LongTermDebt",
       "LongTermDebtNoncurrent",
       "LongTermDebtCurrent",
@@ -712,12 +746,12 @@ export function buildDividendAnalysis(
     );
     if (cf.freeCashFlow != null && cf.freeCashFlow > 0) {
       bullets.push(
-        `FCF is ${cf.freeCashFlow.toLocaleString()}M — capacity to pay a dividend exists if the board chooses to.`
+        `FCF is ${fmtM2(cf.freeCashFlow)}M — capacity to pay a dividend exists if the board chooses to.`
       );
     }
     if (bs.retainedEarnings != null && bs.retainedEarnings > 0) {
       bullets.push(
-        `Retained earnings: ${bs.retainedEarnings.toLocaleString()}M (positive accumulated profits).`
+        `Retained earnings: ${fmtM2(bs.retainedEarnings)}M (positive accumulated profits).`
       );
     }
   } else {
@@ -734,22 +768,22 @@ export function buildDividendAnalysis(
     }
     if (payoutNI != null) {
       bullets.push(
-        `Payout vs net income: ${payoutNI}% — ${payoutNI < 60 ? "comfortable" : payoutNI < 85 ? "reasonable" : "stretched"}`
+        `Payout vs net income: ${fmt2(payoutNI)}% — ${payoutNI < 60 ? "comfortable" : payoutNI < 85 ? "reasonable" : "stretched"}`
       );
     }
     if (payoutFCF != null) {
       bullets.push(
-        `Payout vs FCF: ${payoutFCF}% — ${payoutFCF < 70 ? "safe" : payoutFCF < 100 ? "watch closely" : "above FCF (unsustainable if persistent)"}`
+        `Payout vs FCF: ${fmt2(payoutFCF)}% — ${payoutFCF < 70 ? "safe" : payoutFCF < 100 ? "watch closely" : "above FCF (unsustainable if persistent)"}`
       );
     }
     if (fcfCoverage != null) {
       bullets.push(
-        `FCF covers dividends ${fcfCoverage}× — ${fcfCoverage >= 2 ? "strong buffer" : fcfCoverage >= 1.2 ? "adequate" : "thin"}`
+        `FCF covers dividends ${fmt2(fcfCoverage)}× — ${fcfCoverage >= 2 ? "strong buffer" : fcfCoverage >= 1.2 ? "adequate" : "thin"}`
       );
     }
     if (cashCoverage != null) {
       bullets.push(
-        `Cash on hand could cover ~${cashCoverage} years of dividends at this run-rate (illustrative).`
+        `Cash on hand could cover ~${fmt2(cashCoverage)} years of dividends at this run-rate (illustrative).`
       );
     }
 
@@ -765,13 +799,13 @@ export function buildDividendAnalysis(
     if (cf.operatingCashFlow != null && divPaid > 0) {
       const ocfCov = Math.round((cf.operatingCashFlow / divPaid) * 10) / 10;
       bullets.push(
-        `Operating cash flow covers dividends ${ocfCov}×`
+        `Operating cash flow covers dividends ${fmt2(ocfCov)}×`
       );
     }
 
     if (bs.retainedEarnings != null && bs.retainedEarnings !== 0) {
       bullets.push(
-        `Retained earnings: ${bs.retainedEarnings.toLocaleString()}M${bs.retainedEarnings < 0 ? " (deficit — review equity quality)" : ""}`
+        `Retained earnings: ${fmtM2(bs.retainedEarnings)}M${bs.retainedEarnings < 0 ? " (deficit — review equity quality)" : ""}`
       );
     }
 
@@ -781,7 +815,7 @@ export function buildDividendAnalysis(
       if (buyback != null && Math.abs(buyback) > 0) {
         const totalReturn = Math.abs(buyback) + divPaid;
         bullets.push(
-          `Total shareholder cash return (dividends + buybacks): ${totalReturn.toLocaleString()}M — buybacks: ${Math.abs(buyback).toLocaleString()}M`
+          `Total shareholder cash return (dividends + buybacks): ${fmtM2(totalReturn)}M — buybacks: ${fmtM2(Math.abs(buyback))}M`
         );
       }
     }
