@@ -13,8 +13,35 @@ export function buildMetricTraceLabelMap(result: FullAnalysis): Record<string, M
   const cf = result.cashFlow;
   const ratios = result.ratios;
   const cfItems = result.cfItems ?? [];
+  const debtItems = result.debtStructure?.items ?? [];
   const bi = (tag: string) =>
-    cfItems.find((i) => i.tag === tag)?.value ?? bs.items.find((i) => i.tag === tag)?.value ?? null;
+    cfItems.find((i) => i.tag === tag)?.value ??
+    bs.items.find((i) => i.tag === tag)?.value ??
+    debtItems.find((i) => i.tag === tag)?.value ??
+    null;
+  const lineByTags = (...tags: string[]) =>
+    cfItems.find((i) => tags.includes(i.tag)) ??
+    bs.items.find((i) => tags.includes(i.tag)) ??
+    debtItems.find((i) => tags.includes(i.tag)) ??
+    null;
+  const allItems = [...cfItems, ...bs.items, ...debtItems];
+  const hasPdfValueMatch = (value: number | null | undefined, ...tags: string[]) =>
+    value != null &&
+    allItems.some((item) => {
+      if (!tags.includes(item.tag)) return false;
+      if (!/^PDF:p\d+/i.test(item.source ?? "")) return false;
+      const absItem = Math.abs(item.value);
+      const absValue = Math.abs(value);
+      const diff = Math.abs(absItem - absValue);
+      return diff <= Math.max(0.01, Math.min(0.5, Math.max(absItem, absValue) * 0.001));
+    });
+  const withDerivedFallback = (
+    spec: MetricTraceSpec,
+    derivation: NonNullable<MetricTraceSpec["derivation"]>
+  ): MetricTraceSpec => {
+    const sourceTags = spec.sourceTags ?? spec.tags;
+    return hasPdfValueMatch(spec.value, ...sourceTags) ? spec : { ...spec, derivation };
+  };
 
   const buyback = cf.shareRepurchases ?? bi("PaymentsForRepurchaseOfCommonStock");
   const daTotal =
@@ -49,6 +76,10 @@ export function buildMetricTraceLabelMap(result: FullAnalysis): Record<string, M
         "AmortizationOfIntangibleAssets",
       ],
       pdfMatchLabel: "EBITDA",
+      derivation: {
+        formula: "Operating income + Depreciation + Amortization",
+        inputs: ["Operating Income", "Depreciation", "Amortization"],
+      },
     },
     "Net Income": { value: inc.netIncome, tags: ["NetIncome", "NetIncomeLoss", "ProfitLoss"] },
     Depreciation: { value: inc.depreciation, tags: ["DepreciationDepletionAndAmortization", "Depreciation"] },
@@ -65,15 +96,35 @@ export function buildMetricTraceLabelMap(result: FullAnalysis): Record<string, M
       sourceTags: ["DepreciationDepletionAndAmortization", "DepreciationAndAmortization", "Depreciation"],
       pdfMatchLabel: "Depreciation and Amortization",
     },
-    "Interest Expense": { value: inc.interestExpense, tags: ["InterestExpense", "InterestAndDebtExpense"] },
+    "Interest Expense": {
+      value: inc.interestExpense,
+      tags: [
+        "InterestExpense",
+        "InterestExpenseNet",
+        "InterestExpenseDebt",
+        "InterestAndDebtExpense",
+      ],
+      sourceTags: [
+        "InterestExpense",
+        "InterestExpenseNet",
+        "InterestExpenseDebt",
+        "InterestAndDebtExpense",
+      ],
+      pdfMatchLabel: "Interest Expense",
+    },
     "Income Tax": { value: inc.incomeTax, tags: ["IncomeTaxExpense", "IncomeTaxExpenseBenefit"] },
     "EPS (Basic)": { value: inc.epsBasic, tags: ["EarningsPerShareBasic"] },
     "EPS (Diluted)": { value: inc.epsDiluted, tags: ["EarningsPerShareDiluted"] },
     "Total Assets": { value: bs.totalAssets, tags: ["Assets", "AssetsTotal"] },
     "Total Equity": { value: bs.totalEquity, tags: ["StockholdersEquity", "Equity"] },
+    "Debt Current": { value: bi("DebtCurrent"), tags: ["DebtCurrent"] },
+    "Short-Term Borrowings": { value: bi("ShortTermBorrowings"), tags: ["ShortTermBorrowings"] },
+    "Current LT Debt": { value: bi("LongTermDebtCurrent"), tags: ["LongTermDebtCurrent"] },
+    "LT Debt (Noncurrent)": { value: bi("LongTermDebtNoncurrent"), tags: ["LongTermDebtNoncurrent"] },
+    "LT Debt (Plain)": { value: bi("LongTermDebt"), tags: ["LongTermDebt"] },
     "Total Debt": {
       value: debt.totalDebt,
-      tags: ["GrossDebt", "LongTermDebtNoncurrent", "DebtCurrent", "ShortTermBorrowings"],
+      tags: ["GrossDebt", "LongTermDebtNoncurrent", "DebtCurrent", "ShortTermBorrowings", "NotesPayable", "NotesPayableCurrent", "NotesPayableNoncurrent"],
       sourceTags: [
         "GrossDebt",
         "DebtCurrent",
@@ -81,21 +132,38 @@ export function buildMetricTraceLabelMap(result: FullAnalysis): Record<string, M
         "LongTermDebtCurrent",
         "LongTermDebt",
         "LongTermDebtNoncurrent",
+        "NotesPayable",
+        "NotesPayableCurrent",
+        "NotesPayableNoncurrent",
       ],
-      pdfMatchLabel: "Total debt",
+      pdfMatchLabel: "Notes payable",
     },
-    "Net Debt": {
-      value: debt.netDebt,
-      tags: ["TotalNetDebtSupplemental", "GrossDebt", "CashAndCashEquivalentsAtCarryingValue"],
-      sourceTags: [
-        "TotalNetDebtSupplemental",
-        "GrossDebt",
-        "CashAndCashEquivalentsAtCarryingValue",
-        "CashAndCashEquivalents",
-      ],
-      pdfMatchLabel: "Total net debt",
-    },
+    "Net Debt": withDerivedFallback(
+      {
+        value: debt.netDebt,
+        tags: [
+          "TotalNetDebtSupplemental",
+          "GrossDebt",
+          "CashAndCashEquivalentsAtCarryingValue",
+          "ShortTermInvestments",
+        ],
+        sourceTags: [
+          "TotalNetDebtSupplemental",
+          "GrossDebt",
+          "CashAndCashEquivalentsAtCarryingValue",
+          "CashAndCashEquivalents",
+          "ShortTermInvestments",
+        ],
+        pdfMatchLabel: "Total net debt",
+      },
+      {
+        formula: "Total debt − Cash & equivalents − Short-term investments",
+        formulaNote: "Used when the filing does not provide a direct net debt line but does provide the liquidity offsets separately.",
+        inputs: ["Total Debt", "Cash & Equivalents", "Short-Term Investments"],
+      }
+    ),
     "Cash & Equivalents": { value: bs.cashAndEquivalents, tags: ["CashAndCashEquivalents"] },
+    "Short-Term Investments": { value: bi("ShortTermInvestments"), tags: ["ShortTermInvestments"] },
     "Operating CF": {
       value: cf.operatingCashFlow,
       tags: ["NetCashProvidedByOperatingActivities", "OperatingCashFlow"],
@@ -153,11 +221,41 @@ export function buildMetricTraceLabelMap(result: FullAnalysis): Record<string, M
       pdfMatchLabel: "Net Property, Plant and Equipment",
     },
     Goodwill: { value: bi("Goodwill"), tags: ["Goodwill"] },
-    "Total Liabilities": { value: bs.totalLiabilities, tags: ["Liabilities", "LiabilitiesTotal"] },
+    "Total Liabilities": {
+      value: bs.totalLiabilities,
+      tags: ["Liabilities", "LiabilitiesTotal"],
+      derivation: {
+        formula: "Total assets − Total equity",
+        formulaNote: "When a direct total-liabilities line exists, click to jump to it in the PDF. If that line is not confidently mapped, the dashboard falls back to Total assets minus Total equity.",
+        inputs: ["Total Assets", "Total Equity"],
+      },
+    },
     "Current Liabilities": { value: bi("LiabilitiesCurrent"), tags: ["LiabilitiesCurrent"] },
     "Retained Earnings": { value: bs.retainedEarnings, tags: ["RetainedEarningsAccumulatedDeficit", "RetainedEarnings"] },
-    "Short-Term Debt": { value: debt.shortTermDebt, tags: ["ShortTermBorrowings", "DebtCurrent"] },
-    "Long-Term Debt": { value: debt.longTermDebt, tags: ["LongTermDebt", "LongTermDebtNoncurrent"] },
+    "Short-Term Debt": withDerivedFallback(
+      {
+        value: debt.shortTermDebt,
+        tags: ["ShortTermBorrowings", "DebtCurrent", "LongTermDebtCurrent"],
+        sourceTags: ["ShortTermBorrowings", "DebtCurrent", "LongTermDebtCurrent"],
+      },
+      {
+        formula: "Debt current + Short-term borrowings + current LT debt",
+        formulaNote: "Short-term debt is aggregated from all current debt components when there is no single direct PDF line.",
+        inputs: ["Debt Current", "Short-Term Borrowings", "Current LT Debt"],
+      }
+    ),
+    "Long-Term Debt": withDerivedFallback(
+      {
+        value: debt.longTermDebt,
+        tags: ["LongTermDebt", "LongTermDebtNoncurrent"],
+        sourceTags: ["LongTermDebt", "LongTermDebtNoncurrent"],
+      },
+      {
+        formula: "Long-term debt non-current (or combined LT debt lines)",
+        formulaNote: "When the filing splits long-term debt across multiple labels, the dashboard consolidates those LT debt components.",
+        inputs: ["LT Debt (Noncurrent)", "LT Debt (Plain)"],
+      }
+    ),
     "Accounts Receivable": {
       value: bi("AccountsReceivableNetCurrent") ?? bi("AccountsReceivableNet"),
       tags: ["AccountsReceivableNetCurrent", "AccountsReceivableNet"],
@@ -172,6 +270,7 @@ export function buildMetricTraceLabelMap(result: FullAnalysis): Record<string, M
       tags: ["AssetsCurrent", "LiabilitiesCurrent"],
       derivation: {
         formula: "Current assets − Current liabilities",
+        formulaNote: "Working capital is a computed balance-sheet metric, so the hover explains the math even when there is no single PDF row labeled working capital.",
         inputs: ["Current Assets", "Current Liabilities"],
       },
     },
@@ -319,8 +418,20 @@ export function buildMetricTraceLabelMap(result: FullAnalysis): Record<string, M
     },
     "Interest Coverage": {
       value: ratios.interestCoverage,
-      tags: ["OperatingIncomeLoss", "InterestExpense"],
-      sourceTags: ["OperatingIncomeLoss", "InterestExpense"],
+      tags: [
+        "OperatingIncomeLoss",
+        "InterestExpense",
+        "InterestExpenseNet",
+        "InterestExpenseDebt",
+        "InterestAndDebtExpense",
+      ],
+      sourceTags: [
+        "OperatingIncomeLoss",
+        "InterestExpense",
+        "InterestExpenseNet",
+        "InterestExpenseDebt",
+        "InterestAndDebtExpense",
+      ],
       pdfMatchLabel: "Operating Income",
       derivation: {
         formula: "Operating income (or EBITDA) ÷ Interest expense",
@@ -329,8 +440,20 @@ export function buildMetricTraceLabelMap(result: FullAnalysis): Record<string, M
     },
     "Interest Cov.": {
       value: ratios.interestCoverage,
-      tags: ["OperatingIncomeLoss", "InterestExpense"],
-      sourceTags: ["OperatingIncomeLoss", "InterestExpense"],
+      tags: [
+        "OperatingIncomeLoss",
+        "InterestExpense",
+        "InterestExpenseNet",
+        "InterestExpenseDebt",
+        "InterestAndDebtExpense",
+      ],
+      sourceTags: [
+        "OperatingIncomeLoss",
+        "InterestExpense",
+        "InterestExpenseNet",
+        "InterestExpenseDebt",
+        "InterestAndDebtExpense",
+      ],
       pdfMatchLabel: "Operating Income",
       derivation: {
         formula: "Operating income (or EBITDA) ÷ Interest expense",

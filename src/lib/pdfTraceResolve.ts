@@ -38,19 +38,40 @@ export function collectLineItems(result: FullAnalysis): BSItem[] {
   ];
 }
 
+function valuesRoughlyMatch(a: number | null | undefined, b: number | null | undefined): boolean {
+  if (a == null || b == null) return false;
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+  const absA = Math.abs(a);
+  const absB = Math.abs(b);
+  if (absA < 1e-6 || absB < 1e-6) return false;
+  const diff = Math.abs(absA - absB);
+  return diff <= Math.max(0.01, Math.min(0.5, Math.max(absA, absB) * 0.001));
+}
+
 /**
  * Pick the best backing line for trace: exact tag match, prefer rows with `PDF:pN` provenance.
  */
-export function findBestLineForTrace(tags: string[], items: BSItem[]): BSItem | null {
-  for (const tag of tags) {
-    const hit = items.find((i) => i.tag === tag);
-    if (hit && /^PDF:p\d+/i.test(hit.source)) return hit;
-  }
-  for (const tag of tags) {
-    const hit = items.find((i) => i.tag === tag);
-    if (hit) return hit;
-  }
-  return null;
+export function findBestLineForTrace(
+  tags: string[],
+  items: BSItem[],
+  targetValue?: number | null
+): BSItem | null {
+  const candidates = items
+    .filter((i) => tags.includes(i.tag))
+    .sort((a, b) => {
+      const aPdf = /^PDF:p\d+/i.test(a.source) ? 1 : 0;
+      const bPdf = /^PDF:p\d+/i.test(b.source) ? 1 : 0;
+      const aValueMatch = valuesRoughlyMatch(a.value, targetValue) ? 1 : 0;
+      const bValueMatch = valuesRoughlyMatch(b.value, targetValue) ? 1 : 0;
+      const aTagIndex = tags.indexOf(a.tag);
+      const bTagIndex = tags.indexOf(b.tag);
+
+      if (bValueMatch !== aValueMatch) return bValueMatch - aValueMatch;
+      if (bPdf !== aPdf) return bPdf - aPdf;
+      if (aTagIndex !== bTagIndex) return aTagIndex - bTagIndex;
+      return 0;
+    });
+  return candidates[0] ?? null;
 }
 
 /** Trace directly from an extracted line (e.g. raw line-items table). */
@@ -98,7 +119,7 @@ export function buildPdfTraceTarget(
 ): PdfTraceTarget {
   const items = collectLineItems(result);
   const sourceTags = spec.sourceTags ?? spec.tags;
-  const best = findBestLineForTrace(sourceTags, items);
+  const best = findBestLineForTrace(sourceTags, items, spec.value ?? null);
   const prov = parsePdfProvenance(best?.source);
 
   let traceValue: number | null | undefined = spec.value ?? null;
@@ -106,13 +127,14 @@ export function buildPdfTraceTarget(
     spec.value != null && Number.isFinite(spec.value) && Math.abs(spec.value) > 1e-6
       ? Math.abs(spec.value)
       : null;
-  if (best != null && Number.isFinite(best.value) && !spec.derivation) {
+  if (best != null && Number.isFinite(best.value)) {
     const v = Math.abs(best.value);
     const fromPdf = /^PDF:p\d+/i.test(best.source || "");
     const tagMatchesSpec = sourceTags.includes(best.tag);
+    const valueMatchesSpec = specNum != null && valuesRoughlyMatch(v, specNum);
     // Prefer PDF line value when provenance is PDF-backed and the line tag matches this metric's
-    // sourceTags (avoids highlighting OI for EBITDA when EBITDA is tagged separately).
-    if (v > 1e-6 && fromPdf && tagMatchesSpec) {
+    // sourceTags. For derived metrics, allow a real PDF row to still drive highlighting.
+    if (v > 1e-6 && fromPdf && tagMatchesSpec && (specNum == null || valueMatchesSpec)) {
       traceValue = v;
     } else if (v > 1e-6 && specNum == null) {
       traceValue = v;

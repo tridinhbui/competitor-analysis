@@ -5,6 +5,7 @@
 
 import type { FootnoteItem, AdjustedMetric, EarningsNarrative, NonRecurringItem } from "@/types/analysis";
 import type { SegmentData, VolumeUnitType } from "@/types/segments";
+import { extractSegmentsHeuristic } from "@/lib/segmentExtractionHeuristics";
 
 const SEC_UA =
   process.env.SEC_EDGAR_USER_AGENT ??
@@ -390,7 +391,7 @@ function extractSegmentSection(text: string): string {
   }
 
   // Pattern 3: Tables with segment names (Beef, Pork, Chicken, Prepared)
-  const segTableIdx = text.search(/(?:beef|pork|chicken|prepared\s+foods?|international)[^\n]*\|[^\n]*\d/i);
+  const segTableIdx = text.search(/(?:beef|pork|chicken|prepared\s+foods?|international)\b/i);
   if (segTableIdx !== -1) {
     // Go back to find the table header
     const startIdx = Math.max(0, segTableIdx - 500);
@@ -522,13 +523,13 @@ export async function extractSegments(
     console.log("[extractSegments] AI response:", content.slice(0, 500));
     const parsed = JSON.parse(content) as SegmentExtractionResult;
 
-    if (!parsed.segments || !Array.isArray(parsed.segments) || parsed.segments.length === 0) {
-      return [];
-    }
-
     const validVolumeTypes = new Set<string>(["head", "cwt", "lbs", "cases"]);
+    const candidateSegments =
+      parsed.segments && Array.isArray(parsed.segments) && parsed.segments.length > 0
+        ? parsed.segments
+        : extractSegmentsHeuristic(truncated);
 
-    const results = parsed.segments
+    const results = candidateSegments
       .map((seg) => {
         const revenue = seg.revenue != null ? Math.round(Number(seg.revenue)) : null;
         const operatingIncome = seg.operatingIncome != null ? Math.round(Number(seg.operatingIncome)) : null;

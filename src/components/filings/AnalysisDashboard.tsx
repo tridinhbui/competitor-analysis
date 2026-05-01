@@ -56,10 +56,15 @@ const PIE_PALETTE = [...PIE_BLUE_PALETTE];
 
 const fmt = (v: number | null | undefined, prefix = "$", suffix = "M"): string => {
   if (v == null) return "—";
-  const formatted = `${prefix}${Math.abs(v).toLocaleString("en-US")}${suffix}`;
-  return v < 0 ? `(${formatted})` : formatted;
+  const absValue = Math.abs(v);
+  const formatted = absValue.toLocaleString("en-US", {
+    minimumFractionDigits: absValue % 1 === 0 ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+  const result = `${prefix}${formatted}${suffix}`;
+  return v < 0 ? `(${result})` : result;
 };
-const fmtPct = (v: number | null | undefined): string => v != null ? `${v.toFixed(1)}%` : "—";
+const fmtPct = (v: number | null | undefined): string => v != null ? `${v.toFixed(2)}%` : "—";
 const fmtX = (v: number | null | undefined): string => v != null ? `${v.toFixed(2)}x` : "—";
 const fmtNum = (v: number | null | undefined): string => v != null ? v.toLocaleString("en-US") : "—";
 
@@ -73,7 +78,8 @@ function wantsPdfTrace(
   trace: PdfTraceTarget | null | undefined,
   opts: { traceToPdf?: boolean; enabled: boolean },
 ): boolean {
-  return !!((opts.traceToPdf ?? true) && opts.enabled && !trace?.derivation);
+  const hasPdfSource = !!trace?.sourceHint?.match(/^PDF:p\d+/i);
+  return !!((opts.traceToPdf ?? true) && opts.enabled && (!trace?.derivation || hasPdfSource));
 }
 
 /** KPI strip tooltips need more width (e.g. Working Capital formula + note). */
@@ -400,7 +406,17 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
         <KpiCell label="OP Margin" value={fmtPct(inc.operatingMargin)} highlight={inc.operatingMargin} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("OP Margin") : undefined} trace={traceByLabel?.["OP Margin"]} labelMap={traceLabelMap} traceToPdf={false} />
         <KpiCell label="EBITDA" value={fmt(inc.ebitda)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("EBITDA") : undefined} trace={traceByLabel?.["EBITDA"]} labelMap={traceLabelMap} traceToPdf={false} />
         <KpiCell label="Net Income" value={fmt(inc.netIncome)} highlight={inc.netIncome} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Net Income") : undefined} trace={traceByLabel?.["Net Income"]} labelMap={traceLabelMap} traceToPdf={false} />
-        <KpiCell label="FCF" value={fmt(cf.freeCashFlow)} highlight={cf.freeCashFlow} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Free Cash Flow") : undefined} trace={traceByLabel?.["Free Cash Flow"]} labelMap={traceLabelMap} traceToPdf={false} />
+        <KpiCell
+          label="FCF"
+          value={fmt(cf.freeCashFlow)}
+          highlight={cf.freeCashFlow}
+          traceable={!!onTraceMetric}
+          onClick={onTraceMetric ? () => onMetricTableRowClick("Free Cash Flow") : undefined}
+          trace={traceByLabel?.["Free Cash Flow"]}
+          labelMap={traceLabelMap}
+          traceToPdf={false}
+          hint="Free Cash Flow = Operating Cash Flow − Capital Expenditures"
+        />
       </div>
 
       {/* ═══ TAB BAR ═══ */}
@@ -495,12 +511,19 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                   rows={[
                     { label: "Total Assets", value: fmt(bs.totalAssets), traceable: true },
                     { label: "Total Equity", value: fmt(bs.totalEquity), traceable: true },
+                    { label: "Total Liabilities", value: fmt(bs.totalLiabilities), bold: true, traceable: true },
                     { label: "Total Debt", value: fmt(debt.totalDebt), traceable: true },
                     { label: "Net Debt", value: fmt(debt.netDebt), bold: true, traceable: true },
                     { label: "Cash & Equivalents", value: fmt(bs.cashAndEquivalents), traceable: true },
-                    { label: "Operating CF", value: fmt(cf.operatingCashFlow), traceable: true },
-                    { label: "Capital Expenditures", value: fmt(cf.capitalExpenditures), traceable: true },
-                    { label: "Free Cash Flow", value: fmt(cf.freeCashFlow), bold: true, traceable: true },
+                    { label: "Operating CF", value: fmt(cf.operatingCashFlow), bold: true, traceable: true },
+                    { label: "Capital Expenditures", value: fmt(cf.capitalExpenditures), bold: true, traceable: true },
+                    {
+                      label: "Free Cash Flow",
+                      value: fmt(cf.freeCashFlow),
+                      bold: true,
+                      traceable: true,
+                      hint: "Free Cash Flow = Operating Cash Flow − Capital Expenditures",
+                    },
                   ]}
                 />
               </div>
@@ -1191,7 +1214,7 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                   <RatioCard label="Verdict" value={div.verdict.toUpperCase()} />
                   <RatioCard label="Payout (NI)" value={fmtPct(div.payoutRatioNI)} />
                   <RatioCard label="Payout (FCF)" value={fmtPct(div.payoutRatioFCF)} />
-                  <RatioCard label="FCF Coverage" value={div.fcfCoverageYears != null ? `${div.fcfCoverageYears}x` : "—"} />
+                  <RatioCard label="FCF Coverage" value={div.fcfCoverageYears != null ? `${div.fcfCoverageYears.toFixed(2)}x` : "—"} />
                 </div>
               </Section>
 
@@ -1294,6 +1317,7 @@ function KpiCell({
   onClick,
   trace,
   labelMap,
+  hint,
   /** When false, no magnifying glass / PDF jump (e.g. top KPI strip only). */
   traceToPdf = true,
 }: {
@@ -1304,6 +1328,7 @@ function KpiCell({
   onClick?: () => void;
   trace?: PdfTraceTarget | null;
   labelMap?: Record<string, MetricTraceSpec> | null;
+  hint?: string;
   traceToPdf?: boolean;
 }) {
   const valueClass = cn(
@@ -1316,7 +1341,7 @@ function KpiCell({
     enabled: !!(traceable && onClick),
   });
   return (
-    <div className={cn("relative bg-white px-3 py-2.5 sm:px-4 sm:py-3", showInsight && "group/kpi")}>
+    <div title={hint} className={cn("relative bg-white px-3 py-2.5 sm:px-4 sm:py-3", showInsight && "group/kpi")}>
       <p className="text-[9px] font-semibold uppercase tracking-wider text-slate-400">{label}</p>
       {pdfTrace ? (
         <button
@@ -1455,6 +1480,7 @@ function MetricTable({ rows, compact, onRowClick, labelMap, traceByLabel,
     dim?: boolean;
     sub?: string;
     traceable?: boolean;
+    hint?: string;
     /** When set, resolve trace from this key instead of `label` (e.g. display vs map key). */
     traceKey?: string;
   }>;
@@ -1497,6 +1523,7 @@ function MetricTable({ rows, compact, onRowClick, labelMap, traceByLabel,
           return (
             <tr
               key={i}
+              title={r.hint}
               onClick={wantsPdf && onRowClick ? () => onRowClick(r.label) : undefined}
               onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(r.label) : undefined}
               onContextMenu={onRowContextMenu ? (event) => onRowContextMenu(event, r.label, rowDisplay) : undefined}

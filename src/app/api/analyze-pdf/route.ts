@@ -18,6 +18,11 @@ import {
 } from "@/lib/heuristics";
 import { applyDividendsDeclaredNoteFallback } from "@/lib/dividendsNoteHeuristic";
 import { debugLog, warnLog } from "@/lib/debugLogger";
+import {
+  classifySegmentType,
+  extractSegmentsHeuristic as extractSegmentsHeuristicShared,
+  parseSegmentNumberToken,
+} from "@/lib/segmentExtractionHeuristics";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -70,8 +75,8 @@ Items MUST use ONLY these EXACT tags (do not output income or cash flow tags in 
 - AccountsPayableCurrent -> Accounts payable current (use if filer tags current AP separately; else use AccountsPayable)
 - AccruedLiabilitiesCurrent -> Accrued expenses / accrued liabilities
 - DeferredRevenueCurrent -> Deferred revenue (current)
-- DebtCurrent -> Current portion of long-term debt / short-term borrowings / notes payable current
-- LongTermDebtNoncurrent -> Long-term debt (non-current portion); also match "Long-term Debt Less Current Maturities", "Long-term debt, less current maturities", "Long-term debt, net of current portion", "Long-term portion of debt"
+- DebtCurrent -> Current portion of long-term debt / short-term borrowings / notes payable current; also match "Current portion of debt and finance leases", "Current maturities of debt", "Current portion of long-term debt and finance lease obligations"
+- LongTermDebtNoncurrent -> Long-term debt (non-current portion); also match "Long-term Debt Less Current Maturities", "Long-term debt, less current maturities", "Long-term debt, net of current portion", "Long-term portion of debt", "Debt and finance leases, net of current portion", "Long-term debt and finance lease obligations, net of current portion"
 - LongTermDebt -> Long-term debt (if only one debt line is shown)
 - ShortTermBorrowings -> Short-term borrowings / revolving credit (if separate from current portion of LT debt)
 - LongTermDebtCurrent -> Current maturities of long-term debt (if shown as separate line from DebtCurrent)
@@ -328,36 +333,6 @@ interface SegmentExtraction {
   corporateAndOther?: { operatingIncome?: number | null };
 }
 
-function classifySegmentType(name: string): "business" | "channel" | "geography" {
-  const n = name.toLowerCase();
-  if (
-    /\b(retail|foodservice|e-?commerce|club|wholesale|distribution|channel)\b/i.test(
-      n
-    )
-  ) {
-    return "channel";
-  }
-  if (
-    /\b(international|north america|latin america|europe|asia|china|apac|emea|u\.?s\.?|us)\b/i.test(
-      n
-    )
-  ) {
-    return "geography";
-  }
-  return "business";
-}
-
-function parseSegmentNumberToken(raw: string): number | null {
-  const token = raw.trim();
-  if (!token || /^-+$/.test(token)) return null;
-  const isNegative = token.startsWith("(") && token.endsWith(")");
-  const normalized = token.replace(/[(),$]/g, "").replace(/\s+/g, "");
-  if (!normalized) return null;
-  const value = Number(normalized);
-  if (!Number.isFinite(value)) return null;
-  return Math.round(isNegative ? -value : value);
-}
-
 /**
  * Deterministic segment fallback used when AI segment extraction is unavailable.
  * Expected row shape examples:
@@ -376,6 +351,8 @@ function extractSegmentsHeuristic(
     .split(/\r?\n/)
     .map((r) => r.replace(/\s{2,}/g, " ").trim())
     .filter(Boolean);
+  const fallbackSegments = extractSegmentsHeuristicShared(text);
+  if (fallbackSegments.length > 0) return fallbackSegments;
   const badNamePatterns = [
     /^(total|consolidated|subtotal|three months ended|nine months ended|segment results|reportable segments?)\b/i,
     /^(net sales|sales|revenue|operating income|gross profit|assets|liabilities|equity)\b/i,
@@ -386,7 +363,7 @@ function extractSegmentsHeuristic(
   for (const row of rows) {
     const firstNumber = row.search(/\(?\$?\d/);
     if (firstNumber <= 1) continue;
-    const segmentName = row.slice(0, firstNumber).replace(/[|:–-]\s*$/, "").trim();
+    const segmentName = row.slice(0, firstNumber).replace(/[$|:–\-]\s*$/, "").trim();
     if (!segmentName || segmentName.length > 40) continue;
     if (badNamePatterns.some((p) => p.test(segmentName))) continue;
     if (!/[a-z]/i.test(segmentName)) continue;
@@ -561,7 +538,9 @@ function itemValueForTag(tag: string, v: number | string | null | undefined): nu
   if (tag === "WeightedAverageSharesBasic" || tag === "WeightedAverageSharesDiluted") {
     return Math.round(n * 1000) / 1000;
   }
-  return Math.round(n);
+  // Preserve up to 2 decimal places so values like 23.56M don't get rounded to 24M.
+  // The fmt() display function already shows ".xx" only when the value is non-integer.
+  return Math.round(n * 100) / 100;
 }
 
 function rawAiToBSItem(it: RawAiItem, period: string, kind: "bs" | "cf"): BSItem | null {
@@ -609,16 +588,21 @@ function normalizeScaleNote(s: string | undefined): string | undefined {
 }
 
 function detectScaleFromText(text: string): string | undefined {
-  const first3000 = text.slice(0, 3000);
-  if (/in\s+thousands?,\s+except\s+(?:per\s+share|share)/i.test(first3000)) {
+  const normalized = text.toLowerCase();
+  if (/in\s+thousands?,\s+except\s+(?:per\s+share|share)/i.test(normalized)) {
     return "thousands";
   }
-  if (/amounts?\s+in\s+thousands/i.test(first3000)) return "thousands";
-  if (/\(\s*in\s+thousands?\s*\)/i.test(first3000)) return "thousands";
-  if (/in\s+millions?,\s+except\s+(?:per\s+share|share)/i.test(first3000)) {
+  if (/amounts?\s+in\s+thousands/i.test(normalized)) return "thousands";
+  if (/\(\s*in\s+thousands?\s*\)/i.test(normalized)) return "thousands";
+  if (/dollars?\s+in\s+thousands/i.test(normalized)) return "thousands";
+  if (/in\s+millions?,\s+except\s+(?:per\s+share|share)/i.test(normalized)) {
     return "millions";
   }
-  if (/\(\s*in\s+millions?\s*\)/i.test(first3000)) return "millions";
+  if (/\(\s*in\s+millions?\s*\)/i.test(normalized)) return "millions";
+  if (/dollars?\s+in\s+millions/i.test(normalized)) return "millions";
+  if (/in\s+billions?\b/i.test(normalized) || /\(\s*in\s+billions?\s*\)/i.test(normalized)) {
+    return "billions";
+  }
   return undefined;
 }
 
@@ -688,6 +672,7 @@ function extractSections(text: string): {
   isCfText: string;
   qualText: string;
   segmentText: string;
+  segText: string;
 } {
   const bsText = findSection(text, [
     /(?:condensed\s+)?(?:consolidated\s+)?balance\s+sheet/i,
@@ -730,7 +715,7 @@ function extractSections(text: string): {
     /segment\s+(?:financial\s+)?(?:results|performance)/i,
     /(?:reportable\s+)?segments/i,
     /(?:beef|pork|chicken|prepared\s+foods?|packaged\s+meats?|international)\s+segment/i,
-    /note\s+\d+[\.\:\-\s]+(?:segment|business\s+segment|operating\s+segment)/i,
+    /note\s+\d+[\.\:\-\s\u2014\u2013]+(?:segment|business\s+segment|operating\s+segment)/i,
   ], 25_000);
 
   // Equity statement ├â┬ó├óΓÇÜ┬¼├óΓé¼┬¥ SBC is sometimes only shown here (e.g. recently-IPO'd companies)
@@ -758,10 +743,47 @@ function extractSections(text: string): {
   // Combine MD&A + Notes for qualitative call
   const qualText = [mdaText, notesText].filter(Boolean).join("\n\n---\n\n");
 
-  // Segment text ├â┬ó├óΓÇÜ┬¼├óΓé¼┬¥ combine segment section + MD&A (often has segment breakdowns)
-  const segmentText = [segText, mdaText].filter(Boolean).join("\n\n---\n\n");
+  // Segment text ├â┬ó├óΓÇÜ┬¼├óΓé¼┬¥ combine segment section + MD&A + notes (segment disclosures may be nested in notes)
+  const segmentText = [segText, mdaText, notesText].filter(Boolean).join("\n\n---\n\n");
 
-  return { bsText, isCfText, qualText, segmentText };
+  return { bsText, isCfText, qualText, segmentText, segText };
+}
+
+function extractSegmentFallback(text: string): string {
+  const sections: string[] = [];
+
+  // Pattern 1: Explicit segment section headers
+  const segPatterns = [
+    /(?:segment|operating\s+segments?)\s+(?:results|information|data|reporting)/i,
+    /(?:business\s+segments?|segment\s+information|segment\s+reporting|operating\s+segment(?:s)?)/i,
+    /results\s+of\s+operations\s+(?:by|for)\s+(?:each\s+)?segment/i,
+    /segment\s+(?:financial\s+)?(?:results|performance)/i,
+    /(?:reportable\s+)?segments/i,
+  ];
+  for (const re of segPatterns) {
+    const idx = text.search(re);
+    if (idx !== -1) {
+      sections.push(text.slice(Math.max(0, idx - 200), idx + 20_000));
+      break;
+    }
+  }
+
+  // Pattern 2: Note about segments in financial statements
+  const noteIdx = text.search(/note\s+\d+[^\n]{0,80}(?:segment|business\s+segment|operating\s+segment|reportable\s+segment|segment\s+information)/i);
+  if (noteIdx !== -1) {
+    sections.push(text.slice(Math.max(0, noteIdx - 200), noteIdx + 18_000));
+  }
+
+  // Pattern 3: Tables that list well-known segment names (Tyson-style)
+  const segTableIdx = text.search(
+    /(?:^|\n)\s*(?:beef|pork|chicken|prepared\s+foods?|international)\b[^\n]{0,120}(?:\|[^\n]*\d|\s{2,}\(?\$?\d)/im
+  );
+  if (segTableIdx !== -1) {
+    sections.push(text.slice(Math.max(0, segTableIdx - 800), segTableIdx + 14_000));
+  }
+
+  if (sections.length === 0) return "";
+  return sections.join("\n\n---\n\n").slice(0, 45_000);
 }
 
 // ---------------------------------------------------------------------------
@@ -931,9 +953,9 @@ function toNumOrNull(v: number | string | undefined | null): number | null {
 
     const n = Number(normalized);
     if (Number.isNaN(n)) return null;
-    return Math.round(negative ? -n : n);
+    return Math.round((negative ? -n : n) * 100) / 100;
   }
-  return Number.isFinite(v) ? Math.round(v) : null;
+  return Number.isFinite(v) ? Math.round(v * 100) / 100 : null;
 }
 
 function toBsItems(
@@ -1004,22 +1026,24 @@ function repairCriticalFinancialValue(
   const heuristicOverridesWrongAi =
     REPAIR_OVERRIDE_METRICS.has(metric) && existingIsAi;
 
-  // Strong safeguard: if the existing AI value is ~100x+ away from heuristic parse,
-  // treat it as a likely unit error (e.g. millions vs raw dollars) and override it.
+  // Safeguard: if the AI value is 100x+ LARGER than the heuristic, treat it as a unit
+  // error (e.g. AI returned raw dollars when filing uses millions) and override with the
+  // smaller heuristic value. Only fires when existing >> repaired, NOT the reverse,
+  // so a correct AI value is never replaced by an inflated heuristic.
   const likelyScaleMismatchOverride =
     existingIsAi &&
     existingValue != null &&
     Math.abs(existingValue) > 1 &&
     Math.abs(repaired.value) > 1 &&
-    (
-      Math.abs(existingValue) / Math.abs(repaired.value) >= 100 ||
-      Math.abs(repaired.value) / Math.abs(existingValue) >= 100
-    );
+    Math.abs(existingValue) / Math.abs(repaired.value) >= 100;
 
-  /** SCF "Dividends" vs footnote/derivative line with a tiny bogus $(8). */
+  /** SCF "Dividends" vs footnote/derivative line with a tiny bogus $(8).
+   *  Only fires when the existing AI value is genuinely tiny (<50M) — prevents
+   *  overwriting a correct $684M with a heuristic-found $684,000M. */
   const dividendsHeuristicReplacesSuspiciousExisting =
     metric === "dividendsPaid" &&
     existingValue != null &&
+    Math.abs(existingValue) < 50 &&
     Math.abs(repaired.value) > 35 &&
     Math.abs(repaired.value) >= Math.abs(existingValue) * 3;
 
@@ -1040,6 +1064,20 @@ function repairCriticalFinancialValue(
     !likelyScaleMismatchOverride &&
     !dividendsHeuristicReplacesSuspiciousExisting &&
     !arHeuristicOverride
+  ) {
+    return;
+  }
+
+  // Even for REPAIR_OVERRIDE_METRICS (heuristicOverridesWrongAi=true), refuse the
+  // heuristic when its value is 100x+ LARGER than a plausible existing AI value.
+  // That means the heuristic over-scaled (e.g. read "67,000" in a thousands-scale
+  // supplemental section as 67,000M), not the AI.
+  if (
+    heuristicOverridesWrongAi &&
+    existingValue != null &&
+    Math.abs(existingValue) > 1 &&
+    Math.abs(repaired.value) > 1 &&
+    Math.abs(repaired.value) / Math.abs(existingValue) >= 100
   ) {
     return;
   }
@@ -1142,13 +1180,21 @@ export async function POST(request: Request) {
   const model = process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini";
 
   // Split text into sections (├óΓÇ░┬Ñ500 chars, financial keywords passed guard)
-  const { bsText, isCfText, qualText, segmentText } = extractSections(filingText);
+  const { bsText, isCfText, qualText, segmentText, segText } = extractSections(filingText);
 
-  // Fallback: if section detection found nothing, use the full text (truncated)
+  // Fallback: if segment detection found nothing, use the full text (truncated)
   const bsInput = bsText.length > 500 ? bsText : filingText.slice(0, 80_000);
   const isCfInput = isCfText.length > 500 ? isCfText : filingText.slice(0, 80_000);
   const qualInput = qualText.length > 500 ? qualText : filingText.slice(0, 60_000);
-  const segInput = segmentText.length > 300 ? segmentText : filingText.slice(0, 60_000);
+  const segFallback = segText.length > 300 ? "" : extractSegmentFallback(filingText);
+  const segInput =
+    segText.length > 300
+      ? segmentText
+      : segFallback.length > 300
+        ? segFallback
+        : filingText.length > 200_000
+          ? filingText.slice(Math.floor(filingText.length * 0.5))
+          : filingText.slice(0, 60_000);
 
   try {
     // Run parallel AI: 4 extraction + non-recurring + cover identity (company / 10-K vs 10-Q)
@@ -1163,7 +1209,7 @@ export async function POST(request: Request) {
           tokensFor(isCfInput)
         ),
         callOpenAI(apiKey, model, QUALITATIVE_PROMPT, `Extract qualitative insights:\n\n${qualInput}`, tokensFor(qualInput)),
-        callOpenAI(apiKey, model, SEGMENT_PROMPT, `Extract segment data:\n\n${segInput}`, tokensFor(segInput, 1000, 3000)),
+        callOpenAI(apiKey, model, SEGMENT_PROMPT, `Extract segment data:\n\n${segInput}`, tokensFor(segInput, 1500, 4000)),
         extractNonRecurringItems(filingText, apiKey, model),
         detectFilingIdentity(apiKey, model, filingText, body.fileName),
       ]);
@@ -1413,26 +1459,39 @@ export async function POST(request: Request) {
     normalizeLikelyScaleMismatches(bsItems, scaleForHeuristics, "bs");
     normalizeLikelyScaleMismatches(cfItems, scaleForHeuristics, "cf");
 
-    // Heuristic fallback: run when the AI either missed repurchases entirely or
-    // extracted a zero/invalid value (e.g. model returned 0 for a non-zero buyback).
+    // Repurchase heuristic: always run so we can also correct AI over-scaling.
+    // AI occasionally reads share repurchases from a thousands-scale supplemental
+    // table and returns, e.g., 49,000 when the real value is 49 (in millions).
     const existingRepurchase = cfItems.find(
       (i) => i.tag === "PaymentsForRepurchaseOfCommonStock"
     );
     const hasValidRepurchase =
       existingRepurchase != null && Math.abs(existingRepurchase.value) > 0;
     debugLog("[repurchase:guard] hasValidRepurchase:", hasValidRepurchase, "existing value:", existingRepurchase?.value ?? "none");
-    if (!hasValidRepurchase) {
-      const heuristicValue = extractShareRepurchasesHeuristic(
-        filingText,
-        scaleForHeuristics
-      );
-      debugLog("[repurchase:heuristic] heuristicValue:", heuristicValue);
+    const heuristicValue = extractShareRepurchasesHeuristic(
+      filingText,
+      scaleForHeuristics
+    );
+    debugLog("[repurchase:heuristic] heuristicValue:", heuristicValue);
+    const existingRepurchaseIsAi =
+      existingRepurchase?.source?.startsWith("AI:") ?? false;
+    // Scale-mismatch: existing AI value is 100x+ the heuristic → AI over-scaled.
+    const repurchaseAiOverScaled =
+      hasValidRepurchase &&
+      existingRepurchaseIsAi &&
+      heuristicValue != null &&
+      heuristicValue > 0 &&
+      Math.abs(existingRepurchase!.value) / heuristicValue >= 100;
+    if (!hasValidRepurchase || repurchaseAiOverScaled) {
       if (heuristicValue != null && heuristicValue > 0) {
         if (existingRepurchase) {
-          // Overwrite the zero AI value in place so deduplication is not needed downstream
           existingRepurchase.value = heuristicValue;
-          existingRepurchase.label = "Share repurchases (heuristic)";
-          existingRepurchase.source = "heuristic:repurchase_overwrite";
+          existingRepurchase.label = repurchaseAiOverScaled
+            ? "Share repurchases (heuristic scale fix)"
+            : "Share repurchases (heuristic)";
+          existingRepurchase.source = repurchaseAiOverScaled
+            ? "heuristic:repurchase_scale_fix"
+            : "heuristic:repurchase_overwrite";
         } else {
           cfItems.push({
             tag: "PaymentsForRepurchaseOfCommonStock",
@@ -1723,12 +1782,23 @@ export async function POST(request: Request) {
     }
 
     // Attach segments (AI first, deterministic heuristic fallback).
+    // The heuristic also runs when AI only found channel/geography segments but no
+    // business segments — this handles cases where the AI latches onto the channel
+    // disaggregation table (Retail/Foodservice rows) rather than the segment P&L table.
     const aiSegments: NonNullable<SegmentExtraction["segments"]> =
       segExtraction.segments && Array.isArray(segExtraction.segments)
         ? segExtraction.segments
         : [];
-    const fallbackSegments = aiSegments.length === 0 ? extractSegmentsHeuristic(segInput) : [];
-    const segmentsToUse = aiSegments.length > 0 ? aiSegments : fallbackSegments;
+    const aiHasBusinessSegments = aiSegments.some((s) => s.segmentType === "business");
+    const needsHeuristicFallback = aiSegments.length === 0 || !aiHasBusinessSegments;
+    const fallbackSegments = needsHeuristicFallback ? extractSegmentsHeuristic(segInput) : [];
+    // Prefer AI business segments; fall back to heuristic; last resort: whatever AI returned.
+    const segmentsToUse =
+      aiHasBusinessSegments
+        ? aiSegments
+        : fallbackSegments.length > 0
+          ? fallbackSegments
+          : aiSegments;
     if (segmentsToUse.length > 0) {
       const validVolumeTypes = new Set(["head", "cwt", "lbs", "cases"]);
       analysis.segments = segmentsToUse.map((seg) => {
@@ -1759,7 +1829,7 @@ export async function POST(request: Request) {
           operatingIncomePerUnit: opPerUnit,
         };
       });
-      if (aiSegments.length === 0 && fallbackSegments.length > 0) {
+      if (needsHeuristicFallback && fallbackSegments.length > 0) {
         warnLog("[analyze-pdf] Segment heuristic fallback used:", fallbackSegments.map((s) => s.segmentName));
       }
     }
@@ -1772,4 +1842,3 @@ export async function POST(request: Request) {
     );
   }
 }
-
