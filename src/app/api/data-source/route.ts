@@ -5,6 +5,7 @@ import { normalizeCompanyName } from "@/lib/filingIdentity";
 import type { DataSourceRow } from "@/types/dataSource";
 import type { Filing } from "@/types/competitor";
 import type { FullAnalysis } from "@/types/analysis";
+import { applyDataSourceOverridesToAnalysis } from "@/lib/dataSourceOverrides";
 
 export const runtime = "nodejs";
 
@@ -328,6 +329,41 @@ export async function PATCH(req: NextRequest) {
       .upsert({ ticker, data: existing, updated_at: new Date().toISOString() }, { onConflict: "ticker" });
   }
 
+  const filingIds = [
+    ...new Set(
+      body.edits
+        .map((e) => e.id)
+        .filter((id) => typeof id === "string" && id.length > 0 && !id.endsWith("_TTM")),
+    ),
+  ];
+
+  for (const filingId of filingIds) {
+    const { data: filing, error: loadErr } = await supabase
+      .from("filings")
+      .select("id, ticker, period_end, analysis")
+      .eq("id", filingId)
+      .maybeSingle();
+
+    if (loadErr || !filing?.analysis || !filing.ticker || !filing.period_end) continue;
+
+    const { data: adjRow } = await supabase
+      .from("adjustments")
+      .select("data")
+      .eq("ticker", filing.ticker)
+      .maybeSingle();
+
+    const payload = adjRow?.data as { dataSourceOverrides?: Record<string, Record<string, number | null>> } | undefined;
+    const periodOverrides = payload?.dataSourceOverrides?.[filing.period_end] ?? {};
+
+    const updatedAnalysis = applyDataSourceOverridesToAnalysis(
+      filing.analysis as FullAnalysis,
+      periodOverrides,
+      "data-source-override",
+    );
+
+    await supabase.from("filings").update({ analysis: updatedAnalysis }).eq("id", filingId);
+  }
+
   return NextResponse.json({ ok: true });
 }
 
@@ -345,7 +381,7 @@ export async function DELETE(req: NextRequest) {
 
   const expectedConfirmationText =
     workflowOrigin === "analyze"
-      ? "Delete Analyze Records"
+      ? "Delete Quick Analyze Records"
       : "Delete Competitor Analyze Records";
 
   if ((body.confirmationText ?? "").trim() !== expectedConfirmationText) {

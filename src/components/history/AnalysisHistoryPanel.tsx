@@ -10,6 +10,7 @@ import { fetchWithAuth } from "@/lib/fetchWithAuth";
 export function AnalysisHistoryPanel() {
   const [threads, setThreads] = useState<HistoryThread[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<{ analysis: FullAnalysis; title: string } | null>(null);
@@ -19,6 +20,7 @@ export function AnalysisHistoryPanel() {
   const fetchThreads = useCallback(async () => {
     setLoading(true);
     setUnauthorized(false);
+    setError(null);
     try {
       const res = await fetchWithAuth("/api/history");
       if (res.status === 401) {
@@ -28,6 +30,9 @@ export function AnalysisHistoryPanel() {
       }
       const data = await res.json();
       setThreads(data.threads ?? []);
+    } catch (err) {
+      setThreads([]);
+      setError(err instanceof Error ? err.message : "Unable to load analysis history.");
     } finally {
       setLoading(false);
     }
@@ -40,21 +45,31 @@ export function AnalysisHistoryPanel() {
   const handleSelect = async (id: string) => {
     setSelectedId(id);
     setLoadingDetail(true);
+    setError(null);
     try {
       const res = await fetchWithAuth(`/api/history/${id}`);
       const data = await res.json();
       setDetail({ analysis: data.analysis, title: data.title });
+    } catch (err) {
+      setSelectedId(null);
+      setDetail(null);
+      setError(err instanceof Error ? err.message : "Unable to open this history entry.");
     } finally {
       setLoadingDetail(false);
     }
   };
 
   const handleDelete = async (id: string) => {
-    await fetchWithAuth(`/api/history/${id}`, { method: "DELETE" });
-    setThreads((prev) => prev.filter((t) => t.id !== id));
-    if (selectedId === id) {
-      setSelectedId(null);
-      setDetail(null);
+    setError(null);
+    try {
+      await fetchWithAuth(`/api/history/${id}`, { method: "DELETE" });
+      setThreads((prev) => prev.filter((t) => t.id !== id));
+      if (selectedId === id) {
+        setSelectedId(null);
+        setDetail(null);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to delete this history entry.");
     }
   };
 
@@ -70,6 +85,9 @@ export function AnalysisHistoryPanel() {
         (t.companyName?.toLowerCase().includes(filter.toLowerCase()))
       )
     : threads;
+
+  const quickAnalyzeThreads = filtered.filter((t) => t.workflowOrigin !== "competitor");
+  const competitorThreads = filtered.filter((t) => t.workflowOrigin === "competitor");
 
   if (selectedId && detail) {
     return (
@@ -96,7 +114,7 @@ export function AnalysisHistoryPanel() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-6">
+    <div className="mx-auto max-w-7xl px-4 py-6">
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h1 className="text-lg font-bold text-slate-900">Analysis History</h1>
@@ -123,20 +141,83 @@ export function AnalysisHistoryPanel() {
           <p className="text-sm font-semibold text-slate-800">Please sign in to view your history.</p>
           <p className="text-xs text-slate-500">Your analyses are saved per account. Sign in to access them.</p>
         </div>
+      ) : error ? (
+        <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-red-200 bg-red-50/70 p-10 text-center">
+          <p className="text-sm font-semibold text-slate-800">Could not load history right now.</p>
+          <p className="text-xs text-slate-500">{error}</p>
+          <button
+            type="button"
+            onClick={fetchThreads}
+            className="rounded-md border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-600 transition hover:bg-red-50"
+          >
+            Try again
+          </button>
+        </div>
       ) : filtered.length === 0 ? (
         <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-400">
           No analysis history yet. Run an analysis to see it here.
         </div>
       ) : (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <HistorySection
+            title="Quick Analyze"
+            subtitle="Single-company analysis runs"
+            threads={quickAnalyzeThreads}
+            onSelect={handleSelect}
+            onDelete={handleDelete}
+          />
+          <HistorySection
+            title="Competitor Analysis"
+            subtitle="Peer and competitor workflow runs"
+            threads={competitorThreads}
+            onSelect={handleSelect}
+            onDelete={handleDelete}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HistorySection({
+  title,
+  subtitle,
+  threads,
+  onSelect,
+  onDelete,
+}: {
+  title: string;
+  subtitle: string;
+  threads: HistoryThread[];
+  onSelect: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4">
+      <div className="mb-2 flex items-center justify-between">
+        <div>
+          <h2 className="text-sm font-bold text-slate-900">{title}</h2>
+          <p className="text-[11px] text-slate-500">{subtitle}</p>
+        </div>
+        <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+          {threads.length}
+        </span>
+      </div>
+
+      {threads.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-5 text-center text-xs text-slate-400">
+          No entries in this section yet.
+        </div>
+      ) : (
         <div className="space-y-2">
-          {filtered.map((t) => (
+          {threads.map((t) => (
             <div
               key={t.id}
               className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm transition hover:border-primary/30 hover:shadow-md"
             >
               <div
                 className="flex-1 cursor-pointer"
-                onClick={() => handleSelect(t.id)}
+                onClick={() => onSelect(t.id)}
               >
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-bold text-slate-900">{t.title}</span>
@@ -159,7 +240,7 @@ export function AnalysisHistoryPanel() {
                 </div>
               </div>
               <button
-                onClick={() => handleDelete(t.id)}
+                onClick={() => onDelete(t.id)}
                 className="rounded-md p-1.5 text-slate-300 transition hover:bg-red-50 hover:text-red-500"
                 title="Delete"
               >
@@ -169,6 +250,6 @@ export function AnalysisHistoryPanel() {
           ))}
         </div>
       )}
-    </div>
+    </section>
   );
 }

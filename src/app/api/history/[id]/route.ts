@@ -65,6 +65,7 @@ export async function GET(
     ticker: data.ticker,
     companyName: data.company_name,
     source: data.source,
+    workflowOrigin: data.analysis?.meta?.workflowOrigin === "competitor" ? "competitor" : "analyze",
     periodEnd: data.period_end,
     quarterLabel: data.quarter_label,
     title: data.title,

@@ -285,18 +285,6 @@ export function buildMetricTraceLabelMap(result: FullAnalysis): Record<string, M
         inputs: ["Net Income", "Total Assets"],
       },
     },
-    ROIC: {
-      value: ratios.returnOnInvestedCapital,
-      tags: ["ReturnOnInvestedCapital", "OperatingIncomeLoss", "StockholdersEquity"],
-      sourceTags: ["ReturnOnInvestedCapital", "OperatingIncomeLoss"],
-      pdfMatchLabel: "Return on invested capital",
-      derivation: {
-        formula: "NOPAT ÷ Invested capital × 100",
-        formulaNote:
-          "Uses ROIC from the filing when disclosed; otherwise NOPAT ÷ (Equity + Debt − Cash).",
-        inputs: [],
-      },
-    },
     "Debt / Equity": {
       value: ratios.debtToEquity,
       tags: ["Debt", "StockholdersEquity"],

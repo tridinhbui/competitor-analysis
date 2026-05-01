@@ -193,6 +193,10 @@ export async function saveFiling(
       }
     : deriveQuarter(periodEnd);
   const now = new Date().toISOString();
+  const resolvedFilingType: "10-K" | "10-Q" =
+    analysis.meta.filingType === "10-K" || analysis.meta.filingType === "10-Q"
+      ? analysis.meta.filingType
+      : "10-Q";
 
   // Ensure company exists
   await upsertCompany(
@@ -212,7 +216,7 @@ export async function saveFiling(
     fiscal_quarter: quarter.fiscalQuarter,
     quarter_label: quarter.label,
     source,
-    filing_type: "10-Q",
+    filing_type: resolvedFilingType,
     filing_date: analysis.meta.filingDate ?? now.split("T")[0],
     analysis: {
       ...analysis,
@@ -243,7 +247,7 @@ export async function saveFiling(
         workflowOrigin,
       },
     },
-    filingType: "10-Q",
+    filingType: resolvedFilingType,
     filingDate: analysis.meta.filingDate,
     quarter,
   };

@@ -59,7 +59,7 @@ export function HowItWorksSection() {
             href="/analyze"
             className="inline-flex rounded-full border border-border bg-white px-5 py-2 text-xs font-semibold text-foreground shadow-subtle transition hover:border-[#d2d5d8] hover:bg-secondary"
           >
-            Open Analyze workspace
+            Open Quick Analyze workspace
           </Link>
         </div>
       </div>

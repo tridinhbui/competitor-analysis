@@ -248,6 +248,15 @@ RULES:
 - Do NOT invent segments or numbers. Only extract what exists.
 - If no segment data is found, return {"segments": []}.`;
 
+const FILING_IDENTITY_PROMPT = `You read the beginning of an SEC filing (HTML or text extracted from a PDF).
+
+Return ONLY valid JSON with exactly these keys:
+- "companyName": string | null — the legal/registrant name from the cover page (e.g. "APPLE INC"). Use null if not visible.
+- "ticker": string | null — trading symbol only if explicitly printed on the cover (e.g. "Symbol", "Trading symbol", exchange listing). Never infer from the company name. Use null if absent.
+- "filingType": "10-K" | "10-Q" | null — from explicit form title (Form 10-K, Form 10-Q, Annual Report on Form 10-K, Quarterly Report on Form 10-Q). Use null if ambiguous or missing.
+
+Rules: Use only the excerpt provided. Do not invent tickers or form types.`;
+
 
 // ---------------------------------------------------------------------------
 // Types
@@ -600,16 +609,16 @@ function normalizeScaleNote(s: string | undefined): string | undefined {
 }
 
 function detectScaleFromText(text: string): string | undefined {
-  const first8000 = text.slice(0, 8000);
-  if (/in\s+thousands?,\s+except\s+(?:per\s+share|share)/i.test(first8000)) {
+  const first3000 = text.slice(0, 3000);
+  if (/in\s+thousands?,\s+except\s+(?:per\s+share|share)/i.test(first3000)) {
     return "thousands";
   }
-  if (/amounts?\s+in\s+thousands/i.test(first8000)) return "thousands";
-  if (/\(\s*in\s+thousands?\s*\)/i.test(first8000)) return "thousands";
-  if (/in\s+millions?,\s+except\s+(?:per\s+share|share)/i.test(first8000)) {
+  if (/amounts?\s+in\s+thousands/i.test(first3000)) return "thousands";
+  if (/\(\s*in\s+thousands?\s*\)/i.test(first3000)) return "thousands";
+  if (/in\s+millions?,\s+except\s+(?:per\s+share|share)/i.test(first3000)) {
     return "millions";
   }
-  if (/\(\s*in\s+millions?\s*\)/i.test(first8000)) return "millions";
+  if (/\(\s*in\s+millions?\s*\)/i.test(first3000)) return "millions";
   return undefined;
 }
 
@@ -651,6 +660,29 @@ function findSection(text: string, patterns: RegExp[], maxLen: number): string {
   return chunks.join("\n\n---\n\n");
 }
 
+/**
+ * Capture deeply nested NOTE sections directly (e.g. "NOTE 20: ...") so we do not
+ * miss material disclosures when early cross-references consume section budget.
+ */
+function extractKeyNoteBlocks(text: string, maxBlocks = 8, blockLen = 7_500): string {
+  const blocks: string[] = [];
+  const seen = new Set<number>();
+  const noteHeaderRe =
+    /^NOTE\s+([0-9]{1,2}|[IVXLC]{1,8})\s*[:.\-–—]\s*.*$/gim;
+  let match: RegExpExecArray | null;
+
+  while ((match = noteHeaderRe.exec(text)) !== null) {
+    const idx = Math.max(0, match.index);
+    const rounded = Math.floor(idx / 1000) * 1000;
+    if (seen.has(rounded)) continue;
+    seen.add(rounded);
+    blocks.push(text.slice(idx, idx + blockLen));
+    if (blocks.length >= maxBlocks) break;
+  }
+
+  return blocks.join("\n\n---\n\n");
+}
+
 function extractSections(text: string): {
   bsText: string;
   isCfText: string;
@@ -679,9 +711,18 @@ function extractSections(text: string): {
     /results\s+of\s+operations/i,
   ], 30_000);
 
-  const notesText = findSection(text, [
+  // Anchor the real Notes header first (avoid matching cross-references like
+  // "see Notes to Financial Statements, Note 17" in MD&A).
+  const notesHeaderText = findSection(text, [
+    /^notes\s+to\s+(?:the\s+)?(?:condensed\s+)?(?:consolidated\s+)?financial\s+statements\b/gim,
+  ], 60_000);
+  const keyNotesText = extractKeyNoteBlocks(text);
+  const notesFallbackText = findSection(text, [
     /notes\s+to\s+(?:the\s+)?(?:condensed\s+)?(?:consolidated\s+)?financial\s+statements/i,
-  ], 30_000);
+  ], 20_000);
+  const notesText = [notesHeaderText, keyNotesText, notesFallbackText]
+    .filter(Boolean)
+    .join("\n\n---\n\n");
 
   const segText = findSection(text, [
     /(?:segment|operating\s+segments?)\s+(?:results|information|data|reporting)/i,
@@ -785,6 +826,82 @@ async function callOpenAI(
   }
 }
 
+type CanonicalFilingType = "10-K" | "10-Q";
+
+function parseCanonicalFilingType(
+  raw: string | null | undefined
+): CanonicalFilingType | undefined {
+  if (raw == null) return undefined;
+  const compact = String(raw).trim().toUpperCase().replace(/\s+/g, "");
+  if (compact === "10-K" || compact === "10K") return "10-K";
+  if (compact === "10-Q" || compact === "10Q") return "10-Q";
+  return undefined;
+}
+
+function heuristicFilingType(text: string): CanonicalFilingType | undefined {
+  const cover = text.slice(0, 8000);
+  const formQ = /\bFORM\s*10[\s\-]*Q\b/i.test(cover);
+  const formK = /\bFORM\s*10[\s\-]*K\b/i.test(cover);
+  if (formQ && !formK) return "10-Q";
+  if (formK && !formQ) return "10-K";
+  const qTitle = /\bQUARTERLY\s+REPORT\b/i.test(cover);
+  const kTitle = /\bANNUAL\s+REPORT\b/i.test(cover);
+  if (qTitle && !kTitle) return "10-Q";
+  if (kTitle && !qTitle) return "10-K";
+  return undefined;
+}
+
+async function detectFilingIdentity(
+  apiKey: string,
+  model: string,
+  filingText: string,
+  fileName?: string
+): Promise<{
+  companyName: string | null;
+  ticker: string | null;
+  filingType: CanonicalFilingType | null;
+  error: string | null;
+}> {
+  const empty = {
+    companyName: null as string | null,
+    ticker: null as string | null,
+    filingType: null as CanonicalFilingType | null,
+    error: null as string | null,
+  };
+  const snippet = filingText.slice(0, 14_000);
+  const user = `File name: ${fileName?.trim() || "(none)"}\n\n---\n${snippet}`;
+  const res = await callOpenAI(apiKey, model, FILING_IDENTITY_PROMPT, user, 500);
+  if (res.error) {
+    return { ...empty, error: res.error };
+  }
+  if (!res.content) {
+    return { ...empty, error: "empty identity response" };
+  }
+  try {
+    const o = JSON.parse(res.content) as Record<string, unknown>;
+    const companyName =
+      typeof o.companyName === "string" && o.companyName.trim().length > 0
+        ? o.companyName.trim()
+        : null;
+    let ticker: string | null = null;
+    if (typeof o.ticker === "string") {
+      const t = o.ticker.trim().toUpperCase().replace(/[^A-Z0-9.-]/g, "");
+      if (/^[A-Z]{1,6}$/.test(t)) ticker = t;
+    }
+    const filingType = parseCanonicalFilingType(
+      typeof o.filingType === "string" ? o.filingType : null
+    );
+    return {
+      companyName,
+      ticker,
+      filingType: filingType ?? null,
+      error: null,
+    };
+  } catch {
+    return { ...empty, error: "identity JSON parse failed" };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Convert AI value to number
 // ---------------------------------------------------------------------------
@@ -840,9 +957,35 @@ function toBsItems(
 }
 
 const REPAIR_OVERRIDE_METRICS = new Set<PdfFinancialMetric>([
+  // Core financial statement totals most vulnerable to 1000x scaling errors.
+  "totalAssets",
+  "cashAndEquivalents",
+  "revenue",
+  "operatingIncome",
+  "operatingCashFlow",
+  "capitalExpenditures",
+  "netIncome",
+  "grossProfit",
+  "costOfRevenue",
+  "totalCurrentAssets",
+  "totalCurrentLiabilities",
+  "longTermDebtNoncurrent",
+  "currentMaturitiesLongTermDebt",
+  "shortTermBorrowings",
+  "inventories",
+  "propertyPlantAndEquipment",
+  "retainedEarnings",
+  "goodwill",
+  "accountsPayable",
+  "interestExpense",
+  "incomeTaxExpense",
+  "incomeBeforeIncomeTaxes",
+  "stockBasedCompensation",
+  "depreciationDepletionAndAmortization",
   "ebitda",
   "grossDebt",
   "supplementalNetDebt",
+  "accountsReceivable",
 ]);
 
 function repairCriticalFinancialValue(
@@ -861,6 +1004,18 @@ function repairCriticalFinancialValue(
   const heuristicOverridesWrongAi =
     REPAIR_OVERRIDE_METRICS.has(metric) && existingIsAi;
 
+  // Strong safeguard: if the existing AI value is ~100x+ away from heuristic parse,
+  // treat it as a likely unit error (e.g. millions vs raw dollars) and override it.
+  const likelyScaleMismatchOverride =
+    existingIsAi &&
+    existingValue != null &&
+    Math.abs(existingValue) > 1 &&
+    Math.abs(repaired.value) > 1 &&
+    (
+      Math.abs(existingValue) / Math.abs(repaired.value) >= 100 ||
+      Math.abs(repaired.value) / Math.abs(existingValue) >= 100
+    );
+
   /** SCF "Dividends" vs footnote/derivative line with a tiny bogus $(8). */
   const dividendsHeuristicReplacesSuspiciousExisting =
     metric === "dividendsPaid" &&
@@ -868,11 +1023,23 @@ function repairCriticalFinancialValue(
     Math.abs(repaired.value) > 35 &&
     Math.abs(repaired.value) >= Math.abs(existingValue) * 3;
 
+  // AR: AI often picks up "Decrease in Accounts Receivable" from CF (~$54M)
+  // instead of the BS balance (~$764M). Override when heuristic finds a
+  // materially larger balance-sheet value with medium/high confidence.
+  const arHeuristicOverride =
+    metric === "accountsReceivable" &&
+    existingValue != null &&
+    repaired != null &&
+    repaired.confidence !== "low" &&
+    Math.abs(repaired.value) > Math.abs(existingValue) * 0.3;
+
   if (
     existingValue != null &&
     Math.abs(existingValue) > 1 &&
     !heuristicOverridesWrongAi &&
-    !dividendsHeuristicReplacesSuspiciousExisting
+    !likelyScaleMismatchOverride &&
+    !dividendsHeuristicReplacesSuspiciousExisting &&
+    !arHeuristicOverride
   ) {
     return;
   }
@@ -902,6 +1069,46 @@ function repairCriticalFinancialValue(
       value: repaired.value,
       period,
       source: buildHeuristicPdfProvenance(repaired, text),
+    });
+  }
+}
+
+/**
+ * Last-resort unit sanity guard.
+ * If values appear 1000x inflated (raw dollars interpreted as millions),
+ * normalize extreme magnitudes before analysis assembly.
+ */
+function normalizeLikelyScaleMismatches(
+  items: BSItem[],
+  scaleNote: string | undefined,
+  bucket: "bs" | "cf"
+): void {
+  const normalizedScale = normalizeScaleNote(scaleNote);
+  if (normalizedScale !== "millions" && normalizedScale !== "thousands") return;
+
+  const skipTags = new Set([
+    "EarningsPerShareBasic",
+    "EarningsPerShareDiluted",
+    "WeightedAverageSharesBasic",
+    "WeightedAverageSharesDiluted",
+  ]);
+
+  // 5 trillion in "M" is already unusually large; beyond this is likely a unit bug.
+  const extremeThreshold = 5_000_000;
+  for (const item of items) {
+    if (skipTags.has(item.tag)) continue;
+    if (!Number.isFinite(item.value)) continue;
+    if (Math.abs(item.value) < extremeThreshold) continue;
+
+    const previous = item.value;
+    item.value = Math.round(item.value / 1000);
+    item.source = `${item.source}|unit-normalized:÷1000`;
+    debugLog("[analyze-pdf:unit-normalize]", {
+      bucket,
+      tag: item.tag,
+      previous,
+      normalized: item.value,
+      scaleNote: normalizedScale,
     });
   }
 }
@@ -944,14 +1151,22 @@ export async function POST(request: Request) {
   const segInput = segmentText.length > 300 ? segmentText : filingText.slice(0, 60_000);
 
   try {
-    // Run 5 AI calls in parallel (4 extraction + 1 non-recurring)
-    const [bsCall, isCfCall, qualCall, segCall, nonRecurringItems] = await Promise.all([
-      callOpenAI(apiKey, model, BS_PROMPT, `Extract balance sheet data:\n\n${bsInput}`, tokensFor(bsInput)),
-      callOpenAI(apiKey, model, IS_CF_PROMPT, `Extract income statement and cash flow data:\n\n${isCfInput}`, tokensFor(isCfInput)),
-      callOpenAI(apiKey, model, QUALITATIVE_PROMPT, `Extract qualitative insights:\n\n${qualInput}`, tokensFor(qualInput)),
-      callOpenAI(apiKey, model, SEGMENT_PROMPT, `Extract segment data:\n\n${segInput}`, tokensFor(segInput, 1000, 3000)),
-      extractNonRecurringItems(filingText, apiKey, model),
-    ]);
+    // Run parallel AI: 4 extraction + non-recurring + cover identity (company / 10-K vs 10-Q)
+    const [bsCall, isCfCall, qualCall, segCall, nonRecurringItems, identityDetection] =
+      await Promise.all([
+        callOpenAI(apiKey, model, BS_PROMPT, `Extract balance sheet data:\n\n${bsInput}`, tokensFor(bsInput)),
+        callOpenAI(
+          apiKey,
+          model,
+          IS_CF_PROMPT,
+          `Extract income statement and cash flow data:\n\n${isCfInput}`,
+          tokensFor(isCfInput)
+        ),
+        callOpenAI(apiKey, model, QUALITATIVE_PROMPT, `Extract qualitative insights:\n\n${qualInput}`, tokensFor(qualInput)),
+        callOpenAI(apiKey, model, SEGMENT_PROMPT, `Extract segment data:\n\n${segInput}`, tokensFor(segInput, 1000, 3000)),
+        extractNonRecurringItems(filingText, apiKey, model),
+        detectFilingIdentity(apiKey, model, filingText, body.fileName),
+      ]);
 
     const aiErrors = [bsCall, isCfCall, qualCall, segCall]
       .map((r) => r.error)
@@ -959,6 +1174,15 @@ export async function POST(request: Request) {
 
     if (aiErrors.length > 0) {
       warnLog("[analyze-pdf] OpenAI extraction warnings:", aiErrors);
+    }
+    if (identityDetection.error) {
+      warnLog("[analyze-pdf] Cover identity detection:", identityDetection.error);
+    } else {
+      debugLog("[analyze-pdf:filing-identity]", {
+        companyName: identityDetection.companyName,
+        ticker: identityDetection.ticker,
+        filingType: identityDetection.filingType,
+      });
     }
 
     // Parse all AI responses (DRY helper replaces 4 repetitive try/catch blocks)
@@ -985,11 +1209,25 @@ export async function POST(request: Request) {
       normalizeScaleNote(bsExtraction.scaleNote) ??
       detectScaleFromText(filingText);
 
-    const mergedCompanyName =
+    const mergedCompanyNameFromExtraction =
       bsParsed.meta.companyName ??
       isCfParsed.meta.companyName ??
       bsExtraction.companyName ??
       null;
+    const trimmedIdentityName = identityDetection.companyName?.trim();
+    const mergedCompanyName =
+      trimmedIdentityName && trimmedIdentityName.length > 0
+        ? trimmedIdentityName
+        : mergedCompanyNameFromExtraction;
+
+    const filingTypeFromExtraction =
+      parseCanonicalFilingType(bsParsed.meta.filingType) ??
+      parseCanonicalFilingType(isCfParsed.meta.filingType);
+
+    const mergedFilingType: CanonicalFilingType | undefined =
+      identityDetection.filingType ??
+      filingTypeFromExtraction ??
+      heuristicFilingType(filingText);
 
     // Build BSItem arrays with exact tags + PDF provenance when model provides it.
     // Keep compatibility with legacy model JSON shape (`items: [{tag,label,value}]`).
@@ -1171,6 +1409,9 @@ export async function POST(request: Request) {
     ] as const) {
       repairCriticalFinancialValue(cfItems, metric, filingText, scaleForHeuristics, period);
     }
+
+    normalizeLikelyScaleMismatches(bsItems, scaleForHeuristics, "bs");
+    normalizeLikelyScaleMismatches(cfItems, scaleForHeuristics, "cf");
 
     // Heuristic fallback: run when the AI either missed repurchases entirely or
     // extracted a zero/invalid value (e.g. model returned 0 for a non-zero buyback).
@@ -1394,6 +1635,8 @@ export async function POST(request: Request) {
       const degradedAnalysis = assembleAnalysis(bsItems, cfItems, {
         source: "pdf",
         companyName: mergedCompanyName ?? undefined,
+        ticker: identityDetection.ticker ?? undefined,
+        filingType: mergedFilingType,
         fileName: body.fileName,
         pagesRead: body.pages,
         charsExtracted: body.chars ?? filingText.length,
@@ -1421,6 +1664,8 @@ export async function POST(request: Request) {
     const analysis = assembleAnalysis(bsItems, cfItems, {
       source: "pdf",
       companyName: mergedCompanyName ?? undefined,
+      ticker: identityDetection.ticker ?? undefined,
+      filingType: mergedFilingType,
       fileName: body.fileName,
       pagesRead: body.pages,
       charsExtracted: body.chars ?? filingText.length,

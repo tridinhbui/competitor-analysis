@@ -67,7 +67,7 @@ export function HistoricalBackfillPanel() {
       <p className="mb-3 text-xs text-slate-500">
         Backfill up to 12 quarters into this data source. For single-ticker or PDF extraction, use{" "}
         <a href="/analyze" className="font-semibold text-primary hover:underline">
-          Analyze
+          Quick Analyze
         </a>
         .
       </p>

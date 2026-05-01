@@ -28,7 +28,7 @@ export function RequireAuth({ children }: { children: React.ReactNode }) {
           <button
             type="button"
             onClick={() => setAuthOpen(true)}
-            className="rounded-full bg-primary px-5 py-2 text-xs font-semibold text-white shadow-subtle transition hover:bg-[#b7491a]"
+            className="rounded-full bg-primary px-5 py-2 text-xs font-semibold text-white shadow-subtle transition hover:bg-primary/90"
           >
             Sign in
           </button>

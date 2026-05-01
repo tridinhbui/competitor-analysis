@@ -19,7 +19,7 @@ export function LandingHero({ onTryDemo }: LandingHeroProps) {
           className="inline-flex items-center gap-2 rounded-full border border-border bg-white px-3 py-1 text-[11px] font-semibold text-muted-foreground shadow-subtle backdrop-blur-sm"
         >
           <Sparkles className="h-3.5 w-3.5 text-primary" aria-hidden />
-          Smithfield Foods · Category intelligence platform
+          Finbud Pro · Category intelligence platform
         </motion.div>
         <motion.h1
           initial={{ opacity: 0, y: 10 }}
@@ -46,7 +46,7 @@ export function LandingHero({ onTryDemo }: LandingHeroProps) {
         >
           <Link
             href="/analyze"
-            className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-primary px-7 text-sm font-semibold text-white shadow-elevation transition hover:bg-[#b7491a] focus-visible:ring-4 focus-visible:ring-primary/25 focus-visible:outline-none"
+            className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-primary px-7 text-sm font-semibold text-white shadow-elevation transition hover:bg-primary/90 focus-visible:ring-4 focus-visible:ring-primary/25 focus-visible:outline-none"
           >
             Open strategy workspace
             <ArrowRight className="h-4 w-4" aria-hidden />

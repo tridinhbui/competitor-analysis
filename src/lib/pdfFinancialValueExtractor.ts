@@ -114,6 +114,11 @@ interface ParsedLine {
   section: PdfSection;
 }
 
+function isPunctuationOnlyLabel(label: string): boolean {
+  const t = label.trim();
+  return t.length > 0 && /^[)}\].,;:]+$/.test(t);
+}
+
 function pickPrimaryValue(numbers: number[]): number | null {
   if (numbers.length === 0) return null;
   if (numbers.length === 1) return numbers[0];
@@ -181,7 +186,8 @@ const METRICS: Record<PdfFinancialMetric, MetricConfig> = {
     patterns: [/^total\s+assets\b/i],
     exactLabel: /^total\s+assets$/i,
     preferredSections: ["balance_sheet"],
-    reject: /\b(current|segment|pension|plan|under\s+management|asset\s+turnover)\b/i,
+    reject:
+      /\b(current\s+assets|segment|pension|plan|under\s+management|asset\s+turnover)\b/i,
   },
   cashAndEquivalents: {
     tag: "CashAndCashEquivalentsAtCarryingValue",
@@ -420,7 +426,8 @@ const METRICS: Record<PdfFinancialMetric, MetricConfig> = {
     ],
     exactLabel: /^accounts\s+receivable(?:,\s*net)?$/i,
     preferredSections: ["balance_sheet"],
-    reject: /\b(increase|decrease|change\s+in|turnover|days|segment)\b/i,
+    fallbackSections: [],
+    reject: /\b(increase|decrease|change\s+in|turnover|days|segment|write.?off|unbilled)\b/i,
     abs: true,
   },
   propertyPlantAndEquipment: {
@@ -507,6 +514,51 @@ const METRICS: Record<PdfFinancialMetric, MetricConfig> = {
   },
 };
 
+/** Old SEC PDFs often omit the words "Total assets" on the final BS row (numbers + $ only). */
+function isLikelyUnlabeledTotalAssetsRow(line: ParsedLine): boolean {
+  const lbl = line.label.trim();
+  if (lbl.length === 0) return true;
+  if (isPunctuationOnlyLabel(lbl)) return true;
+  if (/^[\s$.,;:()\-–—£€]+$/i.test(lbl)) return true;
+  if (lbl.length <= 2 && !/[a-z]{2}/i.test(lbl)) return true;
+  return false;
+}
+
+/**
+ * After "Other assets" on the balance sheet, the next material numeric row is often
+ * total assets with no text label (classic EDGAR PDF layout).
+ */
+function impliedTotalAssetsFromUnlabeledRow(
+  parsed: ParsedLine[],
+  scale: number
+): { line: ParsedLine; value: number; score: number } | null {
+  const reject = METRICS.totalAssets.reject;
+  const otherIdxs: number[] = [];
+  for (let i = 0; i < parsed.length; i++) {
+    const line = parsed[i];
+    if (line.section !== "balance_sheet") continue;
+    if (/^other\s+assets\b/i.test(line.label)) otherIdxs.push(i);
+  }
+  if (otherIdxs.length === 0) return null;
+  const start = otherIdxs[otherIdxs.length - 1];
+
+  for (let j = start + 1; j < Math.min(start + 12, parsed.length); j++) {
+    const line = parsed[j];
+    if (line.section !== "balance_sheet") break;
+    if (line.numbers.length === 0) continue;
+    if (!isLikelyUnlabeledTotalAssetsRow(line)) continue;
+    if (reject?.test(line.label)) continue;
+
+    const selected = pickPrimaryValue(line.numbers);
+    if (selected == null) continue;
+    const value = Math.round(selected * scale * 100) / 100;
+    if (!Number.isFinite(value) || Math.abs(value) < 5) continue;
+
+    return { line, value, score: 48 };
+  }
+  return null;
+}
+
 const SECTION_PATTERNS: Array<[RegExp, PdfSection]> = [
   [/other\s+key\s+financial\s+measures/i, "key_measures"],
   [/key\s+financial\s+measures/i, "key_measures"],
@@ -515,6 +567,7 @@ const SECTION_PATTERNS: Array<[RegExp, PdfSection]> = [
   [/consolidated\s+balance\s+sheets?/i, "balance_sheet"],
   [/balance\s+sheets?/i, "balance_sheet"],
   [/statement.*financial\s+position/i, "balance_sheet"],
+  [/liabilities\s+and\s+(stockholders|shareholders).?\s+equity/i, "balance_sheet"],
   [
     /condensed\s+consolidated\s+statements?\s+of\s+(?:operations?|income|earnings)/i,
     "income",
@@ -530,7 +583,9 @@ const SECTION_PATTERNS: Array<[RegExp, PdfSection]> = [
   ],
   [/consolidated\s+statements?\s+of\s+cash\s+flows?/i, "cash_flow"],
   [/statements?\s+of\s+cash\s+flows?/i, "cash_flow"],
+  [/cash\s+flows?\s+(?:from|statement)/i, "cash_flow"],
   [/cash\s+flows?\s+statement/i, "cash_flow"],
+  [/^(?:net\s+)?cash\s+(?:provided|used|generated)\b/i, "cash_flow"],
   [/statements?\s+of\s+(?:stockholders|shareholders).?\s+equity/i, "equity"],
   [/statements?\s+of\s+equity/i, "equity"],
   [/notes\s+to\s+(?:the\s+)?(?:condensed\s+)?(?:consolidated\s+)?financial/i, "notes"],
@@ -557,7 +612,11 @@ function detectScaleMultiplier(text: string, scaleNote?: string): number {
   if (/in\s+billions|\(billions\)|amounts?\s+in\s+billions/i.test(sample)) {
     return 1000;
   }
-  if (/in\s+thousands|\(thousands\)|amounts?\s+in\s+thousands/i.test(sample)) {
+  if (
+    /dollars?\s+in\s+thousands|in\s+thousands|\(thousands\)|amounts?\s+in\s+thousands|thousands,\s*except\s+per\s+share|\(in\s+thousands[^)]{0,120}except\s+per\s+share/i.test(
+      sample
+    )
+  ) {
     return 0.001;
   }
   return 1;
@@ -626,6 +685,12 @@ function parseLines(text: string): ParsedLine[] {
   const lines = text.split(/\n/);
   for (let i = 0; i < lines.length; i++) {
     const normalized = normalizeLine(lines[i]);
+    // Align with PDF repair text: page breaks reset section so a BS footer on the prior
+    // page does not suppress cash-flow rows at the top of the next page.
+    if (/^---\s*Page\s+Break\s*---$/i.test(normalized)) {
+      section = "unknown";
+      continue;
+    }
     for (const [pattern, nextSection] of SECTION_PATTERNS) {
       if (pattern.test(normalized)) {
         section = nextSection;
@@ -637,9 +702,34 @@ function parseLines(text: string): ParsedLine[] {
     if (!line) continue;
 
     const prev = parsed.length > 0 ? parsed[parsed.length - 1] : null;
+    // Handle wrapped allowance/date note lines that also contain the real
+    // balance-sheet numeric columns (common in AR labels).
+    const hasInlineParentheticalNote =
+      line.numbers.length > 0 &&
+      /\bat\s+\w{3,}\s+\d{1,2},\s+\d{4}/i.test(line.raw) &&
+      (line.raw.includes(")") || /\ballowance\b/i.test(line.raw));
+
+    if (
+      hasInlineParentheticalNote &&
+      prev != null &&
+      prev.section === line.section &&
+      prev.numbers.length === 0 &&
+      prev.label.length > 0
+    ) {
+      // Drop tiny inline note values (e.g. allowance amounts) and keep
+      // material column values belonging to the prior balance-sheet label.
+      const materialNumbers = line.numbers.filter((n) => Math.abs(n) >= 100);
+      if (materialNumbers.length > 0) {
+        prev.numbers = materialNumbers;
+        prev.raw = `${prev.raw} ${line.raw}`.trim();
+      }
+      continue;
+    }
+
     const isNumericContinuation =
       line.numbers.length > 0 &&
-      line.label.length === 0 &&
+      // Allow continuation when label is empty OR just punctuation from wrapped labels.
+      (line.label.length === 0 || isPunctuationOnlyLabel(line.label)) &&
       prev != null &&
       prev.section === line.section &&
       prev.label.length > 0 &&
@@ -660,6 +750,16 @@ function parseLines(text: string): ParsedLine[] {
 
 function scoreCandidate(line: ParsedLine, config: MetricConfig, value: number): number {
   let score = 20;
+
+  // Hard penalty: never pull balance-sheet-only metrics from cash_flow section.
+  // "Change in accounts receivable" in CF is a working capital adjustment, not the BS line.
+  const isBalanceSheetOnly =
+    config.preferredSections.length === 1 &&
+    config.preferredSections[0] === "balance_sheet" &&
+    (config.fallbackSections?.length ?? 0) === 0;
+  if (isBalanceSheetOnly && line.section === "cash_flow") {
+    score -= 200;
+  }
 
   if (config.preferredSections.includes(line.section)) score += 35;
   else if (config.fallbackSections?.includes(line.section)) score += 15;
@@ -721,7 +821,17 @@ export function extractPdfFinancialValue(
     }
   }
 
-  if (!best || best.score < 35) return null;
+  if (
+    metric === "totalAssets" &&
+    (!best || best.score < 25)
+  ) {
+    const implied = impliedTotalAssetsFromUnlabeledRow(parsed, scale);
+    if (implied) {
+      best = implied;
+    }
+  }
+
+  if (!best || best.score < 25) return null;
 
   return {
     metric,

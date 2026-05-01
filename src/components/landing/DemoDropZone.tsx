@@ -94,7 +94,7 @@ export function DemoDropZone({
                   </p>
                   <p className="mt-2 max-w-sm text-xs leading-relaxed text-muted-foreground sm:text-sm">
                     {demoOnly
-                      ? "Simulated pipeline for this page only. Upload real filings on Analyze."
+                      ? "Simulated pipeline for this page only. Upload real filings on Quick Analyze."
                       : "Live analysis runs in the app—this zone accepts your filing and opens the extraction pipeline."}
                   </p>
                   <span className="mt-5 inline-flex rounded-full bg-secondary px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -131,7 +131,7 @@ export function DemoDropZone({
                         ? "Demo only — same stages run on real uploads in Analyze."
                         : "Simulated pipeline — your real PDF follows the same stages."
                       : demoOnly
-                        ? "Open Analyze to run this on your actual PDF or ticker."
+                        ? "Open Quick Analyze to run this on your actual PDF or ticker."
                         : "Your PDF will open next to the dashboard."}
                   </p>
                   {demoRunState === "complete" && (

@@ -42,7 +42,7 @@ function MiniSparkline({ points, positive }: { points: number[]; positive: boole
         strokeWidth="1.5"
         strokeLinecap="round"
         strokeLinejoin="round"
-        className={cn(positive ? "stroke-emerald-500/80" : "stroke-rose-500/75")}
+        className={cn(positive ? "stroke-primary/85" : "stroke-rose-500/75")}
       />
     </svg>
   );
@@ -72,7 +72,7 @@ export function MarketStrip() {
               >
                 <span className="text-[11px] font-bold tabular-nums text-foreground">{t.symbol}</span>
                 <span className="text-[11px] tabular-nums text-muted-foreground">{t.price}</span>
-                <span className={cn("text-[10px] font-semibold tabular-nums", pos ? "text-emerald-600" : "text-rose-600")}>
+                <span className={cn("text-[10px] font-semibold tabular-nums", pos ? "text-primary" : "text-rose-600")}>
                   {pos ? "+" : ""}
                   {t.changePct.toFixed(2)}%
                 </span>

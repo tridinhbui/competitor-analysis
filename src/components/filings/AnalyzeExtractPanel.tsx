@@ -31,7 +31,7 @@ export function AnalyzeExtractPanel({
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:py-10">
       <div className="mb-6 text-center">
-        <p className="text-sm font-bold uppercase tracking-[0.18em] text-primary sm:text-base">Analyze</p>
+        <p className="text-sm font-bold uppercase tracking-[0.18em] text-primary sm:text-base">Quick Analyze</p>
         <h1 className="mt-2 text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">Extract from filings</h1>
         <p className="mx-auto mt-2 max-w-2xl text-sm text-slate-600">
           Upload a <strong className="font-semibold text-slate-800">10-Q PDF</strong>. We map key lines, score quality, and prepare dashboard-ready output.

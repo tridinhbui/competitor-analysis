@@ -34,7 +34,7 @@ interface StatusPillProps {
 
 /**
  * Unified status pill. Use `variant` for semantic meaning:
- * - primary: featured / lead (orange)
+ * - primary: featured / lead (brand accent)
  * - success: ready / on file (green)
  * - warning: risk / low confidence (amber)
  * - danger: alert / error (red)

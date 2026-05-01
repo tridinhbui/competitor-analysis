@@ -14,7 +14,7 @@ Chart.register(...registerables, ChartDataLabels);
 const COLORS = {
   navy: "#0f1f4b",
   blue: "#1e3a8a",
-  orange: "#c46f2d",
+  accent: "#2563eb",
   lightGrid: "#e5e7eb",
   text: "#111827",
   subtext: "#4b5563",
@@ -164,8 +164,8 @@ async function renderOperatingMarginChart(
         {
           label: companyBLabel,
           data: companyB,
-          borderColor: COLORS.orange,
-          backgroundColor: COLORS.orange,
+          borderColor: COLORS.accent,
+          backgroundColor: COLORS.accent,
           borderWidth: 2.5,
           tension: 0.25,
           pointRadius: 4,
@@ -193,7 +193,7 @@ async function renderOperatingMarginChart(
         },
         datalabels: {
           color: "#ffffff",
-          backgroundColor: (ctx) => (ctx.datasetIndex === 0 ? COLORS.blue : COLORS.orange),
+          backgroundColor: (ctx) => (ctx.datasetIndex === 0 ? COLORS.blue : COLORS.accent),
           borderRadius: 3,
           padding: { top: 3, bottom: 3, left: 6, right: 6 },
           align: (ctx) => ((ctx.dataset.data[ctx.dataIndex] as number) >= 0 ? "top" : "bottom"),

@@ -8,8 +8,9 @@ import {
   Search, Loader2, TrendingUp, TrendingDown, ExternalLink,
   DollarSign, BarChart3, Activity, Globe,
 } from "lucide-react";
+import { PIE_BLUE_PALETTE } from "@/lib/chartPalettes";
 
-const PIE_COLORS = ["#3b82f6", "#f97316", "#10b981", "#8b5cf6", "#ef4444", "#06b6d4", "#f59e0b"];
+const PIE_COLORS = [...PIE_BLUE_PALETTE];
 
 interface OverviewData {
   ticker: string;

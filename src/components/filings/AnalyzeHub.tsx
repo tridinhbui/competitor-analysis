@@ -15,7 +15,7 @@ export function AnalyzeHub() {
 
   return (
     <div className="flex min-h-dvh flex-col">
-      <div role="tablist" aria-label="Analyze workspace sections" className="mx-auto flex w-full max-w-6xl items-center gap-2 px-4 pt-4">
+      <div role="tablist" aria-label="Quick Analyze workspace sections" className="mx-auto flex w-full max-w-6xl items-center gap-2 px-4 pt-4">
         <Link
           href="/analyze?tab=extract"
           role="tab"

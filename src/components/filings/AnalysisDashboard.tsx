@@ -9,6 +9,7 @@ import {
   type PdfTraceTarget,
 } from "@/lib/pdfTraceResolve";
 import type { DataSourceRow } from "@/types/dataSource";
+import { PIE_BLUE_PALETTE } from "@/lib/chartPalettes";
 
 export type TraceMetric = PdfTraceTarget;
 import { cn } from "@/lib/utils";
@@ -21,7 +22,7 @@ import {
 import {
   CheckCircle2, XCircle, Download, AlertCircle,
   TrendingUp, TrendingDown, ShieldCheck, ShieldAlert,
-  ArrowRight, ArrowUpRight, ArrowDownRight, Minus, Info, Search, ChevronRight, ChevronDown,
+  ArrowRight, ArrowUpRight, ArrowDownRight, Minus, Info, Search, ChevronRight, ChevronDown, Loader2,
 } from "lucide-react";
 
 interface Props {
@@ -30,30 +31,37 @@ interface Props {
   onTraceMetric?: (target: TraceMetric) => void;
 }
 
+type ReextractPrompt = {
+  key: string;
+  label: string;
+  oldText: string;
+  newText: string;
+};
+
 const COLORS = {
-  primary: "#cc521d",
-  blue: "#9f4017",
+  primary: "#2563eb",
+  blue: "#1d4ed8",
   emerald: "#2f7d5d",
-  amber: "#c67b1f",
+  amber: "#3b82f6",
   red: "#f44336",
   slate: "#5a6065",
-  purple: "#7f5a4a",
-  cyan: "#bf6b45",
+  purple: "#4f46e5",
+  cyan: "#0ea5e9",
   grid: "#e3e5e7",
   border: "#e3e5e7",
   tooltipText: "#3b4043",
   tooltipBg: "#ffffff",
 };
-const PIE_PALETTE = [COLORS.primary, COLORS.blue, COLORS.emerald, COLORS.amber, COLORS.purple, COLORS.cyan];
+const PIE_PALETTE = [...PIE_BLUE_PALETTE];
 
 const fmt = (v: number | null | undefined, prefix = "$", suffix = "M"): string => {
   if (v == null) return "—";
-  const formatted = `${prefix}${Math.abs(v).toLocaleString()}${suffix}`;
+  const formatted = `${prefix}${Math.abs(v).toLocaleString("en-US")}${suffix}`;
   return v < 0 ? `(${formatted})` : formatted;
 };
 const fmtPct = (v: number | null | undefined): string => v != null ? `${v.toFixed(1)}%` : "—";
 const fmtX = (v: number | null | undefined): string => v != null ? `${v.toFixed(2)}x` : "—";
-const fmtNum = (v: number | null | undefined): string => v != null ? v.toLocaleString() : "—";
+const fmtNum = (v: number | null | undefined): string => v != null ? v.toLocaleString("en-US") : "—";
 
 function formatTraceInputValue(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
@@ -162,6 +170,10 @@ const TABS: { id: TabId; label: string }[] = [
 
 export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
   const [activeTab, setActiveTab] = useState<TabId>("summary");
+  const [reextractBusyKey, setReextractBusyKey] = useState<string | null>(null);
+  const [reextractNotice, setReextractNotice] = useState<string>("");
+  const [reextractPrompt, setReextractPrompt] = useState<ReextractPrompt | null>(null);
+  const [reextractAppliedValues, setReextractAppliedValues] = useState<Record<string, string>>({});
   const { balanceSheet: bs, debtStructure: debt, cashFlow: cf, ratios, dividendAnalysis: div, incomeStatement: inc, meta } = result;
   const cfItems = result.cfItems ?? [];
 
@@ -197,6 +209,110 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
     },
     [onTraceMetric],
   );
+  const navigateToDataSource = useCallback(
+    (opts: { label?: string; tag?: string }) => {
+      if (!meta.ticker || !meta.periodEnd) return;
+      const params = new URLSearchParams({
+        ticker: meta.ticker,
+        periodEnd: meta.periodEnd,
+      });
+      if (opts.label) params.set("metricLabel", opts.label);
+      if (opts.tag) params.set("metricTag", opts.tag);
+      window.location.href = `/data-source?${params.toString()}`;
+    },
+    [meta.periodEnd, meta.ticker],
+  );
+
+  const triggerReextract = useCallback(
+    async (opts: { key: string; label: string; tag?: string; currentDisplay?: string }) => {
+      if (!meta.ticker || !meta.periodEnd) {
+        setReextractNotice("Missing ticker/period. Cannot re-extract.");
+        return;
+      }
+      setReextractBusyKey(opts.key);
+      setReextractNotice("");
+      setReextractPrompt(null);
+      try {
+        const resp = await fetch("/api/reextract-metric", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ticker: meta.ticker,
+            periodEnd: meta.periodEnd,
+            metricTag: opts.tag,
+            metricLabel: opts.label,
+          }),
+        });
+        const data = (await resp.json().catch(() => ({}))) as {
+          error?: string;
+          oldValue?: number | null;
+          newValue?: number | null;
+        };
+        if (!resp.ok) {
+          setReextractNotice(data.error ?? `Re-extract failed (HTTP ${resp.status})`);
+          return;
+        }
+        const oldText =
+          data.oldValue != null ? fmt(data.oldValue) : (opts.currentDisplay ?? "—");
+        const newText = data.newValue != null ? fmt(data.newValue) : "—";
+        if (oldText === newText) {
+          setReextractNotice(`${opts.label}: no change found.`);
+          return;
+        }
+        setReextractPrompt({
+          key: opts.key,
+          label: opts.label,
+          oldText,
+          newText,
+        });
+      } catch (e) {
+        setReextractNotice(e instanceof Error ? e.message : "Re-extract failed");
+      } finally {
+        setReextractBusyKey(null);
+      }
+    },
+    [meta.periodEnd, meta.ticker],
+  );
+
+  const onMetricRowContextMenu = useCallback(
+    (event: React.MouseEvent, label: string, currentDisplay?: string) => {
+      event.preventDefault();
+      void triggerReextract({
+        key: `metric:${label}`,
+        label,
+        tag: traceLabelMap[label]?.tags?.[0],
+        currentDisplay,
+      });
+    },
+    [traceLabelMap, triggerReextract],
+  );
+
+  const onLineItemContextMenu = useCallback(
+    (event: React.MouseEvent, item: BSItem) => {
+      event.preventDefault();
+      void triggerReextract({
+        key: `line:${item.tag}`,
+        label: item.label,
+        tag: item.tag,
+        currentDisplay: fmt(item.value),
+      });
+    },
+    [triggerReextract],
+  );
+
+  const applyReextractPrompt = useCallback(() => {
+    if (!reextractPrompt) return;
+    setReextractAppliedValues((prev) => ({
+      ...prev,
+      [reextractPrompt.key]: reextractPrompt.newText,
+    }));
+    setReextractPrompt(null);
+    setReextractNotice(`${reextractPrompt.label} updated.`);
+  }, [reextractPrompt]);
+
+  const dismissReextractPrompt = useCallback(() => {
+    setReextractPrompt(null);
+  }, []);
 
   const verdictColor = {
     strong: "text-emerald-700 bg-emerald-50 border-emerald-200",
@@ -256,13 +372,18 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                 <span className="text-slate-300">•</span>
                 <span className={cn(
                   "font-semibold uppercase",
-                  meta.confidence === "high" ? "text-emerald-600" : meta.confidence === "medium" ? "text-amber-600" : "text-slate-500"
+                  meta.confidence === "high" ? "text-slate-600" : meta.confidence === "medium" ? "text-slate-500" : "text-slate-400"
                 )}>
                   {meta.confidence} confidence
                 </span>
               </>
             )}
           </div>
+          {reextractNotice && !reextractBusyKey && !reextractPrompt && (
+            <div className="mt-2 rounded-md border border-primary/20 bg-primary/5 px-2 py-1 text-[11px] text-slate-700">
+              {reextractNotice}
+            </div>
+          )}
         </div>
         {onExport && (
           <button onClick={onExport} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-xs font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90">
@@ -342,6 +463,13 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
               <div className="grid gap-4 lg:grid-cols-2">
                 <MetricTable
                   onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
+                  onRowDoubleClick={(label) => navigateToDataSource({ label })}
+                  onRowContextMenu={onMetricRowContextMenu}
+                  reextractBusyKey={reextractBusyKey}
+                  reextractPrompt={reextractPrompt}
+                  reextractAppliedValues={reextractAppliedValues}
+                  onApplyReextract={applyReextractPrompt}
+                  onDismissReextract={dismissReextractPrompt}
                   {...metricTableTraceProps}
                   rows={[
                     { label: "Revenue", value: fmt(inc.revenue), traceable: true },
@@ -356,6 +484,13 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                 />
                 <MetricTable
                   onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
+                  onRowDoubleClick={(label) => navigateToDataSource({ label })}
+                  onRowContextMenu={onMetricRowContextMenu}
+                  reextractBusyKey={reextractBusyKey}
+                  reextractPrompt={reextractPrompt}
+                  reextractAppliedValues={reextractAppliedValues}
+                  onApplyReextract={applyReextractPrompt}
+                  onDismissReextract={dismissReextractPrompt}
                   {...metricTableTraceProps}
                   rows={[
                     { label: "Total Assets", value: fmt(bs.totalAssets), traceable: true },
@@ -430,7 +565,6 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                 <RatioCard label="Net Margin" value={fmtPct(ratios.netMargin)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Net Margin") : undefined} trace={traceByLabel?.["Net Margin"]} labelMap={traceLabelMap} />
                 <RatioCard label="ROE" value={fmtPct(ratios.returnOnEquity)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("ROE") : undefined} trace={traceByLabel?.["ROE"]} labelMap={traceLabelMap} />
                 <RatioCard label="ROA" value={fmtPct(ratios.returnOnAssets)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("ROA") : undefined} trace={traceByLabel?.["ROA"]} labelMap={traceLabelMap} />
-                <RatioCard label="ROIC" value={fmtPct(ratios.returnOnInvestedCapital)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("ROIC") : undefined} trace={traceByLabel?.["ROIC"]} labelMap={traceLabelMap} />
                 <RatioCard label="D/E Ratio" value={fmtX(ratios.debtToEquity)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("D/E Ratio") : undefined} trace={traceByLabel?.["D/E Ratio"]} labelMap={traceLabelMap} />
                 <RatioCard label="ND/EBITDA" value={fmtX(ratios.netDebtToEbitda)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Net Debt / EBITDA") : undefined} trace={traceByLabel?.["ND/EBITDA"]} labelMap={traceLabelMap} />
                 <RatioCard label="Interest Cov." value={fmtX(ratios.interestCoverage)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Interest Coverage") : undefined} trace={traceByLabel?.["Interest Cov."]} labelMap={traceLabelMap} />
@@ -455,9 +589,10 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                   pct: totalRev > 0 ? Math.round(((s.revenue ?? 0) / totalRev) * 1000) / 10 : 0,
                   fill: PIE_PALETTE[i % PIE_PALETTE.length],
                 }));
-                const barData = segs.map((s) => ({
+                const barData = segs.map((s, i) => ({
                   name: s.segmentName.length > 12 ? `${s.segmentName.slice(0, 12)}…` : s.segmentName,
                   opMargin: s.operatingMargin ?? 0,
+                  fill: PIE_PALETTE[i % PIE_PALETTE.length],
                 }));
 
                 return (
@@ -496,7 +631,11 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                                   <XAxis type="number" tick={{ fontSize: 9 }} unit="%" />
                                   <YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 9 }} />
                                   <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${Number(v).toFixed(1)}%`} />
-                                  <Bar dataKey="opMargin" fill={COLORS.primary} radius={[0, 4, 4, 0]} />
+                                  <Bar dataKey="opMargin" radius={[0, 4, 4, 0]}>
+                                    {barData.map((_, i) => (
+                                      <Cell key={i} fill={barData[i]!.fill} />
+                                    ))}
+                                  </Bar>
                                 </BarChart>
                               </ResponsiveContainer>
                             </div>
@@ -624,7 +763,17 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
             <div className="space-y-4">
               {/* Income Statement Table */}
               <Section title="Income Statement">
-                <IncomeStatementTable inc={inc} onRowClick={onTraceMetric ? onMetricTableRowClick : undefined} />
+                <IncomeStatementTable
+                  inc={inc}
+                  onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
+                  onRowDoubleClick={(label) => navigateToDataSource({ label })}
+                  onRowContextMenu={onMetricRowContextMenu}
+                  reextractBusyKey={reextractBusyKey}
+                  reextractPrompt={reextractPrompt}
+                  reextractAppliedValues={reextractAppliedValues}
+                  onApplyReextract={applyReextractPrompt}
+                  onDismissReextract={dismissReextractPrompt}
+                />
               </Section>
 
               <Section title="Profit Waterfall ($M)">
@@ -681,6 +830,13 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
               <Section title="Operating Expense Breakdown">
                 <MetricTable
                   onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
+                  onRowDoubleClick={(label) => navigateToDataSource({ label })}
+                  onRowContextMenu={onMetricRowContextMenu}
+                  reextractBusyKey={reextractBusyKey}
+                  reextractPrompt={reextractPrompt}
+                  reextractAppliedValues={reextractAppliedValues}
+                  onApplyReextract={applyReextractPrompt}
+                  onDismissReextract={dismissReextractPrompt}
                   {...metricTableTraceProps}
                   rows={[
                     { label: "SG&A Expense", value: fmt(inc.sgaExpense), sub: inc.revenue && inc.sgaExpense ? `${((inc.sgaExpense / inc.revenue) * 100).toFixed(1)}% of revenue` : undefined, traceable: true },
@@ -709,6 +865,13 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                   title="Income & Cash Flow"
                   items={cfItems}
                   onRowClick={onTraceMetric ? traceLineItemRow : undefined}
+                  onRowDoubleClick={(item) => navigateToDataSource({ tag: item.tag, label: item.label })}
+                  onRowContextMenu={onLineItemContextMenu}
+                  reextractBusyKey={reextractBusyKey}
+                  reextractPrompt={reextractPrompt}
+                  reextractAppliedValues={reextractAppliedValues}
+                  onApplyReextract={applyReextractPrompt}
+                  onDismissReextract={dismissReextractPrompt}
                 />
               </Section>
 
@@ -751,6 +914,13 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                 <Section title="Balance Sheet Summary">
                   <MetricTable
                     onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
+                    onRowDoubleClick={(label) => navigateToDataSource({ label })}
+                    onRowContextMenu={onMetricRowContextMenu}
+                    reextractBusyKey={reextractBusyKey}
+                    reextractPrompt={reextractPrompt}
+                    reextractAppliedValues={reextractAppliedValues}
+                    onApplyReextract={applyReextractPrompt}
+                    onDismissReextract={dismissReextractPrompt}
                     {...metricTableTraceProps}
                     rows={[
                       { label: "Total Assets", value: fmt(bs.totalAssets), bold: true, traceable: true },
@@ -799,6 +969,13 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                 <div className="grid gap-4 lg:grid-cols-2">
                   <MetricTable
                     onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
+                    onRowDoubleClick={(label) => navigateToDataSource({ label })}
+                    onRowContextMenu={onMetricRowContextMenu}
+                    reextractBusyKey={reextractBusyKey}
+                    reextractPrompt={reextractPrompt}
+                    reextractAppliedValues={reextractAppliedValues}
+                    onApplyReextract={applyReextractPrompt}
+                    onDismissReextract={dismissReextractPrompt}
                     {...metricTableTraceProps}
                     rows={[
                       { label: "Accounts Receivable", value: fmt(ar), traceable: true },
@@ -821,7 +998,7 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
               {hasWorkingCapitalComposition && (
                 <Section title="WORKING CAPITAL COMPOSITION">
                   <p className="mb-3 text-xs text-slate-500">All values in millions (USD)</p>
-                  <div className="rounded-2xl border border-slate-200 bg-[#f7f4f1] p-4 shadow-subtle">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-subtle">
                     <div className="mx-auto h-44 w-full max-w-4xl">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={wcComposition} layout="vertical" margin={{ left: 12, right: 12, top: 6, bottom: 6 }} stackOffset="sign">
@@ -859,7 +1036,7 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                               style={{ fontSize: 10, fontWeight: 700 }}
                             />
                           </Bar>
-                          <Bar dataKey="ar" stackId="wc" name="Accounts Receivable (+)" fill="#8f4a2b">
+                          <Bar dataKey="ar" stackId="wc" name="Accounts Receivable (+)" fill="#1e40af">
                             <LabelList
                               dataKey="ar"
                               position="inside"
@@ -871,7 +1048,7 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                               style={{ fontSize: 10, fontWeight: 700 }}
                             />
                           </Bar>
-                          <Bar dataKey="inv" stackId="wc" name="Inventories (+)" fill="#cc521d" radius={[0, 4, 4, 0]}>
+                          <Bar dataKey="inv" stackId="wc" name="Inventories (+)" fill="#2563eb" radius={[0, 4, 4, 0]}>
                             <LabelList
                               dataKey="inv"
                               position="insideRight"
@@ -888,8 +1065,8 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                     </div>
                     <div className="mt-2 flex flex-wrap items-center justify-center gap-4 text-[11px] text-slate-600">
                       <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#9aa0a6]" />Accounts Payable (-)</span>
-                      <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#9f4017]" />Accounts Receivable (+)</span>
-                      <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#cc521d]" />Inventories (+)</span>
+                      <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#1e40af]" />Accounts Receivable (+)</span>
+                      <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#2563eb]" />Inventories (+)</span>
                     </div>
                   </div>
                 </Section>
@@ -900,6 +1077,13 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                   title="Balance Sheet"
                   items={bs.items}
                   onRowClick={onTraceMetric ? traceLineItemRow : undefined}
+                  onRowDoubleClick={(item) => navigateToDataSource({ tag: item.tag, label: item.label })}
+                  onRowContextMenu={onLineItemContextMenu}
+                  reextractBusyKey={reextractBusyKey}
+                  reextractPrompt={reextractPrompt}
+                  reextractAppliedValues={reextractAppliedValues}
+                  onApplyReextract={applyReextractPrompt}
+                  onDismissReextract={dismissReextractPrompt}
                 />
               </Section>
             </div>
@@ -978,6 +1162,13 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                 <Section title="Cash Flow Statement">
                   <MetricTable
                     onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
+                    onRowDoubleClick={(label) => navigateToDataSource({ label })}
+                    onRowContextMenu={onMetricRowContextMenu}
+                    reextractBusyKey={reextractBusyKey}
+                    reextractPrompt={reextractPrompt}
+                    reextractAppliedValues={reextractAppliedValues}
+                    onApplyReextract={applyReextractPrompt}
+                    onDismissReextract={dismissReextractPrompt}
                     {...metricTableTraceProps}
                     rows={[
                       { label: "Operating Cash Flow", value: fmt(cf.operatingCashFlow), bold: true, traceable: true },
@@ -1037,6 +1228,13 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                 <div className="grid gap-4 lg:grid-cols-2">
                   <MetricTable
                     onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
+                    onRowDoubleClick={(label) => navigateToDataSource({ label })}
+                    onRowContextMenu={onMetricRowContextMenu}
+                    reextractBusyKey={reextractBusyKey}
+                    reextractPrompt={reextractPrompt}
+                    reextractAppliedValues={reextractAppliedValues}
+                    onApplyReextract={applyReextractPrompt}
+                    onDismissReextract={dismissReextractPrompt}
                     {...metricTableTraceProps}
                     rows={[
                       { label: "Operating Cash Flow", value: fmt(cf.operatingCashFlow), bold: true, traceable: true },
@@ -1239,6 +1437,13 @@ function RatioCard({
 }
 
 function MetricTable({ rows, compact, onRowClick, labelMap, traceByLabel,
+  onRowDoubleClick,
+  onRowContextMenu,
+  reextractBusyKey,
+  reextractPrompt,
+  reextractAppliedValues,
+  onApplyReextract,
+  onDismissReextract,
   derivationOpenKey,
   onDerivationOpenChange,
   derivationScope = "mt",
@@ -1255,6 +1460,13 @@ function MetricTable({ rows, compact, onRowClick, labelMap, traceByLabel,
   }>;
   compact?: boolean;
   onRowClick?: (label: string) => void;
+  onRowDoubleClick?: (label: string) => void;
+  onRowContextMenu?: (event: React.MouseEvent, label: string, value: string) => void;
+  reextractBusyKey?: string | null;
+  reextractPrompt?: ReextractPrompt | null;
+  reextractAppliedValues?: Record<string, string>;
+  onApplyReextract?: () => void;
+  onDismissReextract?: () => void;
   labelMap?: Record<string, MetricTraceSpec> | null;
   traceByLabel?: Record<string, PdfTraceTarget> | null;
   /** Controlled: one open tooltip id across sibling tables (e.g. Deep Dive ratio columns). */
@@ -1272,6 +1484,10 @@ function MetricTable({ rows, compact, onRowClick, labelMap, traceByLabel,
       <tbody>
         {rows.filter(r => r.value !== "—" || !compact).map((r, i) => {
           const lk = r.traceKey ?? r.label;
+          const rowKey = `metric:${r.label}`;
+          const rowDisplay = reextractAppliedValues?.[rowKey] ?? r.value;
+          const isBusy = reextractBusyKey === rowKey;
+          const hasPrompt = reextractPrompt?.key === rowKey;
           const trace = traceByLabel?.[lk];
           const showInsight = !!(trace && labelMap && trace.derivation);
           const wantsPdf = wantsPdfTrace(trace, {
@@ -1282,6 +1498,8 @@ function MetricTable({ rows, compact, onRowClick, labelMap, traceByLabel,
             <tr
               key={i}
               onClick={wantsPdf && onRowClick ? () => onRowClick(r.label) : undefined}
+              onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(r.label) : undefined}
+              onContextMenu={onRowContextMenu ? (event) => onRowContextMenu(event, r.label, rowDisplay) : undefined}
               className={cn(
                 "border-b border-slate-100 last:border-b-0",
                 r.bold && "bg-slate-50/50",
@@ -1311,9 +1529,41 @@ function MetricTable({ rows, compact, onRowClick, labelMap, traceByLabel,
                   }}
                 >
                   <div className="flex flex-wrap items-center justify-end gap-1">
-                    <span>{r.value}</span>
+                    <span>{rowDisplay}</span>
+                    {isBusy && <Loader2 className="h-3 w-3 animate-spin text-primary" />}
                     {r.sub && <span className="text-[10px] font-normal text-slate-400">{r.sub}</span>}
                   </div>
+                  {hasPrompt && reextractPrompt && (
+                    <div
+                      className="mt-1 ml-auto w-[220px] rounded-md border border-primary/20 bg-white p-2 text-left shadow-sm"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <p className="text-[10px] text-slate-600">Old: {reextractPrompt.oldText}</p>
+                      <p className="text-[10px] font-semibold text-primary">New: {reextractPrompt.newText}</p>
+                      <div className="mt-1.5 flex items-center justify-end gap-1">
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onDismissReextract?.();
+                          }}
+                          className="rounded border border-slate-200 px-2 py-0.5 text-[10px] text-slate-600 hover:bg-slate-50"
+                        >
+                          Keep current
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onApplyReextract?.();
+                          }}
+                          className="rounded bg-primary px-2 py-0.5 text-[10px] font-semibold text-white hover:opacity-90"
+                        >
+                          Apply
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {showInsight && (
                     <DerivationTooltip
                       trace={trace!}
@@ -1333,7 +1583,27 @@ function MetricTable({ rows, compact, onRowClick, labelMap, traceByLabel,
   );
 }
 
-function IncomeStatementTable({ inc, onRowClick }: { inc: IncomeStatement; onRowClick?: (label: string) => void }) {
+function IncomeStatementTable({
+  inc,
+  onRowClick,
+  onRowDoubleClick,
+  onRowContextMenu,
+  reextractBusyKey,
+  reextractPrompt,
+  reextractAppliedValues,
+  onApplyReextract,
+  onDismissReextract,
+}: {
+  inc: IncomeStatement;
+  onRowClick?: (label: string) => void;
+  onRowDoubleClick?: (label: string) => void;
+  onRowContextMenu?: (event: React.MouseEvent, label: string, value: string) => void;
+  reextractBusyKey?: string | null;
+  reextractPrompt?: ReextractPrompt | null;
+  reextractAppliedValues?: Record<string, string>;
+  onApplyReextract?: () => void;
+  onDismissReextract?: () => void;
+}) {
   const lines: Array<{ label: string; value: number | null; bold?: boolean; dim?: boolean; marginLabel?: string; margin?: number | null; indent?: boolean }> = [
     { label: "Revenue", value: inc.revenue, bold: true },
     { label: "Cost of Revenue", value: inc.costOfRevenue ? -inc.costOfRevenue : null, dim: true },
@@ -1360,10 +1630,28 @@ function IncomeStatementTable({ inc, onRowClick }: { inc: IncomeStatement; onRow
       <tbody>
         {lines.filter(l => l.value != null).map((l, i) => {
           const clickable = !!onRowClick;
+          const rowKey = `metric:${l.label}`;
+          const defaultText = l.value != null
+            ? (l.value < 0 ? `(${Math.abs(l.value).toLocaleString()})` : l.value.toLocaleString())
+            : "—";
+          const rowDisplay = reextractAppliedValues?.[rowKey] ?? defaultText;
+          const isBusy = reextractBusyKey === rowKey;
+          const hasPrompt = reextractPrompt?.key === rowKey;
           return (
             <tr
               key={i}
               onClick={clickable ? () => onRowClick(l.label) : undefined}
+              onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(l.label) : undefined}
+              onContextMenu={
+                onRowContextMenu
+                  ? (event) =>
+                      onRowContextMenu(
+                        event,
+                        l.label,
+                        rowDisplay
+                      )
+                  : undefined
+              }
               className={cn(
                 "border-b border-slate-100",
                 l.bold && "bg-slate-50/50",
@@ -1383,7 +1671,41 @@ function IncomeStatementTable({ inc, onRowClick }: { inc: IncomeStatement; onRow
                 l.bold ? "font-bold text-slate-900" : "text-slate-700",
                 l.value != null && l.value < 0 && "text-red-500",
               )}>
-                {l.value != null ? (l.value < 0 ? `(${Math.abs(l.value).toLocaleString()})` : l.value.toLocaleString()) : "—"}
+                <div className="flex items-center justify-end gap-1">
+                  <span>{rowDisplay}</span>
+                  {isBusy && <Loader2 className="h-3 w-3 animate-spin text-primary" />}
+                </div>
+                {hasPrompt && reextractPrompt && (
+                  <div
+                    className="mt-1 ml-auto w-[220px] rounded-md border border-primary/20 bg-white p-2 text-left shadow-sm"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <p className="text-[10px] text-slate-600">Old: {reextractPrompt.oldText}</p>
+                    <p className="text-[10px] font-semibold text-primary">New: {reextractPrompt.newText}</p>
+                    <div className="mt-1.5 flex items-center justify-end gap-1">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onDismissReextract?.();
+                        }}
+                        className="rounded border border-slate-200 px-2 py-0.5 text-[10px] text-slate-600 hover:bg-slate-50"
+                      >
+                        Keep current
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onApplyReextract?.();
+                        }}
+                        className="rounded bg-primary px-2 py-0.5 text-[10px] font-semibold text-white hover:opacity-90"
+                      >
+                        Apply
+                      </button>
+                    </div>
+                  </div>
+                )}
               </td>
               <td className="px-3 py-1.5 text-right tabular-nums text-slate-500">
                 {l.margin != null ? `${l.margin.toFixed(1)}%` : ""}
@@ -1799,6 +2121,7 @@ function InsightsTab({
   const footnotes = result.footnotes ?? [];
   const adjustedMetrics = result.adjustedMetrics ?? [];
   const narrative = result.earningsNarrative;
+  const importantFootnotes = footnotes.filter((fn) => fn.significance === "high" || fn.significance === "medium");
 
   // ── Valuation Multiples (auto-fetch or manual market cap)
   const [marketCapInput, setMarketCapInput] = useState("");
@@ -2000,7 +2323,7 @@ function InsightsTab({
         <button
           onClick={exportInsightsDeck}
           disabled={deckLoading}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-subtle transition hover:bg-indigo-700 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:opacity-50"
         >
           <Download className="h-3.5 w-3.5" />
           {deckLoading ? "Generating…" : "Export Insights Deck"}
@@ -2008,28 +2331,28 @@ function InsightsTab({
       </div>
 
       {/* ── Overall AI Assessment ── */}
-      <div className="rounded-xl border-2 border-violet-200 bg-violet-50 p-4">
+      <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4">
         <div className="flex items-center gap-2 mb-2">
-          <Info className="h-4 w-4 text-violet-600" />
-          <p className="text-xs font-bold uppercase tracking-wider text-violet-600">AI Overall Assessment</p>
+          <Info className="h-4 w-4 text-slate-500" />
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-600">AI Overall Assessment</p>
         </div>
         {commentaryLoading && !commentary ? (
-          <div className="h-8 w-3/4 animate-pulse rounded bg-violet-100" />
+          <div className="h-8 w-3/4 animate-pulse rounded bg-slate-200/80" />
         ) : commentary?.overallAssessment ? (
           <p className="text-sm text-slate-800 leading-relaxed">{commentary.overallAssessment}</p>
         ) : (
           <p className="text-sm text-slate-500">AI commentary unavailable for this filing.</p>
         )}
         {commentaryError && (
-          <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-            <p className="text-xs text-amber-800">{commentaryError}</p>
+          <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+            <p className="text-xs text-slate-600">{commentaryError}</p>
             <button
               type="button"
               onClick={() => {
                 setCommentaryAttemptKey(null);
                 void generateCommentary();
               }}
-              className="rounded-md bg-amber-100 px-2.5 py-1 text-[11px] font-semibold text-amber-800 hover:bg-amber-200"
+              className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
             >
               Retry
             </button>
@@ -2039,36 +2362,23 @@ function InsightsTab({
 
       {/* ── Financial Health Summary ── */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <div className={cn("rounded-xl border-2 p-4 text-center",
-          healthScore.grade === "A" ? "border-emerald-300 bg-emerald-50" :
-          healthScore.grade === "B" ? "border-blue-300 bg-blue-50" :
-          healthScore.grade === "C" ? "border-amber-300 bg-amber-50" :
-          "border-red-300 bg-red-50"
-        )}>
+        <div className="rounded-xl border border-slate-200 bg-white p-4 text-center">
           <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Financial Health</p>
           <p className={cn("text-4xl font-black mt-1",
-            healthScore.grade === "A" ? "text-emerald-600" :
-            healthScore.grade === "B" ? "text-blue-600" :
-            healthScore.grade === "C" ? "text-amber-600" : "text-red-600"
+            healthScore.grade === "D" || healthScore.grade === "F" ? "text-red-600" : "text-slate-900"
           )}>{healthScore.grade}</p>
           <p className="text-xs text-slate-500 mt-1">{healthScore.score}/{healthScore.max} points ({healthScore.pctScore}%)</p>
         </div>
 
         {zScore && (
-          <div className={cn("rounded-xl border-2 p-4 text-center",
-            zScore.zone === "safe" ? "border-emerald-300 bg-emerald-50" :
-            zScore.zone === "grey" ? "border-amber-300 bg-amber-50" :
-            "border-red-300 bg-red-50"
-          )}>
+          <div className="rounded-xl border border-slate-200 bg-white p-4 text-center">
             <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Altman Z-Score</p>
             <p className={cn("text-3xl font-black mt-1",
-              zScore.zone === "safe" ? "text-emerald-600" :
-              zScore.zone === "grey" ? "text-amber-600" : "text-red-600"
+              zScore.zone === "distress" ? "text-red-600" : "text-slate-900"
             )}>{zScore.z.toFixed(2)}</p>
             <p className="text-xs mt-1">
-              <span className={cn("rounded px-1.5 py-0.5 font-bold text-[10px]",
-                zScore.zone === "safe" ? "bg-emerald-200 text-emerald-800" :
-                zScore.zone === "grey" ? "bg-amber-200 text-amber-800" : "bg-red-200 text-red-800"
+              <span className={cn("rounded px-1.5 py-0.5 font-bold text-[10px] bg-slate-100 text-slate-700",
+                zScore.zone === "distress" && "bg-red-50 text-red-800"
               )}>
                 {zScore.zone === "safe" ? "SAFE ZONE" : zScore.zone === "grey" ? "GREY ZONE" : "DISTRESS ZONE"}
               </span>
@@ -2076,30 +2386,19 @@ function InsightsTab({
           </div>
         )}
 
-        <div className={cn("rounded-xl border-2 p-4 text-center",
-          piotroski.score >= 7 ? "border-emerald-300 bg-emerald-50" :
-          piotroski.score >= 4 ? "border-amber-300 bg-amber-50" :
-          "border-red-300 bg-red-50"
-        )}>
+        <div className="rounded-xl border border-slate-200 bg-white p-4 text-center">
           <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Piotroski F-Score</p>
           <p className={cn("text-3xl font-black mt-1",
-            piotroski.score >= 7 ? "text-emerald-600" :
-            piotroski.score >= 4 ? "text-amber-600" : "text-red-600"
+            piotroski.score < 4 ? "text-red-600" : "text-slate-900"
           )}>{piotroski.score}/9</p>
           <p className="text-xs text-slate-500 mt-1">{piotroski.score >= 7 ? "Strong" : piotroski.score >= 4 ? "Moderate" : "Weak"} fundamentals</p>
         </div>
 
-        <div className={cn("rounded-xl border-2 p-4 text-center",
-          earningsQuality.quality === "high" ? "border-emerald-300 bg-emerald-50" :
-          earningsQuality.quality === "moderate" ? "border-blue-300 bg-blue-50" :
-          earningsQuality.quality === "low" ? "border-red-300 bg-red-50" :
-          "border-slate-300 bg-slate-50"
-        )}>
+        <div className="rounded-xl border border-slate-200 bg-white p-4 text-center">
           <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Earnings Quality</p>
           <p className={cn("text-2xl font-black mt-1",
-            earningsQuality.quality === "high" ? "text-emerald-600" :
-            earningsQuality.quality === "moderate" ? "text-blue-600" :
-            earningsQuality.quality === "low" ? "text-red-600" : "text-slate-500"
+            earningsQuality.quality === "low" ? "text-red-600" :
+            earningsQuality.quality === "unknown" ? "text-slate-500" : "text-slate-900"
           )}>{earningsQuality.quality === "unknown" ? "N/A" : earningsQuality.quality.toUpperCase()}</p>
           <p className="text-xs text-slate-500 mt-1">OCF/NI: {earningsQuality.ocfToNI != null ? `${earningsQuality.ocfToNI}x` : "—"}</p>
         </div>
@@ -2107,32 +2406,32 @@ function InsightsTab({
 
       {(commentaryLoading || (commentary?.keyRisks?.length ?? 0) > 0 || (commentary?.keyStrengths?.length ?? 0) > 0) && (
         <div className="grid gap-4 lg:grid-cols-2">
-          <div className="rounded-xl border border-red-200 bg-red-50 p-4">
-            <p className="text-xs font-bold uppercase tracking-wide text-red-600">Key Risks</p>
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-600">Key Risks</p>
             <div className="mt-2 space-y-1.5">
               {commentaryLoading && !commentary ? (
                 <>
-                  <div className="h-4 w-11/12 animate-pulse rounded bg-red-100" />
-                  <div className="h-4 w-10/12 animate-pulse rounded bg-red-100" />
+                  <div className="h-4 w-11/12 animate-pulse rounded bg-slate-100" />
+                  <div className="h-4 w-10/12 animate-pulse rounded bg-slate-100" />
                 </>
               ) : (
                 (commentary?.keyRisks ?? []).map((risk, idx) => (
-                  <p key={`${risk}-${idx}`} className="text-xs text-red-800">- {risk}</p>
+                  <p key={`${risk}-${idx}`} className="text-xs text-slate-700">- {risk}</p>
                 ))
               )}
             </div>
           </div>
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-            <p className="text-xs font-bold uppercase tracking-wide text-emerald-600">Key Strengths</p>
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-600">Key Strengths</p>
             <div className="mt-2 space-y-1.5">
               {commentaryLoading && !commentary ? (
                 <>
-                  <div className="h-4 w-11/12 animate-pulse rounded bg-emerald-100" />
-                  <div className="h-4 w-9/12 animate-pulse rounded bg-emerald-100" />
+                  <div className="h-4 w-11/12 animate-pulse rounded bg-slate-100" />
+                  <div className="h-4 w-9/12 animate-pulse rounded bg-slate-100" />
                 </>
               ) : (
                 (commentary?.keyStrengths ?? []).map((strength, idx) => (
-                  <p key={`${strength}-${idx}`} className="text-xs text-emerald-800">- {strength}</p>
+                  <p key={`${strength}-${idx}`} className="text-xs text-slate-700">- {strength}</p>
                 ))
               )}
             </div>
@@ -2140,7 +2439,7 @@ function InsightsTab({
         </div>
       )}
 
-      {(commentaryLoading || commentary?.capitalStructure || commentary?.operationalEfficiency || commentary?.valuationComment || commentary?.footnoteInsight) && (
+      {(commentaryLoading || commentary?.capitalStructure || commentary?.operationalEfficiency || commentary?.footnoteInsight || importantFootnotes.length > 0) && (
         <div className="grid gap-4 lg:grid-cols-2">
           <Section title="Capital Structure">
             {(commentaryLoading && !commentary) ? (
@@ -2156,20 +2455,24 @@ function InsightsTab({
               <p className="text-xs leading-relaxed text-slate-700">{commentary?.operationalEfficiency ?? "—"}</p>
             )}
           </Section>
-          <Section title="Valuation Commentary">
-            {(commentaryLoading && !commentary) ? (
-              <div className="h-8 w-3/4 animate-pulse rounded bg-slate-100" />
-            ) : (
-              <p className="text-xs leading-relaxed text-slate-700">{commentary?.valuationComment ?? "—"}</p>
-            )}
-          </Section>
-          <Section title="Footnote Insight">
-            {(commentaryLoading && !commentary) ? (
-              <div className="h-8 w-3/4 animate-pulse rounded bg-slate-100" />
-            ) : (
-              <p className="text-xs leading-relaxed text-slate-700">{commentary?.footnoteInsight ?? "—"}</p>
-            )}
-          </Section>
+          <div className="lg:col-span-2">
+            <Section title="Important PDF Footnote Quotes">
+              <div className="space-y-3">
+                {(commentaryLoading && !commentary) ? (
+                  <div className="h-8 w-3/4 animate-pulse rounded bg-slate-100" />
+                ) : importantFootnotes.length > 0 ? (
+                  importantFootnotes.map((fn, idx) => (
+                    <div key={fn.id || `${fn.title}-${idx}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <p className="text-[11px] font-semibold text-slate-700">{fn.title}</p>
+                      <p className="mt-1 text-xs italic leading-relaxed text-slate-600">"{fn.summary}"</p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs leading-relaxed text-slate-700">{commentary?.footnoteInsight ?? "—"}</p>
+                )}
+              </div>
+            </Section>
+          </div>
         </div>
       )}
 
@@ -2182,8 +2485,8 @@ function InsightsTab({
             {(commentaryLoading && !commentary) ? (
               <div className="h-8 w-3/4 animate-pulse rounded bg-slate-100" />
             ) : commentary?.ttmOutlook && (
-              <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2">
-                <p className="text-xs text-violet-700 leading-relaxed"><span className="font-bold">AI:</span> {commentary.ttmOutlook}</p>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs text-slate-700 leading-relaxed"><span className="font-bold">AI:</span> {commentary.ttmOutlook}</p>
               </div>
             )}
             <p className="text-xs text-slate-500">Trailing 12 months computed from last 4 quarters. Flow metrics are summed; balance sheet metrics use the latest quarter.</p>
@@ -2220,9 +2523,9 @@ function InsightsTab({
               value={marketCapInput}
               onChange={(e) => setMarketCapInput(e.target.value)}
               placeholder="e.g. 25000"
-              className="w-40 rounded-lg border border-slate-300 px-3 py-1.5 text-sm tabular-nums focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200 focus:outline-none"
+              className="w-40 rounded-lg border border-slate-300 px-3 py-1.5 text-sm tabular-nums focus:border-primary focus:ring-2 focus:ring-primary/15 focus:outline-none"
             />
-            {marketCapLoading && <span className="text-xs text-blue-500 animate-pulse">Fetching live data...</span>}
+            {marketCapLoading && <span className="text-xs text-slate-500 animate-pulse">Fetching live data...</span>}
             {!marketCapLoading && stockPrice != null && (
               <span className="text-xs text-slate-500">
                 Stock: <span className="font-semibold text-slate-700">${stockPrice.toFixed(2)}</span>
@@ -2245,14 +2548,14 @@ function InsightsTab({
               </div>
               <div className="bg-white p-3 text-center">
                 <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">P/E Ratio</p>
-                <p className={cn("text-xl font-black tabular-nums mt-1", valuation.pe != null && valuation.pe < 15 ? "text-emerald-600" : valuation.pe != null && valuation.pe > 30 ? "text-amber-600" : "text-slate-900")}>
+                <p className="text-xl font-black tabular-nums mt-1 text-slate-900">
                   {valuation.pe != null ? `${valuation.pe}x` : "—"}
                 </p>
                 <p className="text-[9px] text-slate-400">{ttm ? "TTM basis" : "Quarterly"}</p>
               </div>
               <div className="bg-white p-3 text-center">
                 <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">P/FCF</p>
-                <p className={cn("text-xl font-black tabular-nums mt-1", valuation.pFcf != null && valuation.pFcf < 20 ? "text-emerald-600" : "text-slate-900")}>
+                <p className="text-xl font-black tabular-nums mt-1 text-slate-900">
                   {valuation.pFcf != null ? `${valuation.pFcf}x` : "—"}
                 </p>
                 <p className="text-[9px] text-slate-400">FCF Yield: {valuation.fcfYield != null ? `${valuation.fcfYield}%` : "—"}</p>
@@ -2261,9 +2564,9 @@ function InsightsTab({
           )}
           {valuation && valuation.divYield != null && (
             <div className="flex items-center gap-4">
-              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2">
-                <p className="text-[9px] font-bold uppercase text-emerald-500">Dividend Yield</p>
-                <p className="text-lg font-black text-emerald-700 tabular-nums">{valuation.divYield}%</p>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-2">
+                <p className="text-[9px] font-bold uppercase text-slate-500">Dividend Yield</p>
+                <p className="text-lg font-black text-slate-900 tabular-nums">{valuation.divYield}%</p>
               </div>
             </div>
           )}
@@ -2276,8 +2579,8 @@ function InsightsTab({
           {(commentaryLoading && !commentary) ? (
             <div className="h-8 w-3/4 animate-pulse rounded bg-slate-100" />
           ) : commentary?.dupont && (
-            <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2">
-              <p className="text-xs text-violet-700 leading-relaxed"><span className="font-bold">AI:</span> {commentary.dupont}</p>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="text-xs text-slate-700 leading-relaxed"><span className="font-bold">AI:</span> {commentary.dupont}</p>
             </div>
           )}
           <p className="text-xs text-slate-500">
@@ -2338,8 +2641,8 @@ function InsightsTab({
           {(commentaryLoading && !commentary) ? (
             <div className="h-8 w-3/4 animate-pulse rounded bg-slate-100 mb-3" />
           ) : commentary?.zScore && (
-            <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2 mb-3">
-              <p className="text-xs text-violet-700 leading-relaxed"><span className="font-bold">AI:</span> {commentary.zScore}</p>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 mb-3">
+              <p className="text-xs text-slate-700 leading-relaxed"><span className="font-bold">AI:</span> {commentary.zScore}</p>
             </div>
           )}
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -2358,7 +2661,7 @@ function InsightsTab({
                     <td className="py-1.5 font-bold text-slate-800">Z-Score</td>
                     <td></td>
                     <td className={cn("py-1.5 text-right font-black tabular-nums",
-                      zScore.zone === "safe" ? "text-emerald-600" : zScore.zone === "grey" ? "text-amber-600" : "text-red-600"
+                      zScore.zone === "distress" ? "text-red-600" : "text-slate-900"
                     )}>{zScore.z.toFixed(2)}</td>
                   </tr>
                 </tbody>
@@ -2381,19 +2684,19 @@ function InsightsTab({
         {(commentaryLoading && !commentary) ? (
           <div className="h-8 w-3/4 animate-pulse rounded bg-slate-100 mb-3" />
         ) : commentary?.piotroski && (
-          <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2 mb-3">
-            <p className="text-xs text-violet-700 leading-relaxed"><span className="font-bold">AI:</span> {commentary.piotroski}</p>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 mb-3">
+            <p className="text-xs text-slate-700 leading-relaxed"><span className="font-bold">AI:</span> {commentary.piotroski}</p>
           </div>
         )}
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {piotroski.signals.map((s, i) => (
             <div key={i} className={cn("flex items-start gap-2 rounded-lg border p-2.5",
-              s.pass === true ? "border-emerald-200 bg-emerald-50/50" :
-              s.pass === false ? "border-red-200 bg-red-50/50" :
+              s.pass === true ? "border-slate-200 bg-white" :
+              s.pass === false ? "border-slate-200 bg-slate-50" :
               "border-slate-200 bg-slate-50/50"
             )}>
-              {s.pass === true ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" /> :
-               s.pass === false ? <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-500" /> :
+              {s.pass === true ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" /> :
+               s.pass === false ? <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" /> :
                <Minus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />}
               <div>
                 <p className="text-[11px] font-bold text-slate-800">{s.name}</p>
@@ -2409,8 +2712,8 @@ function InsightsTab({
         {(commentaryLoading && !commentary) ? (
           <div className="h-8 w-3/4 animate-pulse rounded bg-slate-100 mb-3" />
         ) : commentary?.earningsQuality && (
-          <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2 mb-3">
-            <p className="text-xs text-violet-700 leading-relaxed"><span className="font-bold">AI:</span> {commentary.earningsQuality}</p>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 mb-3">
+            <p className="text-xs text-slate-700 leading-relaxed"><span className="font-bold">AI:</span> {commentary.earningsQuality}</p>
           </div>
         )}
         <div className="grid gap-4 lg:grid-cols-2">
@@ -2429,12 +2732,12 @@ function InsightsTab({
               <p><span className="font-semibold">OCF/NI &lt; 0.7:</span> Significant accruals — earnings may be inflated by non-cash items.</p>
               <p><span className="font-semibold">Accrual Ratio:</span> Negative is good (cash exceeds reported earnings). Positive is a warning sign.</p>
               {earningsQuality.quality === "high" && (
-                <p className="mt-2 rounded bg-emerald-50 p-2 text-emerald-700 font-semibold">
+                <p className="mt-2 rounded border border-slate-200 bg-slate-50 p-2 text-slate-700 font-semibold">
                   This company generates strong cash flows relative to reported earnings — high quality signal.
                 </p>
               )}
               {earningsQuality.quality === "low" && (
-                <p className="mt-2 rounded bg-red-50 p-2 text-red-700 font-semibold">
+                <p className="mt-2 rounded border border-red-200 bg-red-50/80 p-2 text-red-800 font-semibold">
                   Warning: Cash flows significantly trail reported earnings. Investigate non-cash items and accruals.
                 </p>
               )}
@@ -2498,8 +2801,8 @@ function InsightsTab({
           other: "Other",
         };
         const confidenceColor: Record<string, string> = {
-          high: "bg-emerald-100 text-emerald-700",
-          medium: "bg-amber-100 text-amber-700",
+          high: "bg-slate-100 text-slate-700",
+          medium: "bg-slate-100 text-slate-600",
           low: "bg-slate-100 text-slate-500",
         };
 
@@ -2512,19 +2815,19 @@ function InsightsTab({
                   <p className="text-[9px] font-bold uppercase text-slate-400">Reported OP</p>
                   <p className="text-lg font-black tabular-nums text-slate-900">{fmt(reportedOP)}</p>
                 </div>
-                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-center">
-                  <p className="text-[9px] font-bold uppercase text-emerald-500">Add-Backs</p>
-                  <p className="text-lg font-black tabular-nums text-emerald-700">+{fmt(totalAddBack)}</p>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-center">
+                  <p className="text-[9px] font-bold uppercase text-slate-500">Add-Backs</p>
+                  <p className="text-lg font-black tabular-nums text-slate-900">+{fmt(totalAddBack)}</p>
                 </div>
-                <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-center">
-                  <p className="text-[9px] font-bold uppercase text-red-400">Subtractions</p>
-                  <p className="text-lg font-black tabular-nums text-red-600">-{fmt(totalSubtract)}</p>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-center">
+                  <p className="text-[9px] font-bold uppercase text-slate-500">Subtractions</p>
+                  <p className="text-lg font-black tabular-nums text-slate-900">-{fmt(totalSubtract)}</p>
                 </div>
-                <div className="rounded-lg border-2 border-indigo-300 bg-indigo-50 p-3 text-center">
-                  <p className="text-[9px] font-bold uppercase text-indigo-500">Adjusted OP</p>
-                  <p className="text-lg font-black tabular-nums text-indigo-700">{fmt(Math.round(adjustedOP))}</p>
+                <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-center">
+                  <p className="text-[9px] font-bold uppercase text-primary">Adjusted OP</p>
+                  <p className="text-lg font-black tabular-nums text-slate-900">{fmt(Math.round(adjustedOP))}</p>
                   {inc.revenue != null && inc.revenue > 0 && (
-                    <p className="text-[9px] text-indigo-400">{((adjustedOP / inc.revenue) * 100).toFixed(1)}% margin</p>
+                    <p className="text-[9px] text-slate-500">{((adjustedOP / inc.revenue) * 100).toFixed(1)}% margin</p>
                   )}
                 </div>
               </div>
@@ -2556,20 +2859,20 @@ function InsightsTab({
                           </span>
                         </td>
                         <td className={cn("px-2 py-2 text-right tabular-nums font-bold",
-                          item.amount > 0 ? "text-red-500" : "text-emerald-600"
+                          item.amount > 0 ? "text-red-600" : "text-slate-900"
                         )}>
                           {item.amount > 0 ? `($${Math.abs(item.amount).toLocaleString()}M)` : `$${Math.abs(item.amount).toLocaleString()}M`}
                         </td>
                         <td className="px-2 py-2 text-center">
                           <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-bold",
-                            item.adjustDirection === "add-back" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"
+                            item.adjustDirection === "add-back" ? "bg-slate-100 text-slate-700" : "bg-slate-200 text-slate-800"
                           )}>
                             {item.adjustDirection === "add-back" ? "Add Back" : "Subtract"}
                           </span>
                         </td>
                         <td className="px-2 py-2 text-center">
                           {item.companyAdjusts ? (
-                            <CheckCircle2 className="inline h-3.5 w-3.5 text-emerald-500" />
+                            <CheckCircle2 className="inline h-3.5 w-3.5 text-primary" />
                           ) : (
                             <XCircle className="inline h-3.5 w-3.5 text-slate-300" />
                           )}
@@ -2607,7 +2910,7 @@ function InsightsTab({
                       {[...byLine.entries()].map(([line, amount]) => (
                         <div key={line} className="text-xs">
                           <span className="text-slate-500">{lineLabels[line] ?? line}: </span>
-                          <span className={cn("font-bold tabular-nums", amount > 0 ? "text-emerald-600" : "text-red-500")}>
+                          <span className={cn("font-bold tabular-nums", amount >= 0 ? "text-slate-900" : "text-red-600")}>
                             {amount > 0 ? "+" : ""}{fmt(Math.round(amount))}
                           </span>
                         </div>
@@ -2628,8 +2931,8 @@ function InsightsTab({
             {/* High significance first */}
             {footnotes.filter(fn => fn.significance === "high").length > 0 && (
               <div>
-                <p className="text-[10px] font-bold uppercase text-red-500 mb-2 flex items-center gap-1">
-                  <AlertCircle className="h-3 w-3" /> Critical Items
+                <p className="text-[10px] font-bold uppercase text-slate-600 mb-2 flex items-center gap-1">
+                  <AlertCircle className="h-3 w-3 text-slate-500" /> Critical Items
                 </p>
                 <div className="grid gap-2 sm:grid-cols-2">
                   {footnotes.filter(fn => fn.significance === "high").map((fn, i) => (
@@ -2640,7 +2943,7 @@ function InsightsTab({
             )}
             {footnotes.filter(fn => fn.significance === "medium").length > 0 && (
               <div>
-                <p className="text-[10px] font-bold uppercase text-amber-500 mb-2">Notable Items</p>
+                <p className="text-[10px] font-bold uppercase text-slate-600 mb-2">Notable Items</p>
                 <div className="grid gap-2 sm:grid-cols-2">
                   {footnotes.filter(fn => fn.significance === "medium").map((fn, i) => (
                     <FootnoteCard key={i} fn={fn} />
@@ -2681,7 +2984,7 @@ function InsightsTab({
                       <p className="text-sm font-bold tabular-nums">
                         <span className="text-slate-500">{am.gaapValue != null ? `$${am.gaapValue.toLocaleString()}${unit}` : "—"}</span>
                         <ArrowRight className="inline h-3 w-3 mx-1 text-slate-400" />
-                        <span className="text-emerald-600">{am.adjustedValue != null ? `$${am.adjustedValue.toLocaleString()}${unit}` : "—"}</span>
+                        <span className="text-slate-900">{am.adjustedValue != null ? `$${am.adjustedValue.toLocaleString()}${unit}` : "—"}</span>
                       </p>
                     </div>
                   </div>
@@ -2690,14 +2993,14 @@ function InsightsTab({
                       {am.adjustments.map((adj, j) => (
                         <div key={j} className="flex justify-between text-[11px]">
                           <span className="text-slate-400 truncate mr-2">{adj.label}</span>
-                          <span className={cn("tabular-nums font-semibold shrink-0", adj.value >= 0 ? "text-emerald-600" : "text-red-500")}>
+                          <span className={cn("tabular-nums font-semibold shrink-0", adj.value >= 0 ? "text-slate-800" : "text-red-600")}>
                             {adj.value >= 0 ? "+" : ""}{adj.value.toLocaleString()}{unit}
                           </span>
                         </div>
                       ))}
                       <div className="flex justify-between text-[11px] border-t border-slate-200 pt-1 mt-1">
                         <span className="font-bold text-slate-700">Net Adjustment</span>
-                        <span className={cn("tabular-nums font-bold", totalAdj >= 0 ? "text-emerald-600" : "text-red-500")}>
+                        <span className={cn("tabular-nums font-bold", totalAdj >= 0 ? "text-slate-900" : "text-red-600")}>
                           {totalAdj >= 0 ? "+" : ""}{totalAdj.toLocaleString()}{unit}
                         </span>
                       </div>
@@ -2715,16 +3018,14 @@ function InsightsTab({
         <Section title="Management Commentary & Earnings">
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-2 mb-2">
-              <span className={cn("rounded-lg px-3 py-1.5 text-sm font-bold",
-                narrative.result.includes("Beat") ? "bg-emerald-100 text-emerald-700" :
-                narrative.result.includes("Missed") ? "bg-red-100 text-red-700" :
-                "bg-amber-100 text-amber-700"
+              <span className={cn("rounded-lg border px-3 py-1.5 text-sm font-bold",
+                narrative.result.includes("Beat") ? "border-slate-200 bg-slate-50 text-slate-800" :
+                narrative.result.includes("Missed") ? "border-red-200 bg-red-50 text-red-800" :
+                "border-slate-200 bg-white text-slate-800"
               )}>{narrative.result}</span>
-              <span className={cn("rounded-lg px-3 py-1.5 text-sm font-semibold",
-                narrative.tone === "bullish" ? "bg-emerald-100 text-emerald-700" :
-                narrative.tone === "cautious" ? "bg-amber-100 text-amber-700" :
-                "bg-slate-100 text-slate-700"
-              )}>Tone: {narrative.tone.charAt(0).toUpperCase() + narrative.tone.slice(1)}</span>
+              <span className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700">
+                Tone: {narrative.tone.charAt(0).toUpperCase() + narrative.tone.slice(1)}
+              </span>
             </div>
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
               <p className="text-sm text-slate-800 leading-relaxed">{narrative.summary}</p>
@@ -2738,8 +3039,8 @@ function InsightsTab({
                   </div>
                 )}
                 {narrative.currentGuidance && (
-                  <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-3">
-                    <p className="text-[10px] font-bold uppercase text-blue-500 mb-1">Current Guidance</p>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-[10px] font-bold uppercase text-slate-500 mb-1">Current Guidance</p>
                     <p className="text-xs text-slate-700">{narrative.currentGuidance}</p>
                   </div>
                 )}
@@ -2767,9 +3068,9 @@ function InsightsTab({
 
 function DupontFactor({ label, value, sub, highlight }: { label: string; value: string; sub?: string; highlight?: boolean }) {
   return (
-    <div className={cn("rounded-lg px-4 py-3 min-w-[100px]", highlight ? "bg-indigo-100 border-2 border-indigo-300" : "bg-slate-50 border border-slate-200")}>
+    <div className={cn("rounded-lg px-4 py-3 min-w-[100px]", highlight ? "border-2 border-primary/30 bg-primary/5" : "bg-slate-50 border border-slate-200")}>
       <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{label}</p>
-      <p className={cn("text-lg font-black tabular-nums mt-0.5", highlight ? "text-indigo-700" : "text-slate-900")}>{value}</p>
+      <p className={cn("text-lg font-black tabular-nums mt-0.5", highlight ? "text-primary" : "text-slate-900")}>{value}</p>
       {sub && <p className="text-[9px] text-slate-400 mt-0.5">{sub}</p>}
     </div>
   );
@@ -2785,15 +3086,13 @@ function ZRow({ label, raw, weight }: { label: string; raw: number; weight: numb
   );
 }
 
-function InterpretRow({ color, label, desc, active }: { color: "emerald" | "amber" | "red"; label: string; desc: string; active: boolean }) {
-  const styles = {
-    emerald: { border: "border-emerald-300 bg-emerald-50", text: "text-emerald-700" },
-    amber: { border: "border-amber-300 bg-amber-50", text: "text-amber-700" },
-    red: { border: "border-red-300 bg-red-50", text: "text-red-700" },
-  };
+function InterpretRow({ color: _color, label, desc, active }: { color: "emerald" | "amber" | "red"; label: string; desc: string; active: boolean }) {
   return (
-    <div className={cn("rounded-lg p-2.5 border", active ? styles[color].border : "border-slate-100 bg-white opacity-50")}>
-      <p className={cn("text-xs font-bold", active ? styles[color].text : "text-slate-500")}>{label}</p>
+    <div className={cn(
+      "rounded-lg border p-2.5",
+      active ? "border-primary/40 bg-primary/5" : "border-slate-100 bg-white opacity-55",
+    )}>
+      <p className={cn("text-xs font-bold", active ? "text-slate-900" : "text-slate-500")}>{label}</p>
       <p className="text-[10px] text-slate-500">{desc}</p>
     </div>
   );
@@ -2801,21 +3100,14 @@ function InterpretRow({ color, label, desc, active }: { color: "emerald" | "ambe
 
 function FootnoteCard({ fn, compact }: { fn: import("@/types/analysis").FootnoteItem; compact?: boolean }) {
   return (
-    <div className={cn("rounded-lg border p-3",
-      fn.significance === "high" ? "border-red-200 bg-red-50/30" :
-      fn.significance === "medium" ? "border-amber-200 bg-amber-50/30" :
-      "border-slate-100"
+    <div className={cn("rounded-lg border border-slate-200 bg-white p-3",
+      fn.significance === "high" ? "ring-1 ring-slate-300/80" : ""
     )}>
       <div className="flex items-start justify-between gap-2 mb-1">
         <p className={cn("font-bold text-slate-800", compact ? "text-[10px]" : "text-xs")}>{fn.title}</p>
-        <span className={cn("shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase",
-          fn.type === "debt" ? "bg-purple-100 text-purple-700" :
-          fn.type === "contingency" ? "bg-red-100 text-red-700" :
-          fn.type === "tax" ? "bg-cyan-100 text-cyan-700" :
-          fn.type === "revenue" ? "bg-emerald-100 text-emerald-700" :
-          fn.type === "segment" ? "bg-blue-100 text-blue-700" :
-          "bg-slate-100 text-slate-500"
-        )}>{fn.type}</span>
+        <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold uppercase text-slate-600">
+          {fn.type}
+        </span>
       </div>
       <p className={cn("leading-relaxed text-slate-600", compact ? "text-[10px]" : "text-[11px]")}>{fn.summary}</p>
     </div>
@@ -2826,10 +3118,24 @@ function LineItemTable({
   title,
   items,
   onRowClick,
+  onRowDoubleClick,
+  onRowContextMenu,
+  reextractBusyKey,
+  reextractPrompt,
+  reextractAppliedValues,
+  onApplyReextract,
+  onDismissReextract,
 }: {
   title: string;
   items: BSItem[];
   onRowClick?: (item: BSItem) => void;
+  onRowDoubleClick?: (item: BSItem) => void;
+  onRowContextMenu?: (event: React.MouseEvent, item: BSItem) => void;
+  reextractBusyKey?: string | null;
+  reextractPrompt?: ReextractPrompt | null;
+  reextractAppliedValues?: Record<string, string>;
+  onApplyReextract?: () => void;
+  onDismissReextract?: () => void;
 }) {
   if (items.length === 0) return null;
   return (
@@ -2849,10 +3155,17 @@ function LineItemTable({
           <tbody className="divide-y divide-slate-50">
             {items.map((item, i) => {
               const clickable = !!onRowClick;
+              const rowKey = `line:${item.tag}`;
+              const defaultText = item.value < 0 ? `(${Math.abs(item.value).toLocaleString()})` : item.value.toLocaleString();
+              const rowDisplay = reextractAppliedValues?.[rowKey] ?? defaultText;
+              const isBusy = reextractBusyKey === rowKey;
+              const hasPrompt = reextractPrompt?.key === rowKey;
               return (
                 <tr
                   key={i}
                   onClick={clickable ? () => onRowClick(item) : undefined}
+                  onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(item) : undefined}
+                  onContextMenu={onRowContextMenu ? (event) => onRowContextMenu(event, item) : undefined}
                   className={cn(
                     clickable ? "cursor-pointer transition hover:bg-yellow-50/60" : "hover:bg-slate-50/50",
                   )}
@@ -2862,7 +3175,41 @@ function LineItemTable({
                     <span className="block max-w-[150px] truncate text-[9px] text-slate-400" title={item.source}>{item.source}</span>
                   </td>
                   <td className={cn("px-3 py-1 text-right tabular-nums font-semibold", item.value < 0 ? "text-red-500" : "text-slate-800")}>
-                    {item.value < 0 ? `(${Math.abs(item.value).toLocaleString()})` : item.value.toLocaleString()}
+                    <div className="flex items-center justify-end gap-1">
+                      <span>{rowDisplay}</span>
+                      {isBusy && <Loader2 className="h-3 w-3 animate-spin text-primary" />}
+                    </div>
+                    {hasPrompt && reextractPrompt && (
+                      <div
+                        className="mt-1 ml-auto w-[220px] rounded-md border border-primary/20 bg-white p-2 text-left shadow-sm"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <p className="text-[10px] text-slate-600">Old: {reextractPrompt.oldText}</p>
+                        <p className="text-[10px] font-semibold text-primary">New: {reextractPrompt.newText}</p>
+                        <div className="mt-1.5 flex items-center justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onDismissReextract?.();
+                            }}
+                            className="rounded border border-slate-200 px-2 py-0.5 text-[10px] text-slate-600 hover:bg-slate-50"
+                          >
+                            Keep current
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onApplyReextract?.();
+                            }}
+                            className="rounded bg-primary px-2 py-0.5 text-[10px] font-semibold text-white hover:opacity-90"
+                          >
+                            Apply
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     {clickable && <Search className="ml-1 inline h-3 w-3 text-yellow-600 opacity-40" aria-hidden />}
                   </td>
                 </tr>

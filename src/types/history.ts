@@ -7,6 +7,7 @@ export interface HistoryThread {
   ticker: string | null;
   companyName: string | null;
   source: "sec" | "pdf";
+  workflowOrigin: "analyze" | "competitor";
   periodEnd: string | null;
   quarterLabel: string | null;
   title: string;

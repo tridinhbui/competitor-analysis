@@ -130,7 +130,7 @@ export function HomeLanding() {
             <div>
               <p className="font-semibold text-foreground">Built for real operations</p>
               <p className="mt-1 leading-relaxed">
-                This front-end theme is tuned for a Smithfield-style corporate narrative with clear hierarchy, clean
+                This front-end theme is tuned for a Finbud Pro corporate narrative with clear hierarchy, clean
                 spacing, and production-ready interactions.
               </p>
             </div>

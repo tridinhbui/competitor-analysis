@@ -201,7 +201,7 @@ export function resolveRnDExpense(opts: {
   } else {
     const name = (companyName ?? "").toLowerCase();
     if (name.includes("tyson")) pctUsed = 0.2;
-    else if (name.includes("smithfield")) pctUsed = 1.0;
+    else if (name.includes("hormel")) pctUsed = 1.0;
     else pctUsed = 0.6;
   }
 

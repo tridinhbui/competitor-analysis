@@ -44,6 +44,7 @@ export async function POST(request: Request) {
       source?: "sec" | "pdf";
       analysis?: FullAnalysis;
       workflowOrigin?: "analyze" | "competitor";
+      filingText?: string;
     };
 
     if (!analysis) {
@@ -85,11 +86,21 @@ export async function POST(request: Request) {
       resolvedTicker,
       resolvedPeriod
     );
+    const withRawText: FullAnalysis = body.filingText && body.filingText.trim().length > 0
+      ? {
+          ...baseAnalysis,
+          meta: {
+            ...baseAnalysis.meta,
+            rawFilingText: body.filingText,
+          },
+        }
+      : baseAnalysis;
+
     const normalizedAnalysis = applyDataSourceOverridesToAnalysis(
       {
-        ...baseAnalysis,
+        ...withRawText,
         meta: {
-          ...baseAnalysis.meta,
+          ...withRawText.meta,
           periodEnd: resolvedPeriod,
         },
       },
@@ -106,11 +117,19 @@ export async function POST(request: Request) {
       resolvedWorkflowOrigin
     );
 
+    const responseAnalysis: FullAnalysis = {
+      ...filing.analysis,
+      meta: {
+        ...filing.analysis.meta,
+        rawFilingText: undefined,
+      },
+    };
+
     return Response.json({
       ok: true,
       ticker: filing.ticker,
       periodEnd: filing.periodEnd,
-      analysis: filing.analysis,
+      analysis: responseAnalysis,
       appliedOverrideCount: Object.keys(dataSourceOverrides).length,
     });
   } catch (e) {

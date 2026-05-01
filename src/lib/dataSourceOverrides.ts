@@ -44,6 +44,24 @@ const CF_FIELD_TAGS: Record<string, { tag: string; label: string }> = {
   epsDiluted: { tag: "EarningsPerShareDiluted", label: "EPS diluted" },
 };
 
+/** Grid columns rebuilt only via assembleAnalysis + ratio sync — not persisted as supplement. */
+const REBUILT_OVERRIDE_KEYS = new Set([
+  ...Object.keys(BS_FIELD_TAGS),
+  ...Object.keys(CF_FIELD_TAGS),
+  "totalDebt",
+  "freeCashFlow",
+  "ebit",
+  "ebitda",
+  "grossMargin",
+  "operatingMargin",
+  "netMargin",
+  "ebitdaMargin",
+  "debtToEquity",
+  "currentRatio",
+  "roe",
+  "roa",
+]);
+
 function hasOverride(overrides: DataSourceOverrides, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(overrides, key);
 }
@@ -174,6 +192,24 @@ export function applyDataSourceOverridesToAnalysis(
       (merged.ratios[ratioKey] as number | null) = value;
     }
   }
+
+  const supplement: Partial<Record<string, number | null>> = {
+    ...(merged.meta.dataSourceSupplement ?? {}),
+  };
+  for (const key of Object.keys(overrides)) {
+    if (REBUILT_OVERRIDE_KEYS.has(key)) continue;
+    if (!hasOverride(overrides, key)) continue;
+    const v = overrides[key];
+    if (v == null) {
+      delete supplement[key];
+    } else {
+      supplement[key] = v;
+    }
+  }
+  merged.meta = {
+    ...merged.meta,
+    dataSourceSupplement: Object.keys(supplement).length > 0 ? supplement : undefined,
+  };
 
   return merged;
 }
