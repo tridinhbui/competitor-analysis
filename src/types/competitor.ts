@@ -20,7 +20,7 @@ export interface Company {
   name: string;
   /** Optional SIC / NAICS industry label */
   industry?: string;
-  /** The peer type assigned for Smithfield-centric analysis */
+  /** The peer type assigned for Finbud Pro analysis */
   peerType: PeerType;
   /** ISO timestamp of when this company was first added */
   createdAt: string;
@@ -29,13 +29,13 @@ export interface Company {
 }
 
 // ---------------------------------------------------------------------------
-// Peer types — Smithfield competitor classification
+// Peer types — Finbud Pro competitor classification
 // ---------------------------------------------------------------------------
 
 /**
  * Peer types for competitor grouping.
  *
- * - subject: the company being analyzed (Smithfield)
+ * - subject: the company being analyzed (e.g. primary ticker in workspace)
  * - packaged-meats: direct packaged meats competitors (e.g. Hormel, Tyson branded)
  * - pork-fresh: pork/fresh protein peers (e.g. Seaboard)
  * - diversified-protein: large diversified protein companies (e.g. Tyson, JBS USA)
@@ -65,7 +65,7 @@ export const PEER_TYPE_LABELS: Record<PeerType, string> = {
 
 /**
  * Fiscal quarter identifier.
- * periodEnd is the balance-sheet date (e.g. "2024-12-28" for Smithfield's Q2 FY2025).
+ * periodEnd is the balance-sheet date (e.g. "2024-12-28" for a fiscal Q2 period).
  */
 export interface Quarter {
   /** ISO date string of the period end, e.g. "2024-12-28" */

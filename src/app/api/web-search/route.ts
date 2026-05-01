@@ -1,5 +1,5 @@
 /**
- * GET /api/web-search?q=Smithfield+pork+earnings
+ * GET /api/web-search?q=Finbud+Pro+sector+earnings
  *
  * Fetches industry news and generates an AI-powered insight summary.
  * Uses Google News RSS + OpenAI for summarization.

@@ -23,7 +23,7 @@ interface CfoPageCtx {
 
 const PAGE_CFO_CONTEXT: Record<string, CfoPageCtx> = {
   "/analyze": {
-    title: "Filing Analyzer",
+    title: "Quick Analyze",
     cfoGoal: "Assess debt, cash flow sustainability, and dividend risk in under 2 minutes.",
     keyQuestions: [
       "Is leverage within safe range for this sector?",
@@ -36,7 +36,7 @@ const PAGE_CFO_CONTEXT: Record<string, CfoPageCtx> = {
       "Dividend sustainability verdict",
     ],
     quickActions: ["Give me a CFO decision memo", "Is the dividend safe?", "Top 3 risks?", "Leverage outlook?"],
-    bootMessage: `**CFO Briefing — Filing Analyzer**
+    bootMessage: `**CFO Briefing — Quick Analyze**
 
 As your strategic copilot, here's what matters on this page:
 
@@ -135,12 +135,25 @@ History isn't just a log — it's your early warning system.
 };
 
 const BOOT_SESSION_KEY = "cfo-boot-shown-v1";
+const FAB_POS_STORAGE_KEY = "cfo-chat-fab-pos-v1";
+const FAB_PADDING = 8;
+const FAB_DRAG_THRESHOLD = 6;
 
 type Msg = { role: "user" | "assistant"; content: string; isAutoSummary?: boolean; isBoot?: boolean };
 type ChatResponse = {
   message?: string;
   error?: string;
   usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+};
+type FabPosition = { x: number; y: number };
+type FabDragState = {
+  active: boolean;
+  pointerId: number | null;
+  startX: number;
+  startY: number;
+  originX: number;
+  originY: number;
+  moved: boolean;
 };
 
 interface Props {
@@ -160,9 +173,24 @@ export function AnalysisChatPanel({ analysis, inline, disableAutoSummary = false
   const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [autoSummaryDone, setAutoSummaryDone] = useState(false);
+  const [fabReady, setFabReady] = useState(false);
+  const [fabPos, setFabPos] = useState<FabPosition>({ x: 0, y: 0 });
+  const [isDraggingFab, setIsDraggingFab] = useState(false);
   const bootInjectedRef = useRef<string>("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const prevAnalysisRef = useRef<FullAnalysis | null>(null);
+  const fabRef = useRef<HTMLButtonElement>(null);
+  const fabRafRef = useRef<number | null>(null);
+  const fabPendingPosRef = useRef<FabPosition | null>(null);
+  const fabDragRef = useRef<FabDragState>({
+    active: false,
+    pointerId: null,
+    startX: 0,
+    startY: 0,
+    originX: 0,
+    originY: 0,
+    moved: false,
+  });
 
   const contextRef = useRef<string>("");
   useEffect(() => {
@@ -170,6 +198,158 @@ export function AnalysisChatPanel({ analysis, inline, disableAutoSummary = false
   }, [analysis]);
 
   const hasContext = Boolean(analysis);
+
+  const getFabSize = useCallback(() => {
+    if (fabRef.current) {
+      return {
+        width: fabRef.current.offsetWidth || 280,
+        height: fabRef.current.offsetHeight || 56,
+      };
+    }
+    if (typeof window === "undefined") return { width: 280, height: 56 };
+    return window.innerWidth >= 640 ? { width: 280, height: 56 } : { width: 48, height: 48 };
+  }, []);
+
+  const clampFabPos = useCallback((pos: FabPosition): FabPosition => {
+    if (typeof window === "undefined") return pos;
+    const { width, height } = getFabSize();
+    return {
+      x: Math.min(Math.max(FAB_PADDING, pos.x), window.innerWidth - width - FAB_PADDING),
+      y: Math.min(Math.max(FAB_PADDING, pos.y), window.innerHeight - height - FAB_PADDING),
+    };
+  }, [getFabSize]);
+
+  const getDefaultFabPos = useCallback((): FabPosition => {
+    if (typeof window === "undefined") return { x: 24, y: 24 };
+    const { width, height } = getFabSize();
+    return {
+      x: window.innerWidth - width - FAB_PADDING,
+      y: window.innerHeight - height - FAB_PADDING,
+    };
+  }, [getFabSize]);
+
+  useEffect(() => {
+    if (inline) return;
+    const fallback = getDefaultFabPos();
+    if (typeof window === "undefined") {
+      setFabPos(fallback);
+      setFabReady(true);
+      return;
+    }
+    try {
+      const raw = window.localStorage.getItem(FAB_POS_STORAGE_KEY);
+      if (!raw) {
+        setFabPos(fallback);
+      } else {
+        const parsed = JSON.parse(raw) as Partial<FabPosition>;
+        const next = {
+          x: typeof parsed.x === "number" ? parsed.x : fallback.x,
+          y: typeof parsed.y === "number" ? parsed.y : fallback.y,
+        };
+        setFabPos(clampFabPos(next));
+      }
+    } catch {
+      setFabPos(fallback);
+    } finally {
+      setFabReady(true);
+    }
+  }, [inline, getDefaultFabPos, clampFabPos]);
+
+  useEffect(() => {
+    if (inline || !fabReady || typeof window === "undefined") return;
+    const onResize = () => setFabPos((prev) => clampFabPos(prev));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [inline, fabReady, clampFabPos]);
+
+  const persistFabPos = useCallback((pos: FabPosition) => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(FAB_POS_STORAGE_KEY, JSON.stringify(pos));
+    } catch {
+      // Ignore persistence failures (private mode, quota, etc.)
+    }
+  }, []);
+
+  const scheduleFabPosUpdate = useCallback((nextPos: FabPosition) => {
+    fabPendingPosRef.current = nextPos;
+    if (fabRafRef.current != null || typeof window === "undefined") return;
+    fabRafRef.current = window.requestAnimationFrame(() => {
+      fabRafRef.current = null;
+      if (fabPendingPosRef.current) {
+        setFabPos(fabPendingPosRef.current);
+      }
+    });
+  }, []);
+
+  const handleFabPointerDown = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    if (open) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    fabDragRef.current = {
+      active: true,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      originX: fabPos.x,
+      originY: fabPos.y,
+      moved: false,
+    };
+    setIsDraggingFab(true);
+  }, [open, fabPos.x, fabPos.y]);
+
+  const handleFabPointerMove = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = fabDragRef.current;
+    if (!drag.active || drag.pointerId !== e.pointerId) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    if (Math.abs(dx) > FAB_DRAG_THRESHOLD || Math.abs(dy) > FAB_DRAG_THRESHOLD) {
+      drag.moved = true;
+    }
+    scheduleFabPosUpdate(clampFabPos({ x: drag.originX + dx, y: drag.originY + dy }));
+  }, [clampFabPos, scheduleFabPosUpdate]);
+
+  const handleFabPointerUp = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = fabDragRef.current;
+    if (!drag.active || drag.pointerId !== e.pointerId) return;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    drag.active = false;
+    drag.pointerId = null;
+    setIsDraggingFab(false);
+    const pending = fabPendingPosRef.current;
+    const clamped = clampFabPos(pending ?? fabPos);
+    fabPendingPosRef.current = clamped;
+    setFabPos(clamped);
+    persistFabPos(clamped);
+  }, [fabPos, clampFabPos, persistFabPos]);
+
+  const handleFabPointerCancel = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = fabDragRef.current;
+    if (!drag.active || drag.pointerId !== e.pointerId) return;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    drag.active = false;
+    drag.pointerId = null;
+    setIsDraggingFab(false);
+  }, []);
+
+  const handleFabClick = useCallback(() => {
+    if (fabDragRef.current.moved) {
+      fabDragRef.current.moved = false;
+      return;
+    }
+    setOpen(true);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (fabRafRef.current != null && typeof window !== "undefined") {
+        window.cancelAnimationFrame(fabRafRef.current);
+      }
+    };
+  }, []);
 
   // Inject CFO boot message once per pathname per session
   useEffect(() => {
@@ -363,7 +543,7 @@ export function AnalysisChatPanel({ analysis, inline, disableAutoSummary = false
                   type="button"
                   onClick={send}
                   disabled={loading || !input.trim()}
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-white shadow-subtle transition hover:bg-[#b7491a] disabled:opacity-40 sm:h-10 sm:w-10"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-white shadow-subtle transition hover:bg-primary/90 disabled:opacity-40 sm:h-10 sm:w-10"
                 >
                   <Send className="h-3.5 w-3.5" />
                 </button>
@@ -381,13 +561,27 @@ export function AnalysisChatPanel({ analysis, inline, disableAutoSummary = false
       {/* FAB */}
       {!open && (
         <button
+          ref={fabRef}
           type="button"
-          onClick={() => setOpen(true)}
+          onClick={handleFabClick}
+          onPointerDown={handleFabPointerDown}
+          onPointerMove={handleFabPointerMove}
+          onPointerUp={handleFabPointerUp}
+          onPointerCancel={handleFabPointerCancel}
           className={cn(
-            "group fixed bottom-4 right-4 z-40 flex h-12 items-center gap-2 rounded-full pl-3 pr-4 shadow-float transition-all duration-300 sm:bottom-5 sm:right-5 sm:h-14 sm:pl-4 sm:pr-5",
+            "group fixed z-40 flex h-12 touch-none items-center gap-2 rounded-full pl-3 pr-4 shadow-float sm:h-14 sm:pl-4 sm:pr-5",
             "bg-primary text-white",
-            "ring-2 ring-white/80 ring-offset-2 ring-offset-transparent hover:scale-[1.03] hover:shadow-lg"
+            "ring-2 ring-white/80 ring-offset-2 ring-offset-transparent hover:scale-[1.03] hover:shadow-lg",
+            isDraggingFab ? "transition-none" : "transition-[transform,box-shadow] duration-200 ease-out",
+            isDraggingFab ? "cursor-grabbing" : "cursor-grab"
           )}
+          style={{
+            left: 0,
+            top: 0,
+            transform: `translate3d(${fabPos.x}px, ${fabPos.y}px, 0)`,
+            visibility: fabReady ? "visible" : "hidden",
+            willChange: isDraggingFab ? "transform" : undefined,
+          }}
           aria-label="Open AI analyst chat"
         >
           <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 sm:h-9 sm:w-9">
@@ -407,9 +601,14 @@ export function AnalysisChatPanel({ analysis, inline, disableAutoSummary = false
 
       {/* Panel */}
       {open && (
-        <div className="fixed inset-0 z-50 flex items-end justify-end p-2 sm:p-4 md:p-6">
-          <button type="button" className="absolute inset-0 bg-black/25 backdrop-blur-[3px]" aria-label="Close" onClick={() => setOpen(false)} />
-          <div className="relative flex h-[min(600px,92dvh)] w-full max-w-[440px] flex-col overflow-hidden rounded-2xl border border-border/70 bg-background/95 shadow-float backdrop-blur-xl ring-1 ring-border/80 sm:max-w-[460px]">
+        <div className="fixed inset-0 z-50 flex items-end justify-end p-1.5 sm:p-2.5 md:p-3">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/20 backdrop-blur-[2px] transition-opacity duration-500 ease-out"
+            aria-label="Close"
+            onClick={() => setOpen(false)}
+          />
+          <div className="relative flex h-[min(640px,94dvh)] w-full max-w-[680px] flex-col overflow-hidden rounded-2xl border border-border/70 bg-background/95 shadow-float backdrop-blur-xl ring-1 ring-border/80 transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]">
             {/* Header */}
             <div className="relative overflow-hidden border-b border-border bg-secondary/40 px-3 py-3 sm:px-4">
               <div className="flex items-start justify-between gap-2">
@@ -488,7 +687,7 @@ export function AnalysisChatPanel({ analysis, inline, disableAutoSummary = false
                   type="button"
                   onClick={send}
                   disabled={loading || !input.trim()}
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary text-white shadow-subtle transition hover:bg-[#b7491a] disabled:opacity-40 sm:h-11 sm:w-11"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary text-white shadow-subtle transition hover:bg-primary/90 disabled:opacity-40 sm:h-11 sm:w-11"
                 >
                   <Send className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                 </button>
@@ -509,7 +708,7 @@ function EmptyState() {
     <div className="rounded-lg border border-dashed border-border bg-background px-3 py-2.5 text-xs text-muted-foreground">
       <p className="font-semibold text-foreground">No report attached</p>
       <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-        Analyze a ticker or upload a PDF first. The AI will automatically generate a comprehensive summary.
+        Run Quick Analyze with a ticker or upload a PDF first. The AI will automatically generate a comprehensive summary.
       </p>
     </div>
   );

@@ -171,7 +171,7 @@ export function PricingSection() {
                 className={cn(
                   "mt-8 inline-flex h-11 w-full items-center justify-center rounded-2xl text-sm font-semibold transition focus-visible:ring-4 focus-visible:outline-none",
                   plan.highlight
-                    ? "bg-primary text-white shadow-elevation hover:bg-[#b7491a] focus-visible:ring-primary/30"
+                    ? "bg-primary text-white shadow-elevation hover:bg-primary/90 focus-visible:ring-primary/30"
                     : "border border-border bg-secondary text-foreground hover:bg-white focus-visible:ring-border"
                 )}
               >

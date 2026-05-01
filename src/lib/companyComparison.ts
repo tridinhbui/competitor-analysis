@@ -569,7 +569,6 @@ const ROW_DEFINITIONS: Array<{
   { section: "Balance Sheet / Capital Structure", key: "interest_cov", label: "Interest Coverage", format: "multiple", metricKey: "interestCoverage", betterDirection: "higher" },
   { section: "Balance Sheet / Capital Structure", key: "roa", label: "ROA", format: "percent", metricKey: "roa", betterDirection: "higher" },
   { section: "Balance Sheet / Capital Structure", key: "roe", label: "ROE", format: "percent", metricKey: "roe", betterDirection: "higher" },
-  { section: "Balance Sheet / Capital Structure", key: "roic", label: "ROIC", format: "percent", metricKey: "roic", betterDirection: "higher" },
 ];
 
 function selectBetterSide(
@@ -1085,8 +1084,6 @@ function boardInsightText(
     return `${lead} carries a lighter absolute debt burden, reducing refinancing risk and providing greater financial flexibility under stress. Cross-check against EBITDA coverage to assess true leverage.`;
   if (metric === "Debt / Equity")
     return `${lead} maintains lower financial leverage relative to equity capital, indicating a more conservative balance sheet. This constrains financial risk but may also reflect underinvestment.`;
-  if (metric === "ROIC" || metric === "roic")
-    return `${lead} generates higher returns on invested capital — the single best indicator of whether capital allocation decisions are creating shareholder value versus destroying it.`;
   if (metric === "ROE" || metric === "roe")
     return `${lead} earns more on equity capital. Verify whether this advantage comes from superior profitability (positive signal) or from high leverage amplifying returns (risk signal).`;
   if (metric === "SG&A % Revenue")
@@ -1158,14 +1155,6 @@ export function buildBoardInsights(
       valueA: companyA.metrics.freeCashFlow,
       valueB: companyB.metrics.freeCashFlow,
       winner: winnerForValues(companyA.metrics.freeCashFlow, companyB.metrics.freeCashFlow, "higher"),
-      insight: "",
-    },
-    {
-      metric: "ROIC",
-      format: "percent",
-      valueA: companyA.metrics.roic,
-      valueB: companyB.metrics.roic,
-      winner: winnerForValues(companyA.metrics.roic, companyB.metrics.roic, "higher"),
       insight: "",
     },
     {

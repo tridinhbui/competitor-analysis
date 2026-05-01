@@ -223,7 +223,6 @@ export async function GET(request: Request) {
               if (r.netMargin != null) d["Net Margin"] = `${r.netMargin}%`;
               if (r.returnOnEquity != null) d["ROE"] = `${r.returnOnEquity}%`;
               if (r.returnOnAssets != null) d["ROA"] = `${r.returnOnAssets}%`;
-              if (r.returnOnInvestedCapital != null) d["ROIC"] = `${r.returnOnInvestedCapital}%`;
               if (r.debtToEquity != null) d["Debt/Equity"] = r.debtToEquity;
               if (r.netDebtToEbitda != null) d["Net Debt/EBITDA"] = r.netDebtToEbitda;
               if (r.interestCoverage != null) d["Interest Coverage"] = `${r.interestCoverage}x`;

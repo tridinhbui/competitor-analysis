@@ -214,33 +214,36 @@ type Scale = 1 | 1_000 | 1_000_000 | 1_000_000_000;
 
 function detectScale(lines: PdfLine[]): Scale {
   const BILLIONS = /in\s+billions/i;
+  // Do not match bare "except per share" — it appears with BOTH thousands and millions.
   const MILLIONS =
-    /in\s+millions|\(millions\)|amounts?\s+in\s+millions|millions\s+of\s+dollars|dollars?\s+in\s+millions|presented\s+in\s+millions|except\s+per\s+share/i;
-  const THOUSANDS = /in\s+thousands|\(thousands\)|amounts?\s+in\s+thousands/i;
+    /in\s+millions|\(millions\)|amounts?\s+in\s+millions|millions\s+of\s+dollars|dollars?\s+in\s+millions|presented\s+in\s+millions|in\s+millions,\s*except\s+per\s+share/i;
+  const THOUSANDS =
+    /dollars?\s+in\s+thousands|in\s+thousands|\(thousands\)|amounts?\s+in\s+thousands|thousands,\s*except\s+per\s+share|\(in\s+thousands[^)]{0,120}except\s+per\s+share/i;
 
   // First pass: find scale indicators near financial section headers (most accurate).
   // Scale notes like "(in millions)" typically appear within a few lines of the statement title.
   for (let i = 0; i < lines.length; i++) {
     if (/balance\s+sheet|statement.*(?:income|operations?|cash\s+flow)|cash\s+flow\s+statement/i.test(lines[i].text)) {
       const ctx = lines
-        .slice(Math.max(0, i - 3), Math.min(lines.length, i + 25))
+        .slice(Math.max(0, i - 12), Math.min(lines.length, i + 30))
         .map((l) => l.text)
         .join(" ");
       if (BILLIONS.test(ctx)) return 1_000_000_000;
-      if (MILLIONS.test(ctx)) return 1_000_000;
       if (THOUSANDS.test(ctx)) return 1_000;
+      if (MILLIONS.test(ctx)) return 1_000_000;
     }
   }
 
   // Second pass: scan the entire document as a fallback.
   const fullSample = lines.map((l) => l.text).join(" ");
   if (BILLIONS.test(fullSample)) return 1_000_000_000;
-  if (MILLIONS.test(fullSample)) return 1_000_000;
   if (THOUSANDS.test(fullSample)) return 1_000;
+  if (MILLIONS.test(fullSample)) return 1_000_000;
 
   // Third pass: SEC large-cap 10-Q/K tables are almost always stated in millions even when
   // the "(in millions)" line is split across PDF text runs and missed by pdf.js row join.
   const head = lines.slice(0, Math.min(lines.length, 200)).map((l) => l.text).join(" ");
+  if (THOUSANDS.test(head)) return 1_000;
   if (MILLIONS.test(head)) return 1_000_000;
 
   return 1;
@@ -265,6 +268,14 @@ function inferScaleFromMagnitude(lines: PdfLine[]): Scale {
   return 1;
 }
 
+/** Align PDF repair-path scaling with `heuristicExtract` / `detectScale`. */
+function scaleToScaleNote(scale: Scale): string | undefined {
+  if (scale === 1_000_000_000) return "billions";
+  if (scale === 1_000_000) return "millions";
+  if (scale === 1_000) return "thousands";
+  return undefined;
+}
+
 type Section = "unknown" | "balance_sheet" | "income" | "cash_flow" | "equity" | "comprehensive_income" | "notes";
 
 const SECTION_PATTERNS: [RegExp, Section][] = [
@@ -273,6 +284,8 @@ const SECTION_PATTERNS: [RegExp, Section][] = [
   [/consolidated\s+balance\s+sheets?/i, "balance_sheet"],
   [/balance\s+sheets?/i, "balance_sheet"],
   [/financial\s+position/i, "balance_sheet"],
+  // L&E header must stay balance_sheet — otherwise "SHAREHOLDERS' EQUITY" matches `equity` and hurts liability-line heuristics.
+  [/liabilities\s+and\s+(stockholders|shareholders).?\s+equity/i, "balance_sheet"],
   // Income statement
   [/condensed\s+consolidated\s+statements?\s+of\s+(operations?|income|earnings)/i, "income"],
   [/consolidated\s+statements?\s+of\s+(operations?|income|earnings)/i, "income"],
@@ -282,7 +295,9 @@ const SECTION_PATTERNS: [RegExp, Section][] = [
   [/condensed\s+consolidated\s+statements?\s+of\s+cash\s+flows?/i, "cash_flow"],
   [/consolidated\s+statements?\s+of\s+cash\s+flows?/i, "cash_flow"],
   [/statements?\s+of\s+cash\s+flows?/i, "cash_flow"],
+  [/cash\s+flows?\s+(?:from|statement)/i, "cash_flow"],
   [/cash\s+flows?\s+statement/i, "cash_flow"],
+  [/^(?:net\s+)?cash\s+(?:provided|used|generated)\b/i, "cash_flow"],
   // Equity / other
   [/stockholders.?\s+equity/i, "equity"],
   [/shareholders.?\s+equity/i, "equity"],
@@ -398,7 +413,16 @@ const BS_DEFS: ItemDef[] = [
   { tag: "Liabilities", label: "Total liabilities", keywords: [/^total\s+liabilities$/i, /^total\s+liabilities\s*\(/i] },
   { tag: "LiabilitiesCurrent", label: "Current liabilities", keywords: [/^total\s+current\s+liabilities$/i, /^current\s+liabilities,?\s+total$/i] },
   { tag: "LiabilitiesNoncurrent", label: "Non-current liabilities", keywords: [/^total\s+non-?current\s+liabilities$/i, /^non-?current\s+liabilities,?\s+total$/i] },
-  { tag: "DebtCurrent", label: "Current debt", keywords: [/^current\s+portion.*long-?term\s+debt/i, /^short-?term\s+(debt|borrowings?)/i, /^current\s+debt/i, /^notes?\s+payable/i] },
+  {
+    tag: "DebtCurrent",
+    label: "Current debt",
+    keywords: [
+      /^current\s+portion.*long-?term\s+debt/i,
+      /^short-?term\s+(debt|borrowings?)/i,
+      /^current\s+debt/i,
+      /^notes?\s+payable\b/i,
+    ],
+  },
   { tag: "LongTermDebtNoncurrent", label: "Long-term debt", keywords: [/^long-?term\s+debt/i, /^non-?current.*debt/i] },
   { tag: "OperatingLeaseLiabilityNoncurrent", label: "Long-term operating lease obligations", keywords: [/^long-?term\s+operating\s+lease\s+obligations?/i, /^operating\s+lease\s+liabilit(y|ies).*non-?current/i] },
   { tag: "FinanceLeaseLiabilityNoncurrent", label: "Long-term finance lease obligations", keywords: [/^long-?term\s+finance\s+lease\s+obligations?/i, /^finance\s+lease\s+liabilit(y|ies).*non-?current/i] },
@@ -438,7 +462,7 @@ const BS_DEFS: ItemDef[] = [
 const CF_DEFS: ItemDef[] = [
   {
     tag: "Revenues", label: "Revenue",
-    // "Sales" alone (top line in meat/food filings like Smithfield, Tyson), "Net revenues", "Net sales", "Total revenue"
+    // "Sales" alone (top line in meat/food filings like major protein packers), "Net revenues", "Net sales", "Total revenue"
     // No section restriction — label patterns are specific enough
     keywords: [
       /^sales$/i,
@@ -460,7 +484,7 @@ const CF_DEFS: ItemDef[] = [
   { tag: "OperatingExpenses", label: "Operating expenses", keywords: [/^total\s+operating\s+expenses/i] },
   {
     tag: "OperatingIncomeLoss", label: "Operating income",
-    // "Operating profit" = common synonym (Smithfield, many UK-style filers)
+    // "Operating profit" = common synonym (many UK-style filers)
     keywords: [/^operating\s+(income|loss|profit|earnings)/i, /^income\s+from\s+operations/i, /^(total\s+)?operating\s+profit/i],
   },
   { tag: "InterestExpense", label: "Interest expense", keywords: [/^interest\s+expense/i] },
@@ -475,7 +499,7 @@ const CF_DEFS: ItemDef[] = [
   { tag: "DepreciationDepletionAndAmortization", label: "Depreciation & amortization", keywords: [/^depreciation\s+(and|&)\s+amortization/i, /^depreciation,?\s+depletion/i] },
   {
     tag: "NetCashProvidedByOperatingActivities", label: "Operating cash flow",
-    // "Net cash flows from operating activities of continuing operations" — Smithfield variant
+    // "Net cash flows from operating activities of continuing operations" — some filers' variant
     // No section restriction — plural "CASH FLOWS" header may not be detected
     keywords: [
       /^(net\s+)?cash\s+(provided|generated|used).*operating/i,
@@ -497,7 +521,7 @@ const CF_DEFS: ItemDef[] = [
   },
   {
     tag: "PaymentsOfDividends", label: "Dividends paid",
-    // "Payment of dividends" (singular, Smithfield style) and standard variants
+    // "Payment of dividends" (singular) and standard variants
     keywords: [/^payments?\s+of\s+dividends?/i, /^dividends?\s+paid/i, /^dividends?\s+to\s+(common\s+)?stock/i, /^payment\s+of\s+dividends?/i],
     abs: true,
   },
@@ -574,6 +598,7 @@ const CF_DEFS: ItemDef[] = [
 function heuristicExtract(lines: PdfLine[]): { bs: BSItem[]; cf: BSItem[] } {
   let scale = detectScale(lines);
   if (scale === 1) scale = inferScaleFromMagnitude(lines);
+  const repairScaleNote = scaleToScaleNote(scale);
   const sections = detectSections(lines);
   const periodLabel = detectPeriod(lines);
   const parsed = lines.map((l, i) => parseLine(l, i));
@@ -657,7 +682,7 @@ function heuristicExtract(lines: PdfLine[]): { bs: BSItem[]; cf: BSItem[] } {
     })
     .join("");
   function repairCriticalValue(metric: PdfFinancialMetric, items: BSItem[]): void {
-    const repaired = extractPdfFinancialValue(repairText, metric);
+    const repaired = extractPdfFinancialValue(repairText, metric, repairScaleNote);
     if (!repaired || Math.abs(repaired.value) <= 1) return;
 
     const existing = items.find((item) => item.tag === repaired.tag);
@@ -988,12 +1013,43 @@ function detectPeriod(lines: PdfLine[]): string {
 
 // ===========================================================================
 // Main pipeline
+// ---------------------------------------------------------------------------
+// Merge PDF heuristics when AI omits debt tags (legacy PDFs: Notes payable, etc.)
+// ---------------------------------------------------------------------------
+
+const DEBT_TAGS_FOR_HEURISTIC_MERGE = [
+  "DebtCurrent",
+  "ShortTermBorrowings",
+  "LongTermDebtCurrent",
+  "LongTermDebtNoncurrent",
+  "LongTermDebt",
+] as const;
+
+function mergeHeuristicDebtIfAiMissing(
+  aiItems: BSItem[],
+  hItems: BSItem[]
+): { items: BSItem[]; changed: boolean } {
+  let out = [...aiItems];
+  let changed = false;
+  for (const tag of DEBT_TAGS_FOR_HEURISTIC_MERGE) {
+    const aiRow = out.find((i) => i.tag === tag);
+    const aiVal = aiRow?.value ?? 0;
+    const aiMissing = !aiRow || Math.abs(aiVal) < 0.05;
+    const hRow = hItems.find((i) => i.tag === tag);
+    if (!aiMissing || !hRow || Math.abs(hRow.value) < 0.05) continue;
+    out = out.filter((i) => i.tag !== tag);
+    out.push(hRow);
+    changed = true;
+  }
+  return { items: out, changed };
+}
+
 // ===========================================================================
 
 export async function analyzePdf(
   file: File,
   onStep: (event: StepEvent) => void,
-  options?: { useAI?: boolean }
+  options?: { useAI?: boolean; onExtractedText?: (text: string) => void }
 ): Promise<FullAnalysis> {
   const useAI = options?.useAI !== false; // default true
   const t0 = performance.now();
@@ -1013,6 +1069,7 @@ export async function analyzePdf(
   onStep({ step: "resolve", label: pipeLabel("resolve"), status: "running", message: "Extracting all text from PDF pages…" });
 
   const { lines, pages, rawChars, fullText } = await extractPdfLines(file);
+  options?.onExtractedText?.(fullText);
   onStep({
     step: "resolve", label: pipeLabel("resolve"), status: "done",
     message: `${pages} pages · ${lines.length.toLocaleString()} lines · ${rawChars.toLocaleString()} chars extracted`,
@@ -1065,6 +1122,15 @@ export async function analyzePdf(
     analysis = await analyzeWithAI(fullText, file.name, pages, rawChars);
     usedAI = true;
 
+    const { bs: heuristicBs } = heuristicExtract(lines);
+    const { items: mergedBs, changed: debtMerged } = mergeHeuristicDebtIfAiMissing(
+      analysis.balanceSheet.items,
+      heuristicBs
+    );
+    if (debtMerged) {
+      analysis = assembleAnalysis(mergedBs, analysis.cfItems ?? [], { ...analysis.meta });
+    }
+
     const bsCount = analysis.balanceSheet.items.length;
     const cfCount = analysis.cfItems?.length ?? 0;
 
@@ -1093,10 +1159,6 @@ export async function analyzePdf(
     onStep({ step: "extract_bs", label: pipeLabel("extract_bs"), status: "running", message: "Heuristic extraction…" });
 
     const { bs, cf } = heuristicExtract(lines);
-    console.log(
-      "[repurchase:pdf-heuristic-cf-items]",
-      cf.map((i) => ({ tag: i.tag, label: i.label, value: i.value, source: i.source }))
-    );
     onStep({
       step: "extract_bs", label: pipeLabel("extract_bs"), status: "done",
       message: `Heuristic found ${bs.length} BS + ${cf.length} CF items`,

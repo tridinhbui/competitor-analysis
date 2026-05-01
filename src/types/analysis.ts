@@ -198,11 +198,15 @@ export interface FullAnalysis {
     ticker?: string;
     cik?: string;
     companyName?: string;
+    /** Detected from cover page (PDF) or SEC metadata. */
+    filingType?: "10-K" | "10-Q";
     filingDate?: string;
     periodEnd?: string;
     fileName?: string;
     pagesRead?: number;
     charsExtracted?: number;
+    /** Optional raw filing text stored server-side for targeted re-extraction. */
+    rawFilingText?: string;
     /** Data quality: SEC=high, PDF+AI=medium, PDF+heuristic=low */
     confidence?: DataConfidence;
     /** How extraction was done (for transparency) */
@@ -216,6 +220,12 @@ export interface FullAnalysis {
       | "pdf-heuristic";
     /** Human-readable post-processing steps (derived equity, suppressed outliers, etc.) */
     extractionRepairs?: string[];
+    /**
+     * Manual fields from the Data Source grid that are not rebuilt from XBRL line tags
+     * (volumes, per-unit metrics, non-GAAP adjustment inputs). Kept on the filing so linked
+     * analyses stay consistent with centralized overrides.
+     */
+    dataSourceSupplement?: Partial<Record<string, number | null>>;
   };
   balanceSheet: BalanceSheet;
   debtStructure: DebtStructure;

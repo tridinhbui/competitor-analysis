@@ -8,6 +8,7 @@ import { PeerModulePanel } from "@/components/workspace/PeerModulePanel";
 import { PeerComparisonView } from "@/components/workspace/PeerComparisonView";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { MacroInsightsPanel } from "@/components/workspace/MacroInsightsPanel";
+import { getLatestEarningsAnalysisClient, type EarningsScriptAnalysis } from "@/components/workspace/EarningsScriptAnalysisPanel";
 import type { CompanyRegistry, TimelineSlot, WorkspaceReadiness } from "@/types/competitor";
 import {
   Boxes,
@@ -24,9 +25,11 @@ import {
 } from "lucide-react";
 
 export default function WorkspacePage() {
-  type WorkspaceSection = "overview" | "analysis" | "slides" | "modules" | "macro";
+  type WorkspaceSection = "overview" | "analysis" | "slides" | "modules";
+  type WorkspaceMode = "competitor" | "macro";
   const [registry, setRegistry] = useState<CompanyRegistry | null>(null);
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("competitor");
   const [activeSection, setActiveSection] = useState<WorkspaceSection>("overview");
   const [loading, setLoading] = useState(true);
   const [companiesOpen, setCompaniesOpen] = useState(true);
@@ -58,6 +61,7 @@ export default function WorkspacePage() {
     }
   }, []);
   const [overviewReadiness, setOverviewReadiness] = useState<(WorkspaceReadiness & { timeline?: TimelineSlot[] }) | null>(null);
+  const [earningsOverlay, setEarningsOverlay] = useState<EarningsScriptAnalysis | null>(null);
   const [deletingTicker, setDeletingTicker] = useState<string | null>(null);
   const panelActionsRef = useRef<WorkspacePanelActions | null>(null);
   const handleActionsReady = useCallback((actions: WorkspacePanelActions) => {
@@ -97,6 +101,13 @@ export default function WorkspacePage() {
     setOverviewReadiness(null);
   }, [selectedTicker]);
 
+  useEffect(() => {
+    setEarningsOverlay(getLatestEarningsAnalysisClient());
+    const listener = () => setEarningsOverlay(getLatestEarningsAnalysisClient());
+    window.addEventListener("earnings-analysis-updated", listener);
+    return () => window.removeEventListener("earnings-analysis-updated", listener);
+  }, []);
+
   const recordComparison = useCallback((label: string) => {
     setComparisonHistory((current) => {
       const next = [label, ...current.filter((entry) => entry !== label)];
@@ -135,14 +146,13 @@ export default function WorkspacePage() {
     { id: "analysis", label: "Analysis Results", hint: "Tables and comparative outputs" },
     { id: "slides", label: "Slide Blocks", hint: "Deck block generation" },
     { id: "modules", label: "Module Setup", hint: "Peer module configuration" },
-    { id: "macro", label: "Macro Insights", hint: "Context and macro layer" },
   ];
 
   return (
     <RequireAuth>
     <div className="workspace-page mx-auto max-w-[1500px] px-4 py-4 sm:px-6 sm:py-6">
       {/* Header */}
-      <div className="mb-4 flex items-center gap-4">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 text-xl font-bold text-slate-900 sm:text-2xl">
             <Boxes className="h-6 w-6 text-primary" />
@@ -151,6 +161,30 @@ export default function WorkspacePage() {
           <p className="mt-0.5 text-xs text-slate-500">
             Select a company to view analysis readiness and module eligibility.
           </p>
+        </div>
+        <div className="inline-flex rounded-full border border-slate-200 bg-white p-1 shadow-subtle">
+          <button
+            type="button"
+            onClick={() => setWorkspaceMode("competitor")}
+            className={`rounded-full px-4 py-1.5 text-xs font-semibold transition ${
+              workspaceMode === "competitor"
+                ? "bg-primary text-primary-foreground"
+                : "text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            Competitor Analysis
+          </button>
+          <button
+            type="button"
+            onClick={() => setWorkspaceMode("macro")}
+            className={`rounded-full px-4 py-1.5 text-xs font-semibold transition ${
+              workspaceMode === "macro"
+                ? "bg-primary text-primary-foreground"
+                : "text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            Macro Insights
+          </button>
         </div>
       </div>
 
@@ -172,6 +206,16 @@ export default function WorkspacePage() {
             </div>
           </div>
           <PeerComparisonView onRegistryChanged={() => loadRegistry()} onComparisonRecorded={recordComparison} />
+        </div>
+      ) : workspaceMode === "macro" ? (
+        <div className="space-y-4 workspace-section-enter">
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-subtle">
+            <p className="text-sm font-semibold text-slate-900">Macro Insights</p>
+            <p className="mt-1 text-xs text-slate-500">
+              Macro context is promoted to a primary workspace tab for faster access.
+            </p>
+          </div>
+          <MacroInsightsPanel />
         </div>
       ) : (
         <div className={`grid gap-4 ${sidebarCollapsed ? "lg:grid-cols-[56px_1fr]" : "lg:grid-cols-[240px_1fr]"}`}>
@@ -350,23 +394,17 @@ export default function WorkspacePage() {
               ) : null}
             </div>
 
-              </>
-            )}
-          </div>
-
-          {/* Focused workspace pages */}
-          <div className="space-y-4">
             <div className="rounded-2xl border border-slate-200/80 bg-white/90 p-3 shadow-subtle backdrop-blur">
               <p className="mb-2 px-2 [font-family:var(--font-body)] text-[10px] font-semibold uppercase tracking-widest text-slate-400">
                 Sections
               </p>
-              <div className="flex gap-1.5">
+              <div className="flex flex-col gap-1.5">
                 {sectionTabs.map((section) => (
                   <button
                     key={section.id}
                     type="button"
                     onClick={() => setActiveSection(section.id)}
-                    className={`workspace-interactive min-w-0 flex-1 rounded-full px-3 py-2 text-center transition ${
+                    className={`workspace-interactive min-w-0 rounded-full px-3 py-2 text-left transition ${
                       activeSection === section.id
                         ? "bg-primary text-primary-foreground shadow-sm ring-1 ring-primary/30"
                         : "bg-slate-100/70 text-slate-700 hover:-translate-y-[1px] hover:bg-slate-200/70"
@@ -383,6 +421,20 @@ export default function WorkspacePage() {
                 ))}
               </div>
             </div>
+
+              </>
+            )}
+          </div>
+
+          {/* Focused workspace pages */}
+          <div className="space-y-4">
+            {earningsOverlay ? (
+              <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-3">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-violet-600">Earnings Script Overlay</p>
+                <p className="mt-1 text-xs font-semibold text-slate-900">{earningsOverlay.sessionTitle}</p>
+                <p className="mt-1 text-[11px] text-slate-600 line-clamp-2">{earningsOverlay.summary}</p>
+              </div>
+            ) : null}
 
             {activeSection === "overview" ? (
               <div className="space-y-3 workspace-section-enter">
@@ -436,15 +488,6 @@ export default function WorkspacePage() {
               </div>
             ) : null}
 
-            {activeSection === "macro" ? (
-              <div className="space-y-4 workspace-section-enter">
-                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-subtle">
-                  <p className="text-sm font-semibold text-slate-900">Macro Insights</p>
-                  <p className="mt-1 text-xs text-slate-500">Separate macro context from company-level detail to reduce clutter.</p>
-                </div>
-                <MacroInsightsPanel />
-              </div>
-            ) : null}
           </div>
         </div>
       )}

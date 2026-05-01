@@ -29,7 +29,7 @@ import { ANALYSIS_MODULES } from "@/types/competitor";
  * Derive a Quarter from a period-end date string.
  *
  * Assumption: calendar quarters. Many food companies have non-standard fiscal
- * years (e.g. Smithfield's FY ends in April). This is a best-effort mapping
+ * years (e.g. some filers' FY ends off-calendar). This is a best-effort mapping
  * that can be refined per-company in future sprints.
  */
 export function deriveQuarter(periodEnd: string): Quarter {

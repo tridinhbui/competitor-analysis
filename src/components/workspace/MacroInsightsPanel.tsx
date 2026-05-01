@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type {
   CommodityPrice,
   MacroIndicator,
@@ -24,6 +24,7 @@ import {
   Zap,
   AlertCircle,
 } from "lucide-react";
+import { getLatestEarningsAnalysisClient, type EarningsScriptAnalysis } from "@/components/workspace/EarningsScriptAnalysisPanel";
 
 // ---------------------------------------------------------------------------
 // Formatting
@@ -209,6 +210,7 @@ export function MacroInsightsPanel() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResult, setSearchResult] = useState<SearchInsight | null>(null);
   const [searching, setSearching] = useState(false);
+  const [earningsOverlay, setEarningsOverlay] = useState<EarningsScriptAnalysis | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -236,6 +238,13 @@ export function MacroInsightsPanel() {
       setSearching(false);
     }
   }, [searchQuery]);
+
+  useEffect(() => {
+    setEarningsOverlay(getLatestEarningsAnalysisClient());
+    const listener = () => setEarningsOverlay(getLatestEarningsAnalysisClient());
+    window.addEventListener("earnings-analysis-updated", listener);
+    return () => window.removeEventListener("earnings-analysis-updated", listener);
+  }, []);
 
   const sections: Array<{ key: Section; label: string; icon: React.ReactNode }> = [
     { key: "commodities", label: "Commodities", icon: <BarChart3 className="h-3 w-3" /> },
@@ -265,6 +274,14 @@ export function MacroInsightsPanel() {
 
       {expanded && (
         <>
+          {earningsOverlay ? (
+            <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-3">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-violet-600">Earnings Script Overlay</p>
+              <p className="mt-1 text-xs font-semibold text-slate-900">{earningsOverlay.sessionTitle}</p>
+              <p className="mt-1 text-[11px] text-slate-600">{earningsOverlay.summary}</p>
+            </div>
+          ) : null}
+
           {/* Tabs */}
           <div className="flex gap-1 rounded-lg bg-slate-100 p-1">
             {sections.map(({ key, label, icon }) => (
@@ -364,7 +381,7 @@ export function MacroInsightsPanel() {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && doSearch()}
-                  placeholder="e.g. Smithfield pork earnings, hog prices outlook 2025, Tyson Foods guidance..."
+                  placeholder="e.g. Finbud Pro sector earnings, protein outlook 2025, peer guidance..."
                   className="h-9 flex-1 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-900 outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
                 />
                 <button

@@ -12,7 +12,7 @@ interface Props {
   priority?: boolean;
 }
 
-export function SmithfieldCorporateLogo({
+export function FinbudProLogo({
   variant = "nav",
   className,
   priority,
@@ -29,9 +29,9 @@ export function SmithfieldCorporateLogo({
       )}
     >
       <Image
-        src="/smithfield-corporate-logo.png"
-        alt="Smithfield"
-        title="Smithfield"
+        src="/finbud-pro-logo.png"
+        alt="Finbud Pro"
+        title="Finbud Pro"
         fill
         className={cn("object-contain", isNav ? "object-left" : "object-center")}
         sizes={isNav ? "(max-width: 640px) 148px, 172px" : "200px"}

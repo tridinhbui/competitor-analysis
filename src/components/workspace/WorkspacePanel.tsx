@@ -296,7 +296,7 @@ export function WorkspacePanel({
           Competitor Analysis Workspace
         </p>
         <p className="mt-1 text-xs text-slate-400">
-          Analyze a company first to open its workspace.
+          Run Quick Analyze on a company first to open its workspace.
         </p>
       </div>
     );

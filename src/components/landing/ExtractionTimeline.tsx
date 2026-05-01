@@ -33,7 +33,7 @@ export function ExtractionTimeline({ activeIndex }: { activeIndex: number }) {
               className={cn(
                 "absolute -left-[9px] top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full border-2 bg-white text-[9px] font-bold transition-all duration-300",
                 done && "border-emerald-500 bg-emerald-500 text-white",
-                current && "border-primary bg-primary text-white shadow-[0_0_0_4px_rgb(204_82_29_/_0.2)]",
+                current && "border-primary bg-primary text-white shadow-[0_0_0_4px_rgb(37_99_235_/_0.2)]",
                 pending && "border-border text-muted-foreground"
               )}
               aria-hidden

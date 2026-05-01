@@ -222,7 +222,7 @@ describe("computeWorkspaceReadiness", () => {
   });
 
   it("reports correct counts and readiness with data", () => {
-    const company = makeCompany("SFD", "Smithfield", "subject");
+    const company = makeCompany("SFD", "Finbud Pro Subject", "subject");
     const filings = [
       makeFiling("SFD", "2024-09-30"),
       makeFiling("SFD", "2024-06-30"),

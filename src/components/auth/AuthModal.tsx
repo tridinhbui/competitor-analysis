@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { X, Loader2, Mail, Lock } from "lucide-react";
-import { SmithfieldCorporateLogo } from "@/components/branding/SmithfieldCorporateLogo";
+import { FinbudProLogo } from "@/components/branding/FinbudProLogo";
 import { useAuth } from "@/lib/authContext";
 import { cn } from "@/lib/utils";
 
@@ -71,11 +71,11 @@ export function AuthModal({ onClose }: AuthModalProps) {
         </button>
 
         <div className="mb-5 flex justify-center pr-6">
-          <SmithfieldCorporateLogo variant="modal" priority={false} />
+          <FinbudProLogo variant="modal" priority={false} />
         </div>
 
         <h2 className="pr-8 text-lg font-semibold tracking-tight text-slate-900">
-          {mode === "signin" ? "Sign in to Smithfield Strategy" : "Create one"}
+          {mode === "signin" ? "Sign in to Finbud Pro" : "Create one"}
         </h2>
         <p className="mt-1.5 text-sm text-slate-500">
           {mode === "signin"

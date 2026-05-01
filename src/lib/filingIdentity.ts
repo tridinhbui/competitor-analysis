@@ -172,16 +172,26 @@ export function resolveTicker(input: {
   );
 }
 
+/** UUID-style upload names (e.g. from temp storage) must not win over real company names. */
+function isOpaqueUploadFileName(fileName: string): boolean {
+  const base = stripPdfExtension(fileName).trim();
+  if (!base) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(base);
+}
+
 export function normalizeCompanyName(input: {
   candidate?: string | null;
   fileName?: string | null;
   ticker: string;
 }): string {
-  const fromFile = input.fileName ? cleanCompanyText(input.fileName) : null;
-  if (fromFile) return fromFile;
-
   const fromCandidate = input.candidate ? cleanCompanyText(input.candidate) : null;
   if (fromCandidate) return fromCandidate;
+
+  const fromFile =
+    input.fileName && !isOpaqueUploadFileName(input.fileName)
+      ? cleanCompanyText(input.fileName)
+      : null;
+  if (fromFile) return fromFile;
 
   return input.ticker;
 }

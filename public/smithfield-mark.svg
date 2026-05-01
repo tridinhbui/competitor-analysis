@@ -1,8 +1,8 @@
 <svg width="196" height="44" viewBox="0 0 196 44" fill="none" xmlns="http://www.w3.org/2000/svg">
   <rect x="1" y="1" width="194" height="42" rx="10" fill="white" stroke="#E3E5E7"/>
-  <path d="M20 15.5C20 12.4624 22.4624 10 25.5 10H36.5C39.5376 10 42 12.4624 42 15.5V28.5C42 31.5376 39.5376 34 36.5 34H25.5C22.4624 34 20 31.5376 20 28.5V15.5Z" fill="#CC521D"/>
+  <path d="M20 15.5C20 12.4624 22.4624 10 25.5 10H36.5C39.5376 10 42 12.4624 42 15.5V28.5C42 31.5376 39.5376 34 36.5 34H25.5C22.4624 34 20 31.5376 20 28.5V15.5Z" fill="#2563EB"/>
   <path d="M28 17H34C35.6569 17 37 18.3431 37 20V24C37 25.6569 35.6569 27 34 27H28V17Z" fill="white"/>
   <path d="M27 27H33C34.6569 27 36 28.3431 36 30V30C36 31.6569 34.6569 33 33 33H27V27Z" fill="white"/>
-  <text x="52" y="21" fill="#3B4043" font-family="Montserrat, Arial, sans-serif" font-size="13" font-weight="800">SMITHFIELD</text>
-  <text x="52" y="33" fill="#5A6065" font-family="Merriweather, Georgia, serif" font-size="9.5" font-weight="400">Strategy Hub</text>
+  <text x="52" y="21" fill="#3B4043" font-family="Montserrat, Arial, sans-serif" font-size="13" font-weight="800">FINBUD</text>
+  <text x="52" y="33" fill="#5A6065" font-family="Merriweather, Georgia, serif" font-size="9.5" font-weight="400">Pro</text>
 </svg>

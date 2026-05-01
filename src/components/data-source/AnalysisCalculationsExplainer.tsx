@@ -1,5 +1,5 @@
 /**
- * Explains how metrics shown on the Data Source grid are produced from Analyze
+ * Explains how metrics shown on the Data Source grid are produced from Quick Analyze
  * (SEC/XBRL or PDF extraction → FullAnalysis → extractMetrics / API).
  */
 
@@ -16,7 +16,7 @@ export function AnalysisCalculationsExplainer() {
         How calculated fields work
       </h2>
       <p className="mt-1 text-xs text-slate-600">
-        Rows come from each filing’s analysis (Analyze tab / SEC or PDF pipeline) stored in{" "}
+        Rows come from each filing’s analysis (Quick Analyze tab / SEC or PDF pipeline) stored in{" "}
         <strong>Supabase</strong> when configured. Dollar amounts are in <strong>$ millions</strong> unless noted.
         Edits you save here override stored values for that ticker and period where applicable.
       </p>

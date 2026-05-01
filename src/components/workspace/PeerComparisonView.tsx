@@ -3,11 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, PanelLeftClose, PanelLeftOpen, Plus, Search, TrendingUp, UploadCloud, X, Trash2 } from "lucide-react";
 import type { CompanyComparisonPayload } from "@/lib/companyComparison";
-import {
-  ComparisonReportContent,
-  buildComparisonExportHref,
-  type CompareTab,
-} from "@/components/workspace/ComparisonReportContent";
+import { ComparisonReportContent, buildComparisonExportHref } from "@/components/workspace/ComparisonReportContent";
 import { analyzePdf } from "@/lib/pdfAnalysis";
 import type { FullAnalysis } from "@/types/analysis";
 import { normalizeCompanyName, resolveTicker } from "@/lib/filingIdentity";
@@ -126,7 +122,6 @@ export function PeerComparisonView({
   const [comparing, setComparing] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<CompanyComparisonPayload | null>(null);
-  const [activeTab, setActiveTab] = useState<CompareTab>("overview");
   const [setupCompanyCount, setSetupCompanyCount] = useState(2);
   const currentYear = new Date().getFullYear();
   const minStartYear = 2020;
@@ -583,8 +578,6 @@ export function PeerComparisonView({
     setComparing(true);
     setError("");
     setResult(null);
-    setActiveTab("overview");
-
     try {
       const params = new URLSearchParams({ tickers: tickers.join(",") });
       const response = await fetch(`/api/company-comparison?${params.toString()}`);
@@ -609,8 +602,6 @@ export function PeerComparisonView({
     return (
       <ComparisonReportContent
         result={result}
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
         onReset={() => {
           setResult(null);
           setError("");
@@ -642,7 +633,7 @@ export function PeerComparisonView({
             <div className="mb-4 rounded-xl border border-slate-200/70 bg-gradient-to-r from-slate-50 via-white to-slate-50 p-4">
               <p className="text-2xl font-extrabold leading-tight text-slate-800 sm:text-[30px]">
                 Build your
-                <span className="bg-gradient-to-r from-[#B75A2E] to-[#cc521d] bg-clip-text text-transparent"> premium </span>
+                <span className="bg-gradient-to-r from-[#1d4ed8] to-[#2563eb] bg-clip-text text-transparent"> premium </span>
                 competitor view
               </p>
               <p className="mt-1 text-sm text-slate-500">

@@ -50,7 +50,7 @@ export function PaymentSection() {
             </div>
             <button
               type="button"
-              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-2.5 text-xs font-semibold text-white shadow-subtle transition hover:bg-[#b7491a] sm:col-span-2"
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-2.5 text-xs font-semibold text-white shadow-subtle transition hover:bg-primary/90 sm:col-span-2"
             >
               <Wallet className="h-3.5 w-3.5" aria-hidden />
               Continue to secure checkout (preview)

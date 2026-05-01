@@ -49,7 +49,7 @@ export function TokenTrackerFab() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-4 left-4 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-white shadow-float ring-2 ring-white/90 transition hover:scale-[1.03] hover:bg-[#b7491a] sm:bottom-5 sm:left-5"
+        className="fixed bottom-4 left-4 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-white shadow-float ring-2 ring-white/90 transition hover:scale-[1.03] hover:bg-primary/90 sm:bottom-5 sm:left-5"
         aria-label="Open token tracker"
         title={`Token tracker · ${formatNumber(snapshot.totalTokens)} total`}
       >
