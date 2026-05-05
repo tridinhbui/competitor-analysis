@@ -49,9 +49,9 @@ export function TokenTrackerFab() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-4 left-4 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-white shadow-float ring-2 ring-white/90 transition hover:scale-[1.03] hover:bg-primary/90 sm:bottom-5 sm:left-5"
+        className="fixed bottom-4 left-4 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-[#cc521d] text-white shadow-float ring-2 ring-white/90 transition hover:scale-[1.03] hover:bg-[#b7491a] sm:bottom-5 sm:left-5"
         aria-label="Open token tracker"
-        title={`Token tracker · ${formatNumber(snapshot.totalTokens)} total`}
+        title={`Token tracker | ${formatNumber(snapshot.totalTokens)} total`}
       >
         <Coins className="h-5 w-5" />
       </button>
@@ -62,7 +62,7 @@ export function TokenTrackerFab() {
     <div className="fixed bottom-4 left-4 z-40 w-[220px] rounded-2xl border border-border bg-background/95 p-3 shadow-float backdrop-blur sm:bottom-5 sm:left-5">
       <div className="mb-2 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-white">
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#cc521d] text-white">
             <Coins className="h-4 w-4" />
           </span>
           <div>

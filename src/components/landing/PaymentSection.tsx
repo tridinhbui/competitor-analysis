@@ -22,7 +22,7 @@ export function PaymentSection() {
             Secure payment (coming soon)
           </h2>
           <p className="mx-auto mt-3 max-w-lg text-sm text-muted-foreground">
-            This is a <strong className="font-semibold text-foreground">UI preview</strong>—no charges are processed in-app yet. When billing goes live,
+            This is a <strong className="font-semibold text-foreground">UI preview</strong> - no charges are processed in-app yet. When billing goes live,
             checkout will be handled through a certified provider (e.g. Stripe).
           </p>
           <div className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700">
@@ -41,8 +41,8 @@ export function PaymentSection() {
           <div className="mb-6 grid gap-4 rounded-2xl border border-border bg-secondary/55 p-4 sm:grid-cols-[1fr_auto] sm:items-center">
             <div>
               <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Mock checkout card</p>
-              <p className="mt-1 text-sm font-semibold text-foreground">Pro plan · Annual billing</p>
-              <p className="mt-1 text-xs text-muted-foreground">3 seats included · next renewal in 365 days</p>
+              <p className="mt-1 text-sm font-semibold text-foreground">Pro plan | Annual billing</p>
+              <p className="mt-1 text-xs text-muted-foreground">3 seats included | next renewal in 365 days</p>
             </div>
             <div className="rounded-xl border border-border bg-white px-4 py-3 text-right shadow-subtle">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Amount due</p>
@@ -50,7 +50,7 @@ export function PaymentSection() {
             </div>
             <button
               type="button"
-              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-2.5 text-xs font-semibold text-white shadow-subtle transition hover:bg-primary/90 sm:col-span-2"
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#cc521d] px-4 py-2.5 text-xs font-semibold text-white shadow-subtle transition hover:bg-[#b7491a] sm:col-span-2"
             >
               <Wallet className="h-3.5 w-3.5" aria-hidden />
               Continue to secure checkout (preview)
