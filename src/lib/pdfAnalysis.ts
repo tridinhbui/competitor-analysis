@@ -14,6 +14,7 @@
 import type { BSItem, FullAnalysis, StepEvent } from "@/types/analysis";
 import { PIPELINE_STEPS } from "@/types/analysis";
 import { assembleAnalysis } from "./analysisEngine";
+import { mergeRebuiltAnalysisWithSupplementals } from "./analysisMerge";
 import {
   buildHeuristicPdfProvenance,
   extractPdfFinancialValue,
@@ -167,7 +168,7 @@ async function analyzeWithAI(
   fileName: string,
   pages: number,
   chars: number
-): Promise<FullAnalysis> {
+): Promise<{ analysis: FullAnalysis; degraded: boolean; warning?: string }> {
   const resp = await fetch("/api/analyze-pdf", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -189,6 +190,7 @@ async function analyzeWithAI(
     error?: string;
     message?: string;
     degraded?: boolean;
+    warning?: string;
   };
   if (!data.analysis) {
     const msg =
@@ -197,13 +199,11 @@ async function analyzeWithAI(
         : (data.message ?? data.error ?? "No analysis result from API");
     throw new Error(msg);
   }
-  // Server returns 200 with partial AI data; client must not treat that as success or UI shows $0M.
-  if (data.degraded) {
-    throw new Error(
-      "AI extraction coverage was too low; using deterministic PDF heuristics instead."
-    );
-  }
-  return data.analysis;
+  return {
+    analysis: data.analysis,
+    degraded: Boolean(data.degraded),
+    warning: data.warning,
+  };
 }
 
 // ===========================================================================
@@ -1090,6 +1090,7 @@ export async function analyzePdf(
   const tAi = performance.now();
   let analysis: FullAnalysis;
   let usedAI = false;
+  let usedHybrid = false;
 
   if (!useAI) {
     onStep({
@@ -1119,16 +1120,28 @@ export async function analyzePdf(
   } else
 
   try {
-    analysis = await analyzeWithAI(fullText, file.name, pages, rawChars);
+    const aiResult = await analyzeWithAI(fullText, file.name, pages, rawChars);
+    analysis = aiResult.analysis;
     usedAI = true;
 
-    const { bs: heuristicBs } = heuristicExtract(lines);
-    const { items: mergedBs, changed: debtMerged } = mergeHeuristicDebtIfAiMissing(
-      analysis.balanceSheet.items,
-      heuristicBs
-    );
-    if (debtMerged) {
-      analysis = assembleAnalysis(mergedBs, analysis.cfItems ?? [], { ...analysis.meta });
+    const { bs: heuristicBs, cf: heuristicCf } = heuristicExtract(lines);
+    if (aiResult.degraded) {
+      usedHybrid = true;
+      const rebuilt = assembleAnalysis(heuristicBs, heuristicCf, {
+        ...analysis.meta,
+        confidence: "low",
+        extractionMethod: "pdf-ai+heuristic",
+      });
+      analysis = mergeRebuiltAnalysisWithSupplementals(analysis, rebuilt);
+    } else {
+      const { items: mergedBs, changed: debtMerged } = mergeHeuristicDebtIfAiMissing(
+        analysis.balanceSheet.items,
+        heuristicBs
+      );
+      if (debtMerged) {
+        const rebuilt = assembleAnalysis(mergedBs, analysis.cfItems ?? [], { ...analysis.meta });
+        analysis = mergeRebuiltAnalysisWithSupplementals(analysis, rebuilt);
+      }
     }
 
     const bsCount = analysis.balanceSheet.items.length;
@@ -1142,9 +1155,18 @@ export async function analyzePdf(
       step: "extract_bs",
       label: pipeLabel("extract_bs"),
       status: "done",
-      message: `AI extracted ${bsCount} BS + ${cfCount} IS/CF + ${segCount} segments + ${fnCount} footnotes + ${nrCount} adjustments`,
+      message: usedHybrid
+        ? `AI coverage low for core financials; merged heuristic BS/CF with ${segCount} segments + ${fnCount} footnotes + ${nrCount} adjustments`
+        : `AI extracted ${bsCount} BS + ${cfCount} IS/CF + ${segCount} segments + ${fnCount} footnotes + ${nrCount} adjustments`,
       durationMs: elapsed(tAi),
-      detail: { method: "5-call-parallel", balanceSheetItems: bsCount, cashFlowItems: cfCount, segments: segCount, footnotes: fnCount, nonRecurring: nrCount },
+      detail: {
+        method: usedHybrid ? "ai-partial+heuristic-financials" : "5-call-parallel",
+        balanceSheetItems: bsCount,
+        cashFlowItems: cfCount,
+        segments: segCount,
+        footnotes: fnCount,
+        nonRecurring: nrCount,
+      },
     });
   } catch (aiErr) {
     onStep({
@@ -1300,12 +1322,17 @@ export async function analyzePdf(
   const totalSegments = analysis.segments?.length ?? 0;
   const totalFootnotes = analysis.footnotes?.length ?? 0;
   const totalNonRecurring = analysis.nonRecurringItems?.length ?? 0;
+  const methodLabel = usedHybrid
+    ? "AI + heuristic"
+    : usedAI
+      ? "AI (5-call)"
+      : "Heuristic";
   onStep({
     step: "complete", label: pipeLabel("complete"), status: "done",
-    message: `${usedAI ? "AI (5-call)" : "Heuristic"} — ${totalItems} financials + ${totalSegments} segments + ${totalFootnotes} notes + ${totalNonRecurring} adjustments in ${((performance.now() - t0) / 1000).toFixed(1)}s`,
+    message: `${methodLabel} — ${totalItems} financials + ${totalSegments} segments + ${totalFootnotes} notes + ${totalNonRecurring} adjustments in ${((performance.now() - t0) / 1000).toFixed(1)}s`,
     durationMs: elapsed(t0),
     detail: {
-      method: usedAI ? "5-call parallel AI" : "Heuristic",
+      method: usedHybrid ? "AI partial + heuristic financials" : usedAI ? "5-call parallel AI" : "Heuristic",
       totalItems,
       segments: totalSegments,
       footnotes: totalFootnotes,
