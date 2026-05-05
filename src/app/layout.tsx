@@ -21,7 +21,7 @@ const merriweather = Merriweather({
 });
 
 export const metadata: Metadata = {
-  title: "Finbud Pro",
+  title: "Smithfield Strategy Hub",
   description: "Corporate food category insights, planning, and reporting workspace",
 };
 

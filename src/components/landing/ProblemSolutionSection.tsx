@@ -38,7 +38,7 @@ export function ProblemSolutionSection() {
           <ScanSearch className="h-3 w-3" aria-hidden />
           Solution
         </p>
-        <h3 className="mt-3 text-xl font-bold text-foreground sm:text-2xl">Finbud Pro dashboard turns signal into action</h3>
+        <h3 className="mt-3 text-xl font-bold text-foreground sm:text-2xl">Smithfield-style dashboard turns signal into action</h3>
         <div className="mt-4 grid gap-2 text-sm text-muted-foreground">
           <p className="inline-flex items-start gap-2">
             <BarChart3 className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />

@@ -7,7 +7,7 @@ import {
   extractPdfFinancialValue,
   type PdfFinancialMetric,
 } from "@/lib/pdfFinancialValueExtractor";
-import type { BSItem, FootnoteItem, EarningsNarrative } from "@/types/analysis";
+import type { BSItem, FootnoteItem, EarningsNarrative, FullAnalysis, NonRecurringItem } from "@/types/analysis";
 import { STRICT_PROVENANCE_EXTRACTOR_SYSTEM } from "@/lib/prompts/strictProvenanceExtractor";
 import {
   resolveRnDExpense,
@@ -1151,6 +1151,98 @@ function normalizeLikelyScaleMismatches(
   }
 }
 
+function attachSupplementalAnalysisData(
+  analysis: FullAnalysis,
+  qualExtraction: QualExtraction,
+  nonRecurringItems: NonRecurringItem[],
+  segExtraction: SegmentExtraction,
+  segInput: string
+): void {
+  if (qualExtraction.footnotes && Array.isArray(qualExtraction.footnotes)) {
+    const validTypes = new Set(["debt", "contingency", "segment", "accounting-policy", "tax", "revenue", "other"]);
+    analysis.footnotes = qualExtraction.footnotes.map((fn) => ({
+      id: fn.id || `note-${Math.random().toString(36).slice(2, 8)}`,
+      title: fn.title || "Note",
+      summary: fn.summary || "",
+      significance: (["high", "medium", "low"].includes(fn.significance) ? fn.significance : "medium") as "high" | "medium" | "low",
+      type: (validTypes.has(fn.type) ? fn.type : "other") as FootnoteItem["type"],
+    }));
+  }
+
+  if (qualExtraction.earningsNarrative) {
+    const en = qualExtraction.earningsNarrative;
+    if (en.summary || en.keyThemes?.length) {
+      analysis.earningsNarrative = {
+        result: en.result || "N/A",
+        summary: en.summary || "",
+        priorGuidance: en.priorGuidance ?? null,
+        currentGuidance: en.currentGuidance ?? null,
+        keyThemes: Array.isArray(en.keyThemes) ? en.keyThemes.slice(0, 5) : [],
+        tone: (["bullish", "neutral", "cautious", "unknown"].includes(en.tone ?? "")
+          ? en.tone
+          : "unknown") as EarningsNarrative["tone"],
+        source: "pdf-text",
+      };
+    }
+  }
+
+  if (qualExtraction.adjustedMetrics && Array.isArray(qualExtraction.adjustedMetrics)) {
+    analysis.adjustedMetrics = qualExtraction.adjustedMetrics;
+  }
+
+  if (nonRecurringItems.length > 0) {
+    analysis.nonRecurringItems = nonRecurringItems;
+  }
+
+  const aiSegments: NonNullable<SegmentExtraction["segments"]> =
+    segExtraction.segments && Array.isArray(segExtraction.segments)
+      ? segExtraction.segments
+      : [];
+  const aiHasBusinessSegments = aiSegments.some((s) => s.segmentType === "business");
+  const needsHeuristicFallback = aiSegments.length === 0 || !aiHasBusinessSegments;
+  const fallbackSegments = needsHeuristicFallback ? extractSegmentsHeuristic(segInput) : [];
+  const segmentsToUse =
+    aiHasBusinessSegments
+      ? aiSegments
+      : fallbackSegments.length > 0
+        ? fallbackSegments
+        : aiSegments;
+
+  if (segmentsToUse.length > 0) {
+    const validVolumeTypes = new Set(["head", "cwt", "lbs", "cases"]);
+    analysis.segments = segmentsToUse.map((seg) => {
+      const revenue = seg.revenue != null ? Math.round(Number(seg.revenue)) : null;
+      const operatingIncome = seg.operatingIncome != null ? Math.round(Number(seg.operatingIncome)) : null;
+      const opMargin = revenue && operatingIncome ? Math.round((operatingIncome / revenue) * 1000) / 10 : null;
+      const volType = seg.volumeUnitType && validVolumeTypes.has(seg.volumeUnitType) ? seg.volumeUnitType : null;
+      const volUnits = seg.volumeUnits != null ? Number(seg.volumeUnits) : null;
+      const revPerUnit = volUnits && volUnits > 0 && revenue ? Math.round((revenue / volUnits) * 100) / 100 : null;
+      const opPerUnit = volUnits && volUnits > 0 && operatingIncome ? Math.round((operatingIncome / volUnits) * 100) / 100 : null;
+
+      return {
+        segmentName: seg.segmentName || "Unknown Segment",
+        segmentType: (seg.segmentType === "business" || seg.segmentType === "channel" || seg.segmentType === "geography") ? seg.segmentType : "business" as const,
+        revenue,
+        costOfRevenue: null,
+        grossProfit: null,
+        sgaExpense: null,
+        operatingIncome,
+        operatingMargin: opMargin,
+        depreciation: seg.depreciation != null ? Math.round(Number(seg.depreciation)) : null,
+        capitalExpenditures: seg.capitalExpenditures != null ? Math.round(Number(seg.capitalExpenditures)) : null,
+        totalAssets: seg.totalAssets != null ? Math.round(Number(seg.totalAssets)) : null,
+        intercompanyEliminations: null,
+        volumeUnits: volUnits,
+        volumeUnitType: volType as import("@/types/segments").VolumeUnitType | null,
+        revenuePerUnit: revPerUnit,
+        operatingIncomePerUnit: opPerUnit,
+      };
+    });
+    if (needsHeuristicFallback && fallbackSegments.length > 0) {
+      warnLog("[analyze-pdf] Segment heuristic fallback used:", fallbackSegments.map((s) => s.segmentName));
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // POST handler ├â┬ó├óΓÇÜ┬¼├óΓé¼┬¥ 3 parallel AI calls
@@ -1709,6 +1801,13 @@ export async function POST(request: Request) {
           ...dividendNoteRepairs,
         ];
       }
+      attachSupplementalAnalysisData(
+        degradedAnalysis,
+        qualExtraction,
+        nonRecurringItems,
+        segExtraction,
+        segInput
+      );
 
       warnLog("[analyze-pdf] Degraded extraction mode:", reasons);
 
@@ -1743,96 +1842,13 @@ export async function POST(request: Request) {
       analysis.cashFlow.shareRepurchases
     );
 
-    // Attach qualitative data
-    if (qualExtraction.footnotes && Array.isArray(qualExtraction.footnotes)) {
-      const validTypes = new Set(["debt", "contingency", "segment", "accounting-policy", "tax", "revenue", "other"]);
-      analysis.footnotes = qualExtraction.footnotes.map((fn) => ({
-        id: fn.id || `note-${Math.random().toString(36).slice(2, 8)}`,
-        title: fn.title || "Note",
-        summary: fn.summary || "",
-        significance: (["high", "medium", "low"].includes(fn.significance) ? fn.significance : "medium") as "high" | "medium" | "low",
-        type: (validTypes.has(fn.type) ? fn.type : "other") as FootnoteItem["type"],
-      }));
-    }
-
-    if (qualExtraction.earningsNarrative) {
-      const en = qualExtraction.earningsNarrative;
-      if (en.summary || en.keyThemes?.length) {
-        analysis.earningsNarrative = {
-          result: en.result || "N/A",
-          summary: en.summary || "",
-          priorGuidance: en.priorGuidance ?? null,
-          currentGuidance: en.currentGuidance ?? null,
-          keyThemes: Array.isArray(en.keyThemes) ? en.keyThemes.slice(0, 5) : [],
-          tone: (["bullish", "neutral", "cautious", "unknown"].includes(en.tone ?? "")
-            ? en.tone
-            : "unknown") as EarningsNarrative["tone"],
-          source: "pdf-text",
-        };
-      }
-    }
-
-    if (qualExtraction.adjustedMetrics && Array.isArray(qualExtraction.adjustedMetrics)) {
-      analysis.adjustedMetrics = qualExtraction.adjustedMetrics;
-    }
-
-    // Attach non-recurring items
-    if (nonRecurringItems.length > 0) {
-      analysis.nonRecurringItems = nonRecurringItems;
-    }
-
-    // Attach segments (AI first, deterministic heuristic fallback).
-    // The heuristic also runs when AI only found channel/geography segments but no
-    // business segments — this handles cases where the AI latches onto the channel
-    // disaggregation table (Retail/Foodservice rows) rather than the segment P&L table.
-    const aiSegments: NonNullable<SegmentExtraction["segments"]> =
-      segExtraction.segments && Array.isArray(segExtraction.segments)
-        ? segExtraction.segments
-        : [];
-    const aiHasBusinessSegments = aiSegments.some((s) => s.segmentType === "business");
-    const needsHeuristicFallback = aiSegments.length === 0 || !aiHasBusinessSegments;
-    const fallbackSegments = needsHeuristicFallback ? extractSegmentsHeuristic(segInput) : [];
-    // Prefer AI business segments; fall back to heuristic; last resort: whatever AI returned.
-    const segmentsToUse =
-      aiHasBusinessSegments
-        ? aiSegments
-        : fallbackSegments.length > 0
-          ? fallbackSegments
-          : aiSegments;
-    if (segmentsToUse.length > 0) {
-      const validVolumeTypes = new Set(["head", "cwt", "lbs", "cases"]);
-      analysis.segments = segmentsToUse.map((seg) => {
-        const revenue = seg.revenue != null ? Math.round(Number(seg.revenue)) : null;
-        const operatingIncome = seg.operatingIncome != null ? Math.round(Number(seg.operatingIncome)) : null;
-        const opMargin = revenue && operatingIncome ? Math.round((operatingIncome / revenue) * 1000) / 10 : null;
-        const volType = seg.volumeUnitType && validVolumeTypes.has(seg.volumeUnitType) ? seg.volumeUnitType : null;
-        const volUnits = seg.volumeUnits != null ? Number(seg.volumeUnits) : null;
-        const revPerUnit = volUnits && volUnits > 0 && revenue ? Math.round((revenue / volUnits) * 100) / 100 : null;
-        const opPerUnit = volUnits && volUnits > 0 && operatingIncome ? Math.round((operatingIncome / volUnits) * 100) / 100 : null;
-
-        return {
-          segmentName: seg.segmentName || "Unknown Segment",
-          segmentType: (seg.segmentType === "business" || seg.segmentType === "channel" || seg.segmentType === "geography") ? seg.segmentType : "business" as const,
-          revenue,
-          costOfRevenue: null,
-          grossProfit: null,
-          sgaExpense: null,
-          operatingIncome,
-          operatingMargin: opMargin,
-          depreciation: seg.depreciation != null ? Math.round(Number(seg.depreciation)) : null,
-          capitalExpenditures: seg.capitalExpenditures != null ? Math.round(Number(seg.capitalExpenditures)) : null,
-          totalAssets: seg.totalAssets != null ? Math.round(Number(seg.totalAssets)) : null,
-          intercompanyEliminations: null,
-          volumeUnits: volUnits,
-          volumeUnitType: volType as import("@/types/segments").VolumeUnitType | null,
-          revenuePerUnit: revPerUnit,
-          operatingIncomePerUnit: opPerUnit,
-        };
-      });
-      if (needsHeuristicFallback && fallbackSegments.length > 0) {
-        warnLog("[analyze-pdf] Segment heuristic fallback used:", fallbackSegments.map((s) => s.segmentName));
-      }
-    }
+    attachSupplementalAnalysisData(
+      analysis,
+      qualExtraction,
+      nonRecurringItems,
+      segExtraction,
+      segInput
+    );
 
     return NextResponse.json({ analysis });
   } catch (e) {

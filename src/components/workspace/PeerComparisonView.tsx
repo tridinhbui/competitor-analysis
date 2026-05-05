@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, PanelLeftClose, PanelLeftOpen, Plus, Search, TrendingUp, UploadCloud, X, Trash2 } from "lucide-react";
+import { Loader2, PanelLeftClose, PanelLeftOpen, Search, TrendingUp, UploadCloud, X, Trash2 } from "lucide-react";
 import type { CompanyComparisonPayload } from "@/lib/companyComparison";
 import { ComparisonReportContent, buildComparisonExportHref } from "@/components/workspace/ComparisonReportContent";
 import { analyzePdf } from "@/lib/pdfAnalysis";
@@ -30,7 +30,7 @@ interface SetupCompanySlot {
   newName: string;
 }
 
-const MAX_COMPANIES = 7;
+const MAX_COMPARISON_COMPANIES = 2;
 const NEW_COMPANY_VALUE = "__NEW_COMPANY__";
 
 function slugTickerFromName(name: string): string {
@@ -122,7 +122,7 @@ export function PeerComparisonView({
   const [comparing, setComparing] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<CompanyComparisonPayload | null>(null);
-  const [setupCompanyCount, setSetupCompanyCount] = useState(2);
+  const setupCompanyCount = MAX_COMPARISON_COMPANIES;
   const currentYear = new Date().getFullYear();
   const minStartYear = 2020;
   const [setupStartYear, setSetupStartYear] = useState(Math.max(currentYear - 1, minStartYear));
@@ -216,7 +216,25 @@ export function PeerComparisonView({
     });
   }, [options, setupCompanyCount]);
 
-  const canAdd = selectedTickers.length < MAX_COMPANIES;
+  useEffect(() => {
+    setSelectedTickers((current) => {
+      const available = options.map((option) => option.ticker);
+      const targetCount = Math.min(MAX_COMPARISON_COMPANIES, available.length);
+      const next = uniqueTickers(current).filter((ticker) => available.includes(ticker));
+
+      for (const ticker of available) {
+        if (next.length >= targetCount) break;
+        if (!next.includes(ticker)) next.push(ticker);
+      }
+
+      if (next.length === current.length && next.every((ticker, index) => ticker === current[index])) {
+        return current;
+      }
+
+      return next.slice(0, targetCount);
+    });
+  }, [options]);
+
   const hasDuplicateSelection = new Set(selectedTickers).size !== selectedTickers.length;
   const yearCount = setupEndYear - setupStartYear + 1;
   const resolvedSetupCompanies = useMemo(() => {
@@ -255,10 +273,6 @@ export function PeerComparisonView({
     });
   }, []);
 
-  const removeRow = useCallback((index: number) => {
-    setSelectedTickers((rows) => rows.filter((_, i) => i !== index));
-  }, []);
-
   const updateSetupCompany = useCallback((index: number, update: Partial<SetupCompanySlot>) => {
     setSetupCompanies((rows) => {
       const next = [...rows];
@@ -271,21 +285,6 @@ export function PeerComparisonView({
       return next;
     });
   }, []);
-
-  const addRow = useCallback(() => {
-    setSelectedTickers((rows) => {
-      if (rows.length >= MAX_COMPANIES) return rows;
-      const used = new Set(rows);
-      const pick = options.find((o) => !used.has(o.ticker))?.ticker;
-      if (!pick) {
-        setSetupCompanyCount(Math.min(MAX_COMPANIES, rows.length + 1));
-        setMode("setup");
-        setError("No additional companies on file. Add more companies in setup, then build comparison.");
-        return rows;
-      }
-      return [...rows, pick];
-    });
-  }, [options]);
 
   const addFiles = useCallback((incoming: FileList | File[]) => {
     const next = Array.from(incoming).filter((file) => file.type === "application/pdf");
@@ -416,7 +415,7 @@ export function PeerComparisonView({
   })();
   const step4RevenueMax = Math.max(...step4RevenueBars.map((point) => point.value), 1);
 
-  const ingestAnalyses = useCallback(async (analyses: ParsedEntry[], companyCount = setupCompanyCount) => {
+  const ingestAnalyses = useCallback(async (analyses: ParsedEntry[]) => {
     if (analyses.length === 0) {
       throw new Error("Upload at least one PDF filing to continue");
     }
@@ -454,7 +453,7 @@ export function PeerComparisonView({
     }
 
     await loadOptions();
-    const topTickers = rankParsedTickers(analyses, Math.max(2, Math.min(MAX_COMPANIES, companyCount)));
+    const topTickers = rankParsedTickers(analyses, MAX_COMPARISON_COMPANIES);
     if (topTickers.length > 0) {
       setSelectedTickers(topTickers);
     }
@@ -567,7 +566,7 @@ export function PeerComparisonView({
     } finally {
       setGuidanceLoading(false);
     }
-    setSelectedTickers(activeCompanies.map((company) => company.ticker).slice(0, MAX_COMPANIES));
+    setSelectedTickers(activeCompanies.map((company) => company.ticker).slice(0, MAX_COMPARISON_COMPANIES));
     setMode("analysis");
   }, [loadOptions, onRegistryChanged, options, resolvedSetupCompanies, setupEndYear, setupStartYear]);
 
@@ -1023,23 +1022,15 @@ export function PeerComparisonView({
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">Setup</p>
               <h4 className="mt-2 text-lg font-bold text-slate-900">Drop filings to start the comparison</h4>
-              <p className="mt-1 text-sm text-slate-500">Pick the size first, then upload the PDF quarters.</p>
+              <p className="mt-1 text-sm text-slate-500">Upload the quarterly PDFs for the two companies you want to compare.</p>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-3">
               <div>
-                <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Companies</label>
-                <select
-                  value={setupCompanyCount}
-                  onChange={(event) => setSetupCompanyCount(Number(event.target.value))}
-                  className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
-                >
-                  {[2, 3, 4, 5, 6, 7].map((count) => (
-                    <option key={count} value={count}>
-                      {count} companies
-                    </option>
-                  ))}
-                </select>
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Comparison size</label>
+                <div className="flex h-10 w-full items-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900">
+                  2 companies
+                </div>
               </div>
 
               <div>
@@ -1158,11 +1149,11 @@ export function PeerComparisonView({
         ) : (
           <>
             <p className="mb-3 text-xs text-slate-500">
-              Compare up to {MAX_COMPANIES} companies. <span className="text-slate-400">Company 1 is the margin benchmark.</span>
+              Compare 2 companies side by side. <span className="text-slate-400">Company 1 is the margin benchmark.</span>
             </p>
 
             <div className="grid gap-2 sm:grid-cols-2">
-              {selectedTickers.map((ticker, index) => (
+              {selectedTickers.slice(0, MAX_COMPARISON_COMPANIES).map((ticker, index) => (
                 <div key={`${index}-${ticker}`} className="flex items-center gap-2">
                   <div className="min-w-0 flex-1">
                     <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">
@@ -1180,35 +1171,11 @@ export function PeerComparisonView({
                       ))}
                     </select>
                   </div>
-                  {selectedTickers.length > 2 ? (
-                    <button
-                      type="button"
-                      onClick={() => removeRow(index)}
-                      className="mt-5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
-                      aria-label={`Remove company ${index + 1}`}
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  ) : null}
                 </div>
               ))}
             </div>
 
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={addRow}
-                  disabled={!canAdd}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Add company
-                </button>
-                <span className="text-xs text-slate-400">
-                  {selectedTickers.length}/{MAX_COMPANIES}
-                </span>
-              </div>
+            <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
               <button
                 type="button"
                 onClick={compare}

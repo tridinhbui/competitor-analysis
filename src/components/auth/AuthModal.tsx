@@ -75,7 +75,7 @@ export function AuthModal({ onClose }: AuthModalProps) {
         </div>
 
         <h2 className="pr-8 text-lg font-semibold tracking-tight text-slate-900">
-          {mode === "signin" ? "Sign in to Finbud Pro" : "Create one"}
+          {mode === "signin" ? "Sign in to Smithfield Strategy" : "Create one"}
         </h2>
         <p className="mt-1.5 text-sm text-slate-500">
           {mode === "signin"

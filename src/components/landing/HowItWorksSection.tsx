@@ -57,7 +57,7 @@ export function HowItWorksSection() {
         <div className="mt-8 text-center">
           <Link
             href="/analyze"
-            className="inline-flex rounded-full border border-border bg-white px-5 py-2 text-xs font-semibold text-foreground shadow-subtle transition hover:border-[#d2d5d8] hover:bg-secondary"
+            className="inline-flex rounded-full border border-[#e7c7b7] bg-white px-5 py-2 text-xs font-semibold text-[#8c3a15] shadow-subtle transition hover:border-[#cc521d]/35 hover:bg-[#fff6f1]"
           >
             Open Quick Analyze workspace
           </Link>

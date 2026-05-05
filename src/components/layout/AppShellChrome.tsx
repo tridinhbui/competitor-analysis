@@ -72,7 +72,7 @@ export function AppShellChrome() {
       <nav className="sticky top-0 z-40 border-b border-border/90 bg-white/90 px-4 py-2.5 text-xs font-semibold backdrop-blur-md sm:px-6">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <Link href={brandHref} className="inline-flex items-center transition hover:opacity-90" aria-label="Finbud Pro home">
+            <Link href={brandHref} className="inline-flex items-center transition hover:opacity-90" aria-label="Smithfield Strategy home">
               <FinbudProLogo variant="nav" />
             </Link>
             {showAppNav && (
@@ -166,7 +166,7 @@ export function AppShellChrome() {
                 <button
                   type="button"
                   onClick={() => setAuthOpen(true)}
-                  className="inline-flex items-center gap-1 rounded-full border border-border bg-white px-2.5 py-1 text-[11px] font-semibold text-muted-foreground transition hover:text-primary"
+                  className="inline-flex items-center gap-1 rounded-full border border-[#e7c7b7] bg-white px-2.5 py-1 text-[11px] font-semibold text-muted-foreground transition hover:border-[#cc521d]/35 hover:text-[#cc521d]"
                 >
                   <LogIn className="h-3 w-3" aria-hidden />
                   Sign in
@@ -213,7 +213,7 @@ export function AppShellChrome() {
                     setMobileOpen(false);
                     setAuthOpen(true);
                   }}
-                  className="mt-1 inline-flex w-full items-center justify-center gap-1 rounded-lg border border-border bg-white px-3 py-2 text-xs font-semibold text-muted-foreground transition hover:bg-secondary hover:text-primary"
+                  className="mt-1 inline-flex w-full items-center justify-center gap-1 rounded-lg border border-[#e7c7b7] bg-white px-3 py-2 text-xs font-semibold text-muted-foreground transition hover:bg-[#fff6f1] hover:text-[#cc521d]"
                 >
                   <LogIn className="h-3.5 w-3.5" aria-hidden />
                   Sign in

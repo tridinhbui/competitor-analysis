@@ -29,9 +29,9 @@ export function FinbudProLogo({
       )}
     >
       <Image
-        src="/finbud-pro-logo.png"
-        alt="Finbud Pro"
-        title="Finbud Pro"
+        src="/smithfield-corporate-logo.png"
+        alt="Smithfield"
+        title="Smithfield"
         fill
         className={cn("object-contain", isNav ? "object-left" : "object-center")}
         sizes={isNav ? "(max-width: 640px) 148px, 172px" : "200px"}

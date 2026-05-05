@@ -19,7 +19,7 @@ export function LandingHero({ onTryDemo }: LandingHeroProps) {
           className="inline-flex items-center gap-2 rounded-full border border-border bg-white px-3 py-1 text-[11px] font-semibold text-muted-foreground shadow-subtle backdrop-blur-sm"
         >
           <Sparkles className="h-3.5 w-3.5 text-primary" aria-hidden />
-          Finbud Pro · Category intelligence platform
+          Smithfield Foods | Category intelligence platform
         </motion.div>
         <motion.h1
           initial={{ opacity: 0, y: 10 }}
@@ -46,7 +46,7 @@ export function LandingHero({ onTryDemo }: LandingHeroProps) {
         >
           <Link
             href="/analyze"
-            className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-primary px-7 text-sm font-semibold text-white shadow-elevation transition hover:bg-primary/90 focus-visible:ring-4 focus-visible:ring-primary/25 focus-visible:outline-none"
+            className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-[#cc521d] px-7 text-sm font-semibold text-white shadow-elevation transition hover:bg-[#b7491a] focus-visible:ring-4 focus-visible:ring-[#cc521d]/25 focus-visible:outline-none"
           >
             Open strategy workspace
             <ArrowRight className="h-4 w-4" aria-hidden />
@@ -54,7 +54,7 @@ export function LandingHero({ onTryDemo }: LandingHeroProps) {
           <button
             type="button"
             onClick={onTryDemo}
-            className="inline-flex h-12 items-center justify-center gap-2 rounded-full border border-border bg-white px-7 text-sm font-semibold text-foreground shadow-subtle transition hover:border-[#d2d5d8] hover:bg-secondary focus-visible:ring-4 focus-visible:ring-border"
+            className="inline-flex h-12 items-center justify-center gap-2 rounded-full border border-[#e7c7b7] bg-white px-7 text-sm font-semibold text-foreground shadow-subtle transition hover:border-[#cc521d]/35 hover:bg-[#fff6f1] focus-visible:ring-4 focus-visible:ring-[#cc521d]/15"
           >
             <Play className="h-4 w-4 text-primary" aria-hidden />
             Watch brand flow
@@ -111,7 +111,7 @@ export function LandingHero({ onTryDemo }: LandingHeroProps) {
           </div>
           <div className="mt-3 h-2 overflow-hidden rounded-full bg-border/80">
             <motion.div
-              className="h-full rounded-full bg-gradient-to-r from-primary via-[#de6b36] to-[#f39a6d]"
+              className="h-full rounded-full bg-gradient-to-r from-[#cc521d] via-[#de6b36] to-[#f39a6d]"
               initial={{ width: "20%" }}
               animate={{ width: ["20%", "75%", "92%"] }}
               transition={{ duration: 4.2, repeat: Infinity, ease: "easeInOut" }}

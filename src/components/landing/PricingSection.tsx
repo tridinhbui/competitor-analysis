@@ -72,7 +72,7 @@ export function PricingSection() {
             Plans for filing-heavy workflows
           </h2>
           <p className="mx-auto mt-3 max-w-xl text-sm text-muted-foreground sm:text-base">
-            Transparent tiers for analysts and desks. Toggle billing—numbers are illustrative until checkout goes live.
+            Transparent tiers for analysts and desks. Toggle billing - numbers are illustrative until checkout goes live.
           </p>
           <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-[11px] text-muted-foreground">
             <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-700">
@@ -136,7 +136,7 @@ export function PricingSection() {
                 <div
                   className={cn(
                     "absolute -top-3 left-1/2 -translate-x-1/2 rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-white shadow-subtle",
-                    plan.highlight ? "bg-primary" : "bg-foreground"
+                    plan.highlight ? "bg-[#cc521d]" : "bg-[#5f3221]"
                   )}
                 >
                   {plan.badge}
@@ -171,8 +171,8 @@ export function PricingSection() {
                 className={cn(
                   "mt-8 inline-flex h-11 w-full items-center justify-center rounded-2xl text-sm font-semibold transition focus-visible:ring-4 focus-visible:outline-none",
                   plan.highlight
-                    ? "bg-primary text-white shadow-elevation hover:bg-primary/90 focus-visible:ring-primary/30"
-                    : "border border-border bg-secondary text-foreground hover:bg-white focus-visible:ring-border"
+                    ? "bg-[#cc521d] text-white shadow-elevation hover:bg-[#b7491a] focus-visible:ring-[#cc521d]/30"
+                    : "border border-[#e7c7b7] bg-[#fff6f1] text-[#8c3a15] hover:bg-white focus-visible:ring-[#cc521d]/15"
                 )}
               >
                 {plan.cta}
