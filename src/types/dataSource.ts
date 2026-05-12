@@ -13,6 +13,8 @@ export interface DataSourceRow {
   companyName: string;
   periodEnd: string;
   quarterLabel: string;
+  /** When the filing was saved (ISO timestamp). TTM rows borrow latest quarter's value. */
+  savedAt?: string | null;
   // -- Income / P&L --
   revenue: number | null;
   grossProfit: number | null;

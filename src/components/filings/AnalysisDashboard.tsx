@@ -2718,11 +2718,11 @@ function InsightsTab({
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {piotroski.signals.map((s, i) => (
             <div key={i} className={cn("flex items-start gap-2 rounded-lg border p-2.5",
-              s.pass === true ? "border-slate-200 bg-white" :
+              s.pass === true ? "border-emerald-200 bg-emerald-50/40" :
               s.pass === false ? "border-slate-200 bg-slate-50" :
               "border-slate-200 bg-slate-50/50"
             )}>
-              {s.pass === true ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" /> :
+              {s.pass === true ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" /> :
                s.pass === false ? <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" /> :
                <Minus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />}
               <div>

@@ -6,6 +6,13 @@ import type { DataSourceRow } from "@/types/dataSource";
 import type { Filing } from "@/types/competitor";
 import type { FullAnalysis } from "@/types/analysis";
 import { applyDataSourceOverridesToAnalysis } from "@/lib/dataSourceOverrides";
+import type {
+  DataSourceEditLogEntry,
+  DataSourceWorkbookCellPayload,
+  DataSourceWorkbookCellState,
+  DataSourceWorkbookTickerState,
+} from "@/types/dataSourceWorkbook";
+import { groupWorkbookCellsByTicker, normalizeCellState } from "@/lib/dataSourceWorkbook";
 
 export const runtime = "nodejs";
 
@@ -13,7 +20,7 @@ export const runtime = "nodejs";
 export async function GET() {
   const { data: filings, error } = await supabase
     .from("filings")
-    .select("id, ticker, period_end, fiscal_year, fiscal_quarter, quarter_label, source, analysis")
+    .select("id, ticker, period_end, fiscal_year, fiscal_quarter, quarter_label, source, analysis, saved_at")
     .order("ticker")
     .order("period_end", { ascending: false });
 
@@ -37,14 +44,41 @@ export async function GET() {
     .select("ticker, data");
 
   const overrideMap = new Map<string, Record<string, Record<string, number | null>>>();
+  const workbookStateMap = new Map<string, DataSourceWorkbookTickerState>();
+  const editLog: DataSourceEditLogEntry[] = [];
   for (const adj of adjustments ?? []) {
-    const d = adj.data as { dataSourceOverrides?: Record<string, Record<string, number | null>> };
+    const d = adj.data as {
+      dataSourceOverrides?: Record<string, Record<string, number | null>>;
+      dataSourceWorkbook?: DataSourceWorkbookTickerState;
+      dataSourceEditLog?: DataSourceEditLogEntry[];
+    };
     if (d?.dataSourceOverrides) {
       overrideMap.set(adj.ticker, d.dataSourceOverrides);
     }
+    if (d?.dataSourceWorkbook) {
+      workbookStateMap.set(adj.ticker, d.dataSourceWorkbook);
+    }
+    if (Array.isArray(d?.dataSourceEditLog)) {
+      for (const entry of d.dataSourceEditLog) {
+        if (
+          entry &&
+          typeof entry === "object" &&
+          typeof entry.at === "string" &&
+          typeof entry.field === "string" &&
+          typeof entry.periodEnd === "string"
+        ) {
+          editLog.push({
+            ...entry,
+            ticker: entry.ticker ?? adj.ticker,
+          });
+        }
+      }
+    }
   }
+  editLog.sort((a, b) => b.at.localeCompare(a.at));
 
   const rows: DataSourceRow[] = [];
+  const workbookCells: Record<string, Record<string, DataSourceWorkbookCellState>> = {};
 
   for (const f of filings ?? []) {
     const analysis = f.analysis as FullAnalysis;
@@ -148,6 +182,7 @@ export async function GET() {
       companyName: displayName,
       periodEnd: f.period_end,
       quarterLabel: m.quarterLabel,
+      savedAt: typeof f.saved_at === "string" ? f.saved_at : null,
       revenue: rawRevenue,
       grossProfit: overrides.grossProfit ?? m.grossProfit,
       operatingIncome: rawOp,
@@ -197,6 +232,22 @@ export async function GET() {
     };
 
     rows.push(row);
+
+    const workbookPeriodState = workbookStateMap.get(f.ticker)?.[f.period_end];
+    if (workbookPeriodState) {
+      const normalizedFields = Object.entries(workbookPeriodState).reduce<Record<string, DataSourceWorkbookCellState>>(
+        (acc, [field, state]) => {
+          const normalized = normalizeCellState(state);
+          if (normalized) acc[field] = normalized;
+          return acc;
+        },
+        {},
+      );
+
+      if (Object.keys(normalizedFields).length > 0) {
+        workbookCells[f.id] = normalizedFields;
+      }
+    }
   }
 
   // ── Compute TTM rows: sum last 4 quarters per ticker for flow metrics
@@ -240,6 +291,7 @@ export async function GET() {
       companyName: latest.companyName,
       periodEnd: "TTM",
       quarterLabel: `TTM (${last4[0].quarterLabel}–${last4[3].quarterLabel})`,
+      savedAt: latest.savedAt ?? null,
       revenue: rev,
       grossProfit: gp,
       operatingIncome: op,
@@ -287,25 +339,47 @@ export async function GET() {
     });
   }
 
-  return NextResponse.json({ rows: [...rows, ...ttmRows], updatedAt: new Date().toISOString() });
+  return NextResponse.json({
+    rows: [...rows, ...ttmRows],
+    workbookCells,
+    editLog,
+    updatedAt: new Date().toISOString(),
+  });
 }
 
 /** PATCH /api/data-source — save cell overrides */
 export async function PATCH(req: NextRequest) {
-  const body = await req.json() as { edits: Array<{ id: string; ticker: string; periodEnd: string; field: string; value: number | null }> };
+  const body = await req.json() as {
+    edits: Array<{ id: string; ticker: string; periodEnd: string; field: string; value: number | null }>;
+    workbookCells?: DataSourceWorkbookCellPayload[];
+    workbookTickers?: string[];
+  };
+  const editsPayload = body.edits ?? [];
 
-  if (!body.edits?.length) {
-    return NextResponse.json({ error: "No edits provided" }, { status: 400 });
+  if (!editsPayload.length && !body.workbookCells?.length) {
+    return NextResponse.json({ error: "No workbook changes provided" }, { status: 400 });
   }
 
   // Group edits by ticker
   const byTicker = new Map<string, Array<{ periodEnd: string; field: string; value: number | null }>>();
-  for (const edit of body.edits) {
+  for (const edit of editsPayload) {
     if (!byTicker.has(edit.ticker)) byTicker.set(edit.ticker, []);
     byTicker.get(edit.ticker)!.push(edit);
   }
 
-  for (const [ticker, edits] of byTicker) {
+  const workbookCellsByTicker = groupWorkbookCellsByTicker(body.workbookCells ?? []);
+  const workbookTickers = new Set(
+    (body.workbookTickers ?? []).map((ticker) => ticker.toUpperCase()).filter((ticker) => ticker.length > 0),
+  );
+  for (const ticker of Object.keys(workbookCellsByTicker)) {
+    workbookTickers.add(ticker.toUpperCase());
+  }
+  for (const ticker of byTicker.keys()) {
+    workbookTickers.add(ticker.toUpperCase());
+  }
+
+  for (const ticker of workbookTickers) {
+    const edits = byTicker.get(ticker) ?? [];
     // Load existing adjustments
     const { data } = await supabase
       .from("adjustments")
@@ -315,13 +389,40 @@ export async function PATCH(req: NextRequest) {
 
     const existing = (data?.data ?? { ticker, insights: [], cells: [], footnotes: [], blocks: [], updatedAt: "" }) as Record<string, unknown>;
     const overrides = (existing.dataSourceOverrides ?? {}) as Record<string, Record<string, number | null>>;
+    const tickerLog = Array.isArray(existing.dataSourceEditLog)
+      ? ((existing.dataSourceEditLog as unknown[]).filter(
+          (entry): entry is DataSourceEditLogEntry =>
+            !!entry && typeof entry === "object" && "at" in entry && "field" in entry,
+        ))
+      : [];
+    const now = new Date().toISOString();
 
     for (const edit of edits) {
       if (!overrides[edit.periodEnd]) overrides[edit.periodEnd] = {};
+      const prev = overrides[edit.periodEnd][edit.field] ?? null;
+      if (prev !== edit.value) {
+        tickerLog.push({
+          at: now,
+          ticker,
+          periodEnd: edit.periodEnd,
+          field: edit.field,
+          prevValue: prev,
+          nextValue: edit.value,
+          kind: "value",
+        });
+      }
       overrides[edit.periodEnd][edit.field] = edit.value;
     }
 
     existing.dataSourceOverrides = overrides;
+    // Cap log at 500 most recent entries to bound JSONB row size.
+    existing.dataSourceEditLog = tickerLog.slice(-500);
+    const tickerWorkbookState = workbookCellsByTicker[ticker];
+    if (tickerWorkbookState && Object.keys(tickerWorkbookState).length > 0) {
+      existing.dataSourceWorkbook = tickerWorkbookState;
+    } else {
+      delete existing.dataSourceWorkbook;
+    }
     existing.updatedAt = new Date().toISOString();
 
     await supabase
@@ -331,7 +432,7 @@ export async function PATCH(req: NextRequest) {
 
   const filingIds = [
     ...new Set(
-      body.edits
+      editsPayload
         .map((e) => e.id)
         .filter((id) => typeof id === "string" && id.length > 0 && !id.endsWith("_TTM")),
     ),
