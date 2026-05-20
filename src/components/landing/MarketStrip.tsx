@@ -9,18 +9,17 @@ export interface MockTicker {
   symbol: string;
   price: string;
   changePct: number;
-  /** Normalized 0-1 sparkline points */
   spark: number[];
   accent?: TickerAccent;
 }
 
 export const DEMO_TICKERS: MockTicker[] = [
-  { symbol: "PORK", price: "102.4", changePct: 0.46, spark: [0.45, 0.52, 0.48, 0.61, 0.55, 0.68, 0.72, 0.65, 0.78, 0.82] },
-  { symbol: "BACON", price: "86.3", changePct: -0.21, spark: [0.82, 0.78, 0.8, 0.74, 0.76, 0.71, 0.73, 0.69, 0.72, 0.68] },
-  { symbol: "DELI", price: "74.8", changePct: 1.12, spark: [0.5, 0.48, 0.52, 0.49, 0.55, 0.53, 0.58, 0.61, 0.59, 0.64], accent: "blue" },
-  { symbol: "HOTDOG", price: "61.9", changePct: 0.33, spark: [0.62, 0.64, 0.61, 0.66, 0.63, 0.67, 0.7, 0.68, 0.72, 0.75] },
-  { symbol: "HAM", price: "88.1", changePct: -0.54, spark: [0.7, 0.72, 0.69, 0.71, 0.68, 0.65, 0.67, 0.64, 0.66, 0.63] },
-  { symbol: "PROTEIN", price: "119.7", changePct: 0.18, spark: [0.55, 0.56, 0.54, 0.57, 0.56, 0.58, 0.57, 0.59, 0.6, 0.58], accent: "blue" },
+  { symbol: "TSN", price: "61.2", changePct: 1.24, spark: [0.45, 0.48, 0.46, 0.54, 0.59, 0.63, 0.62, 0.68, 0.74, 0.8] },
+  { symbol: "HRL", price: "31.8", changePct: -0.42, spark: [0.82, 0.79, 0.8, 0.74, 0.71, 0.69, 0.66, 0.63, 0.61, 0.59] },
+  { symbol: "PPC", price: "44.7", changePct: 0.96, spark: [0.5, 0.52, 0.51, 0.55, 0.56, 0.6, 0.64, 0.63, 0.67, 0.72], accent: "blue" },
+  { symbol: "CAG", price: "29.4", changePct: 0.18, spark: [0.62, 0.61, 0.63, 0.64, 0.63, 0.65, 0.67, 0.68, 0.69, 0.7] },
+  { symbol: "KHC", price: "36.6", changePct: -0.37, spark: [0.7, 0.72, 0.69, 0.67, 0.66, 0.65, 0.64, 0.62, 0.6, 0.58] },
+  { symbol: "GIS", price: "70.1", changePct: 0.44, spark: [0.55, 0.54, 0.56, 0.58, 0.57, 0.6, 0.61, 0.63, 0.64, 0.66], accent: "blue" },
 ];
 
 function getTickerAccentClasses(ticker: MockTicker) {
@@ -80,14 +79,14 @@ export function MarketStrip() {
     <div
       className="relative w-full overflow-hidden border-b border-border bg-white/60 backdrop-blur-md"
       role="region"
-      aria-label="Simulated category indicators for demonstration"
+      aria-label="Simulated investor relations and peer signals for demonstration"
     >
       <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-8 bg-gradient-to-r from-white/95 to-transparent" />
       <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-white/95 to-transparent" />
       <div className="flex items-center gap-3 px-3 py-2.5 sm:px-5">
         <div className="flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-white px-2.5 py-1 shadow-subtle">
           <Activity className="h-3.5 w-3.5 text-primary" aria-hidden />
-          <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">Category pulse</span>
+          <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">Peer tape</span>
         </div>
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {DEMO_TICKERS.map((ticker) => {
@@ -111,7 +110,7 @@ export function MarketStrip() {
           })}
         </div>
       </div>
-      <p className="sr-only">Figures shown are illustrative only and do not reflect live data.</p>
+      <p className="sr-only">Figures shown are illustrative only and do not reflect live market data.</p>
     </div>
   );
 }

@@ -11,7 +11,9 @@ import type {
   MetricFormat,
   MultiComparisonRow,
 } from "@/lib/companyComparison";
+import { buildCompetitorEarningsReleasePayload } from "@/lib/competitorEarningsRelease";
 import { fetchStockPriceHistory } from "@/lib/stockPriceHistory";
+import type { CompetitorEarningsReleasePayload } from "@/types/competitorRelease";
 import { COLORS, FONTS, LAYOUT, TABLE_STYLE } from "./pptxTemplates";
 
 type PptxSlide = ReturnType<PptxGenJS["addSlide"]>;
@@ -749,12 +751,17 @@ export async function addEarningsStockSlide(
       fcf?: number;
     };
     insights: string[];
+    releaseData?: CompetitorEarningsReleasePayload;
   }
 ) {
   const slide = ppt.addSlide();
   slide.background = { fill: COLORS.white };
-  const introCommentary = summarizeTopLines(params.insights, 2).join(" ");
-  slide.addText(`${params.companyName} Earnings Overview`, {
+  const commentaryLines = summarizeTopLines(
+    params.releaseData?.commentary?.length ? params.releaseData.commentary : params.insights,
+    5
+  );
+  const introCommentary = params.releaseData?.summary || commentaryLines.slice(0, 2).join(" ");
+  slide.addText(`${params.companyName} Earnings Release`, {
     x: LAYOUT.marginX,
     y: LAYOUT.marginY,
     w: LAYOUT.contentW,
@@ -802,6 +809,18 @@ export async function addEarningsStockSlide(
     color: COLORS.slate500,
     align: "left",
   });
+  if (params.releaseData?.filingDate) {
+    slide.addText(`Filing date: ${params.releaseData.filingDate}`, {
+      x: 2.75,
+      y: 1.12,
+      w: 2.6,
+      h: 0.2,
+      fontSize: 8.2,
+      fontFace: FONTS.body,
+      color: COLORS.slate500,
+      align: "left",
+    });
+  }
 
   slide.addText(`• ${summarizeTopLines(params.insights, 5).join("\n• ") || "No earnings insights available."}`, {
     x: LAYOUT.marginX,
@@ -1628,6 +1647,12 @@ export async function generateCompanyComparisonPptx(
   );
 
   if (!multi) {
+    const competitorRelease = await buildCompetitorEarningsReleasePayload({
+      benchmark: result.companyA,
+      competitor: result.companyB,
+      narrative: result.narrative,
+    });
+
     await addEarningsStockSlide(pres, {
       companyName: result.companyB.ticker,
       ticker: result.companyB.ticker,
@@ -1639,11 +1664,13 @@ export async function generateCompanyComparisonPptx(
         fcf: result.companyB.metrics.freeCashFlow ?? undefined,
       },
       insights: [
+        ...competitorRelease.commentary,
         ...buildEarningsNumericalInsights(result),
         ...result.narrative.truePerformanceDiagnosis,
         ...result.narrative.whatChanged,
         ...result.narrative.investmentInterpretation,
       ],
+      releaseData: competitorRelease,
     });
     pageNum.n += 1;
 

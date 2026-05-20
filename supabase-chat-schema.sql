@@ -6,13 +6,44 @@
 CREATE TABLE IF NOT EXISTS chat_threads (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'general' CHECK (kind IN ('general', 'data-source-workbook')),
   title TEXT NOT NULL DEFAULT 'New chat',
+  company_ticker TEXT,
+  company_name TEXT,
+  source_thread_id UUID REFERENCES chat_threads(id) ON DELETE SET NULL,
+  workbook_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE chat_threads
+  ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'general';
+ALTER TABLE chat_threads
+  ADD COLUMN IF NOT EXISTS company_ticker TEXT;
+ALTER TABLE chat_threads
+  ADD COLUMN IF NOT EXISTS company_name TEXT;
+ALTER TABLE chat_threads
+  ADD COLUMN IF NOT EXISTS source_thread_id UUID REFERENCES chat_threads(id) ON DELETE SET NULL;
+ALTER TABLE chat_threads
+  ADD COLUMN IF NOT EXISTS workbook_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb;
+
 CREATE INDEX IF NOT EXISTS idx_chat_threads_user_updated
   ON chat_threads(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_threads_user_kind_company_updated
+  ON chat_threads(user_id, kind, company_ticker, updated_at DESC);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'chat_threads_kind_check'
+  ) THEN
+    ALTER TABLE chat_threads
+      ADD CONSTRAINT chat_threads_kind_check
+      CHECK (kind IN ('general', 'data-source-workbook'));
+  END IF;
+END $$;
 
 -- Chat messages table
 CREATE TABLE IF NOT EXISTS chat_messages (

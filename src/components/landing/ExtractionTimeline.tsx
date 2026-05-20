@@ -4,12 +4,12 @@ import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export const EXTRACTION_STEPS = [
-  { id: "parse", label: "Parsing PDF" },
-  { id: "tables", label: "Extracting tables" },
-  { id: "notes", label: "Detecting notes" },
-  { id: "bs", label: "Building balance sheet" },
-  { id: "cf", label: "Computing cash flow" },
-  { id: "ready", label: "Ready for analysis" },
+  { id: "parse", label: "Parsing 10-Q" },
+  { id: "lines", label: "Linking statement lines" },
+  { id: "notes", label: "Reading notes and context" },
+  { id: "workbook", label: "Building management workbook" },
+  { id: "metrics", label: "Computing strategic finance metrics" },
+  { id: "ready", label: "Ready for CEO/CFO review" },
 ] as const;
 
 export function ExtractionTimeline({ activeIndex }: { activeIndex: number }) {
@@ -38,7 +38,11 @@ export function ExtractionTimeline({ activeIndex }: { activeIndex: number }) {
               )}
               aria-hidden
             >
-              {done ? <Check className="h-2.5 w-2.5" strokeWidth={3} /> : current ? <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" /> : null}
+              {done ? (
+                <Check className="h-2.5 w-2.5" strokeWidth={3} />
+              ) : current ? (
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
+              ) : null}
             </span>
             <span
               className={cn(

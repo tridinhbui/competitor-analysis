@@ -8,7 +8,7 @@ import {
   useState,
 } from "react";
 import type { Session, User } from "@supabase/supabase-js";
-import { supabase } from "./supabase";
+import { recoverSupabaseSession, supabase } from "./supabase";
 
 interface AuthContextValue {
   user: User | null;
@@ -29,20 +29,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setUser(data.session?.user ?? null);
-      setLoading(false);
-    });
-
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, s) => {
-      setSession(s);
-      setUser(s?.user ?? null);
-    });
-
-    return () => listener.subscription.unsubscribe();
+  const applySession = useCallback((nextSession: Session | null) => {
+    setSession(nextSession);
+    setUser(nextSession?.user ?? null);
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    let unsubscribe: (() => void) | null = null;
+
+    async function initializeAuth() {
+      const { data, error } = await supabase.auth.getSession();
+
+      if (!active) return;
+
+      if (error) {
+        recoverSupabaseSession(error);
+        applySession(null);
+      } else {
+        applySession(data.session);
+      }
+
+      const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+        applySession(nextSession);
+      });
+
+      unsubscribe = () => listener.subscription.unsubscribe();
+
+      if (active) {
+        setLoading(false);
+      } else {
+        unsubscribe();
+      }
+    }
+
+    void initializeAuth();
+
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, [applySession]);
 
   const signIn = useCallback(async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -50,13 +77,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signInWithGoogle = useCallback(async () => {
-    const { error } = await supabase.auth.signInWithOAuth({
+    const redirectTo = new URL("/auth/callback", window.location.origin);
+    const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+
+    redirectTo.searchParams.set("next", currentPath || "/analyze");
+
+    const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/analyze`,
+        redirectTo: redirectTo.toString(),
+        skipBrowserRedirect: true,
       },
     });
-    return error?.message ?? null;
+
+    if (error) {
+      return error.message;
+    }
+
+    if (!data?.url) {
+      return "Google sign-in could not start. Please try again.";
+    }
+
+    window.location.assign(data.url);
+    return null;
   }, []);
 
   const signUp = useCallback(async (email: string, password: string) => {
@@ -65,8 +108,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
-    await supabase.auth.signOut();
-  }, []);
+    const { error } = await supabase.auth.signOut();
+    if (error && !recoverSupabaseSession(error)) return;
+    applySession(null);
+  }, [applySession]);
 
   const getAccessToken = useCallback(() => session?.access_token ?? null, [session]);
 

@@ -11,7 +11,8 @@ export function DisclaimerSection() {
           <div>
             <p className="font-semibold">Disclaimer</p>
             <p className="mt-1 leading-relaxed">
-              AI-powered analysis only. Not investment advice. Always do your own research (DYOR) before any decision.
+              Decision-support software only. Not investment advice, not official company guidance, and not a
+              substitute for CFO, IR, legal, or board review.
             </p>
           </div>
         </div>

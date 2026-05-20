@@ -1,11 +1,14 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { FileSearch, ScanSearch, MessageSquareText, BarChart3 } from "lucide-react";
+import { FileSearch, ScanSearch, MessageSquareText, BarChart3, FileSpreadsheet } from "lucide-react";
 
 export function ProblemSolutionSection() {
   return (
-    <section className="mx-auto grid w-full max-w-6xl gap-4 px-4 py-14 sm:grid-cols-2 sm:py-16" aria-labelledby="problem-solution-heading">
+    <section
+      className="mx-auto grid w-full max-w-6xl gap-4 px-4 py-14 sm:grid-cols-2 sm:py-16"
+      aria-labelledby="problem-solution-heading"
+    >
       <motion.article
         initial={{ opacity: 0, y: 8 }}
         whileInView={{ opacity: 1, y: 0 }}
@@ -18,12 +21,12 @@ export function ProblemSolutionSection() {
           Challenge
         </p>
         <h2 id="problem-solution-heading" className="mt-3 text-xl font-bold text-foreground sm:text-2xl">
-          Enterprise teams lose speed when insight is fragmented
+          Investor relations and strategic finance break when the story lives in too many files
         </h2>
         <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
-          <li>- Product and channel data sits in disconnected systems.</li>
-          <li>- Leadership reviews spend too long on assembly, not decisions.</li>
-          <li>- Brand performance signals are hard to compare quarter to quarter.</li>
+          <li>- IR, FP&amp;A, and strategy teams rebuild the same quarter from PDFs, decks, and old Excel tabs.</li>
+          <li>- CEO/CFO prep for Wall Street analyst questions slows down when peer checks and metric tie-outs are manual.</li>
+          <li>- Guidance, cash flow, leverage, and competitor gaps are hard to defend under time pressure.</li>
         </ul>
       </motion.article>
 
@@ -38,15 +41,22 @@ export function ProblemSolutionSection() {
           <ScanSearch className="h-3 w-3" aria-hidden />
           Solution
         </p>
-        <h3 className="mt-3 text-xl font-bold text-foreground sm:text-2xl">Smithfield-style dashboard turns signal into action</h3>
+        <h3 className="mt-3 text-xl font-bold text-foreground sm:text-2xl">
+          One executive finance workspace from filing extraction to board-ready narrative
+        </h3>
         <div className="mt-4 grid gap-2 text-sm text-muted-foreground">
           <p className="inline-flex items-start gap-2">
             <BarChart3 className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
-            Present category, channel, and brand KPI views in one clean workspace.
+            Link scanned filing data, calculated metrics, and peer comparisons in one management-ready workbook.
           </p>
           <p className="inline-flex items-start gap-2">
             <MessageSquareText className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
-            Keep decisions aligned with clear narrative copy and executive-ready exports.
+            Prepare earnings-call talking points, investor follow-ups, and strategic finance scenarios from the same
+            numbers.
+          </p>
+          <p className="inline-flex items-start gap-2">
+            <FileSpreadsheet className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
+            Export analyst-ready bridges, peer packs, and CFO review materials without rebuilding them by hand.
           </p>
         </div>
       </motion.article>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { DataSourceRow } from "@/types/dataSource";
 import type {
   DataSourceEditLogEntry,
@@ -8,8 +9,10 @@ import type {
   DataSourceWorkbookCellStyle,
   DataSourceWorkbookNumberFormat,
 } from "@/types/dataSourceWorkbook";
+import type { ChatThreadSummary } from "@/types/chatThread";
 import { AnalysisCalculationsExplainer } from "@/components/data-source/AnalysisCalculationsExplainer";
 import { RequireAuth } from "@/components/auth/RequireAuth";
+import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import {
   AlertTriangle,
   AlignCenter,
@@ -53,7 +56,7 @@ import {
 } from "@/lib/dataSourceWorkbook";
 
 type WorkflowOrigin = "analyze" | "competitor";
-type ActiveSheetKey = WorkflowOrigin | "history";
+type WorkbookSectionKey = "summary" | "segment" | "income" | "balance" | "cashflow" | "analysis";
 type SortDirection = "asc" | "desc";
 
 interface SortState {
@@ -82,6 +85,20 @@ interface ContextMenuState {
   y: number;
 }
 
+interface CompanyWorkbookOption {
+  ticker: string;
+  companyName: string;
+}
+
+interface WorkbookSectionConfig {
+  key: WorkbookSectionKey;
+  title: string;
+  description: string;
+  accentClass: string;
+  exportFields: string[];
+  focusField?: string;
+}
+
 const ROW_NUMBER_COLUMN_KEY = "__row__";
 const COLUMN_WIDTHS_STORAGE_KEY = "data-source-column-widths-v1";
 const EDIT_WARNING_STORAGE_KEY = "data-source-edit-warning-acknowledged-v1";
@@ -89,6 +106,16 @@ const CELL_MERGES_STORAGE_KEY = "data-source-cell-merges-v1";
 const MIN_COLUMN_WIDTH = 60;
 const MAX_COLUMN_WIDTH = 640;
 const DEFAULT_METRIC_COLUMN_WIDTH = 130;
+const MIN_WORKBOOK_VISIBLE_ROWS = 10;
+const WORKBOOK_FONT_FAMILY = "\"Aptos\", \"Calibri\", \"Segoe UI\", sans-serif";
+const EXCEL_SELECTION_BORDER = "#217346";
+const EXCEL_SELECTION_FILL = "rgba(33, 115, 70, 0.10)";
+const FORMULA_REFERENCE_COLORS = [
+  { border: "rgba(59, 130, 246, 0.95)", fill: "rgba(59, 130, 246, 0.12)" },
+  { border: "rgba(249, 115, 22, 0.95)", fill: "rgba(249, 115, 22, 0.12)" },
+  { border: "rgba(16, 185, 129, 0.95)", fill: "rgba(16, 185, 129, 0.12)" },
+  { border: "rgba(244, 63, 94, 0.95)", fill: "rgba(244, 63, 94, 0.12)" },
+] as const;
 const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
   [ROW_NUMBER_COLUMN_KEY]: 56,
   ticker: 90,
@@ -96,6 +123,127 @@ const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
   quarterLabel: 140,
   periodEnd: 110,
 };
+const BASE_WORKBOOK_FIELDS = ["quarterLabel", "periodEnd"] as const;
+const WORKBOOK_SECTIONS: readonly WorkbookSectionConfig[] = [
+  {
+    key: "summary",
+    title: "Executive Summary",
+    description: "Core revenue, profit, and capital structure fields for the current company workbook.",
+    accentClass: "border-emerald-300 bg-emerald-50 text-emerald-700",
+    exportFields: [
+      "revenue",
+      "grossProfit",
+      "operatingIncome",
+      "netIncome",
+      "ebitda",
+      "freeCashFlow",
+      "totalAssets",
+      "totalLiabilities",
+      "totalEquity",
+    ],
+  },
+  {
+    key: "segment",
+    title: "Segment",
+    description: "Volume and per-unit operating fields used for segment-style operating comparisons.",
+    accentClass: "border-amber-300 bg-amber-50 text-amber-700",
+    exportFields: [
+      "volumeHeads",
+      "volumeLbs",
+      "volumeCwt",
+      "opPerHead",
+      "opPerCwt",
+      "adjustedOpPerHead",
+      "adjustedOpPerCwt",
+    ],
+    focusField: "volumeHeads",
+  },
+  {
+    key: "income",
+    title: "Income & Margins",
+    description: "Income statement lines, earnings metrics, and profitability margins.",
+    accentClass: "border-sky-300 bg-sky-50 text-sky-700",
+    exportFields: [
+      "revenue",
+      "grossProfit",
+      "operatingIncome",
+      "netIncome",
+      "grossMargin",
+      "operatingMargin",
+      "netMargin",
+      "sgaExpense",
+      "depreciation",
+      "ebit",
+      "ebitda",
+      "ebitdaMargin",
+      "interestExpense",
+      "epsBasic",
+      "epsDiluted",
+      "shareBasedComp",
+      "sgaAsPercent",
+    ],
+    focusField: "grossMargin",
+  },
+  {
+    key: "balance",
+    title: "Balance Sheet",
+    description: "Balance sheet, leverage, liquidity, and returns on capital fields.",
+    accentClass: "border-violet-300 bg-violet-50 text-violet-700",
+    exportFields: [
+      "totalAssets",
+      "totalLiabilities",
+      "totalEquity",
+      "totalDebt",
+      "cashAndEquivalents",
+      "debtToEquity",
+      "currentRatio",
+      "roe",
+      "roa",
+    ],
+    focusField: "totalAssets",
+  },
+  {
+    key: "cashflow",
+    title: "Cash Flow",
+    description: "Operating cash flow, capital spending, dividends, and free cash flow metrics.",
+    accentClass: "border-cyan-300 bg-cyan-50 text-cyan-700",
+    exportFields: [
+      "operatingCashFlow",
+      "capex",
+      "freeCashFlow",
+      "fcfMargin",
+      "dividendsPaid",
+      "cashAndEquivalents",
+    ],
+    focusField: "operatingCashFlow",
+  },
+  {
+    key: "analysis",
+    title: "Analysis",
+    description: "Adjustments and analyst-only comparison fields for normalized operating views.",
+    accentClass: "border-rose-300 bg-rose-50 text-rose-700",
+    exportFields: [
+      "ercAdjustment",
+      "legalChargeAdjustment",
+      "transferValueAdjustment",
+      "corporateAllocationAdjustment",
+      "adjustedOperatingIncome",
+      "adjustedOperatingMargin",
+      "adjustedOpPerHead",
+      "adjustedOpPerCwt",
+      "sgaAsPercent",
+    ],
+    focusField: "ercAdjustment",
+  },
+] as const;
+const WORKBOOK_COLUMN_INDEX_BY_FIELD = new Map(
+  WORKBOOK_COLUMNS.map((column, index) => [column.field, index]),
+);
+
+function getWorkbookColumnsForSection(section: WorkbookSectionConfig) {
+  const fieldSet = new Set<string>([...BASE_WORKBOOK_FIELDS, ...section.exportFields]);
+  return WORKBOOK_COLUMNS.filter((column) => fieldSet.has(column.field));
+}
 
 function getDefaultColumnWidth(field: string): number {
   return DEFAULT_COLUMN_WIDTHS[field] ?? DEFAULT_METRIC_COLUMN_WIDTH;
@@ -113,6 +261,145 @@ function getRowFieldValue(
   return value ?? null;
 }
 
+function getWorkbookFieldReference(field: string, rowNumber: number): string | null {
+  const columnIndex = WORKBOOK_COLUMN_INDEX_BY_FIELD.get(field);
+  if (typeof columnIndex !== "number" || rowNumber < 1) return null;
+  return `${columnIndexToLetter(columnIndex)}${rowNumber}`;
+}
+
+function workbookColumnLetterToIndex(label: string): number {
+  let value = 0;
+  for (const ch of label.toUpperCase()) {
+    value = value * 26 + (ch.charCodeAt(0) - 64);
+  }
+  return value - 1;
+}
+
+function parseWorkbookCellReference(reference: string): { rowIndex: number; colIndex: number } | null {
+  const match = /^([A-Z]+)(\d+)$/i.exec(reference.trim());
+  if (!match) return null;
+
+  return {
+    colIndex: workbookColumnLetterToIndex(match[1]),
+    rowIndex: Number(match[2]) - 1,
+  };
+}
+
+function getFormulaReferenceHighlights(formula: string): Map<string, number> {
+  const highlights = new Map<string, number>();
+  const matches = formula.matchAll(/\b([A-Z]+[0-9]+)(?::([A-Z]+[0-9]+))?\b/gi);
+  let tokenIndex = 0;
+
+  for (const match of matches) {
+    const start = parseWorkbookCellReference(match[1]);
+    const end = match[2] ? parseWorkbookCellReference(match[2]) : start;
+    if (!start || !end) continue;
+
+    const colorIndex = tokenIndex % FORMULA_REFERENCE_COLORS.length;
+    tokenIndex += 1;
+
+    const rowStart = Math.min(start.rowIndex, end.rowIndex);
+    const rowEnd = Math.max(start.rowIndex, end.rowIndex);
+    const colStart = Math.min(start.colIndex, end.colIndex);
+    const colEnd = Math.max(start.colIndex, end.colIndex);
+
+    for (let rowIndex = rowStart; rowIndex <= rowEnd; rowIndex += 1) {
+      for (let colIndex = colStart; colIndex <= colEnd; colIndex += 1) {
+        const key = `${rowIndex}:${colIndex}`;
+        if (!highlights.has(key)) {
+          highlights.set(key, colorIndex);
+        }
+      }
+    }
+  }
+
+  return highlights;
+}
+
+function getWorkbookDerivedFormula(
+  row: DataSourceRow,
+  field: string,
+  rowNumber: number,
+): string | null {
+  if (row.periodEnd === "TTM") return null;
+
+  const ref = (targetField: string) => getWorkbookFieldReference(targetField, rowNumber);
+
+  const revenueRef = ref("revenue");
+  const grossProfitRef = ref("grossProfit");
+  const operatingIncomeRef = ref("operatingIncome");
+  const netIncomeRef = ref("netIncome");
+  const totalAssetsRef = ref("totalAssets");
+  const totalLiabilitiesRef = ref("totalLiabilities");
+  const totalEquityRef = ref("totalEquity");
+  const totalDebtRef = ref("totalDebt");
+  const operatingCashFlowRef = ref("operatingCashFlow");
+  const capexRef = ref("capex");
+  const depreciationRef = ref("depreciation");
+  const ebitdaRef = ref("ebitda");
+  const freeCashFlowRef = ref("freeCashFlow");
+  const volumeHeadsRef = ref("volumeHeads");
+  const volumeLbsRef = ref("volumeLbs");
+  const volumeCwtRef = ref("volumeCwt");
+  const ercAdjustmentRef = ref("ercAdjustment");
+  const legalChargeAdjustmentRef = ref("legalChargeAdjustment");
+  const transferValueAdjustmentRef = ref("transferValueAdjustment");
+  const corporateAllocationAdjustmentRef = ref("corporateAllocationAdjustment");
+  const adjustedOperatingIncomeRef = ref("adjustedOperatingIncome");
+  const sgaExpenseRef = ref("sgaExpense");
+
+  switch (field) {
+    case "totalAssets":
+      return totalLiabilitiesRef && totalEquityRef ? `=${totalLiabilitiesRef}+${totalEquityRef}` : null;
+    case "totalLiabilities":
+      return totalAssetsRef && totalEquityRef ? `=${totalAssetsRef}-${totalEquityRef}` : null;
+    case "totalEquity":
+      return totalAssetsRef && totalLiabilitiesRef ? `=${totalAssetsRef}-${totalLiabilitiesRef}` : null;
+    case "grossMargin":
+      return revenueRef && grossProfitRef ? `=${grossProfitRef}/${revenueRef}*100` : null;
+    case "operatingMargin":
+      return revenueRef && operatingIncomeRef ? `=${operatingIncomeRef}/${revenueRef}*100` : null;
+    case "netMargin":
+      return revenueRef && netIncomeRef ? `=${netIncomeRef}/${revenueRef}*100` : null;
+    case "ebit":
+      return operatingIncomeRef ? `=${operatingIncomeRef}` : null;
+    case "freeCashFlow":
+      return operatingCashFlowRef && capexRef ? `=${operatingCashFlowRef}-${capexRef}` : null;
+    case "ebitda":
+      return operatingIncomeRef && depreciationRef ? `=${operatingIncomeRef}+${depreciationRef}` : null;
+    case "ebitdaMargin":
+      return revenueRef && ebitdaRef ? `=${ebitdaRef}/${revenueRef}*100` : null;
+    case "debtToEquity":
+      return totalDebtRef && totalEquityRef ? `=${totalDebtRef}/${totalEquityRef}` : null;
+    case "roe":
+      return netIncomeRef && totalEquityRef ? `=${netIncomeRef}/${totalEquityRef}*100` : null;
+    case "roa":
+      return netIncomeRef && totalAssetsRef ? `=${netIncomeRef}/${totalAssetsRef}*100` : null;
+    case "fcfMargin":
+      return revenueRef && freeCashFlowRef ? `=${freeCashFlowRef}/${revenueRef}*100` : null;
+    case "volumeCwt":
+      return volumeLbsRef ? `=${volumeLbsRef}/100` : null;
+    case "opPerHead":
+      return operatingIncomeRef && volumeHeadsRef ? `=${operatingIncomeRef}*1000/${volumeHeadsRef}` : null;
+    case "opPerCwt":
+      return operatingIncomeRef && volumeCwtRef ? `=${operatingIncomeRef}/${volumeCwtRef}` : null;
+    case "adjustedOperatingIncome":
+      return operatingIncomeRef && ercAdjustmentRef && legalChargeAdjustmentRef && transferValueAdjustmentRef && corporateAllocationAdjustmentRef
+        ? `=${operatingIncomeRef}-${ercAdjustmentRef}+${legalChargeAdjustmentRef}-${transferValueAdjustmentRef}+${corporateAllocationAdjustmentRef}`
+        : null;
+    case "adjustedOperatingMargin":
+      return adjustedOperatingIncomeRef && revenueRef ? `=${adjustedOperatingIncomeRef}/${revenueRef}*100` : null;
+    case "adjustedOpPerHead":
+      return adjustedOperatingIncomeRef && volumeHeadsRef ? `=${adjustedOperatingIncomeRef}*1000/${volumeHeadsRef}` : null;
+    case "adjustedOpPerCwt":
+      return adjustedOperatingIncomeRef && volumeCwtRef ? `=${adjustedOperatingIncomeRef}/${volumeCwtRef}` : null;
+    case "sgaAsPercent":
+      return sgaExpenseRef && revenueRef ? `=IF(${sgaExpenseRef}<0,-${sgaExpenseRef},${sgaExpenseRef})/${revenueRef}*100` : null;
+    default:
+      return null;
+  }
+}
+
 function fmtCurrencyUsdMillions(value: number): string {
   const sign = value < 0 ? "-" : "";
   const abs = Math.abs(value);
@@ -124,7 +411,7 @@ function fmtCurrencyUsdMillions(value: number): string {
 }
 
 function fmtCell(value: number | string | null | undefined, format?: string): string {
-  if (value == null || value === "") return "—";
+  if (value == null || value === "") return "";
   if (typeof value === "string") return value;
   if (format === "currency") return fmtCurrencyUsdMillions(value);
   if (format === "percent") return `${value.toFixed(1)}%`;
@@ -146,7 +433,7 @@ function fmtCellWithOverride(
   columnFormat: string | undefined,
   userFormat: DataSourceWorkbookNumberFormat | null | undefined,
 ): string {
-  if (value == null || value === "") return "—";
+  if (value == null || value === "") return "";
   if (typeof value === "string") return value;
   switch (userFormat) {
     case "currency":
@@ -275,9 +562,33 @@ function flattenNumericOverrides(
   return payloads;
 }
 
+function normalizeCompanyWorkbookOptions(payload: unknown): CompanyWorkbookOption[] {
+  if (!Array.isArray(payload)) return [];
+
+  const deduped = new Map<string, CompanyWorkbookOption>();
+  for (const entry of payload) {
+    if (!entry || typeof entry !== "object") continue;
+
+    const ticker = typeof (entry as CompanyWorkbookOption).ticker === "string"
+      ? (entry as CompanyWorkbookOption).ticker.trim().toUpperCase()
+      : "";
+    const companyName = typeof (entry as CompanyWorkbookOption).companyName === "string"
+      ? (entry as CompanyWorkbookOption).companyName.trim()
+      : "";
+
+    if (!ticker || deduped.has(ticker)) continue;
+    deduped.set(ticker, {
+      ticker,
+      companyName: companyName || ticker,
+    });
+  }
+
+  return [...deduped.values()].sort((a, b) => a.ticker.localeCompare(b.ticker));
+}
+
 function parseNumericInput(input: string): number | null {
   const cleaned = input.replace(/[$,%\s]/g, "").replace(/,/g, "");
-  if (!cleaned || cleaned === "-" || cleaned === "—") return null;
+  if (!cleaned || cleaned === "-" || cleaned === "--") return null;
   const parsed = Number(cleaned);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -384,10 +695,10 @@ function ToolbarButton({
       title={title}
       disabled={disabled}
       onClick={onClick}
-      className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border transition ${
+      className={`inline-flex h-9 w-9 items-center justify-center rounded-md border transition ${
         active
-          ? "border-primary/40 bg-primary/10 text-primary"
-          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+          ? "border-[#217346]/35 bg-[#217346]/10 text-[#217346]"
+          : "border-[#d0d7de] bg-white text-slate-600 hover:bg-[#f7f7f7]"
       } disabled:cursor-not-allowed disabled:opacity-50`}
     >
       {children}
@@ -396,17 +707,28 @@ function ToolbarButton({
 }
 
 export default function DataSourcePage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const workbookRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const initialWorkbookCellsRef = useRef<string>("{}");
+  const initialThreadSelectionAppliedRef = useRef(false);
 
   const [baseRows, setBaseRows] = useState<DataSourceRow[]>([]);
   const [workbookCells, setWorkbookCells] = useState<WorkbookRowCellStateMap>({});
   const [numericOverrides, setNumericOverrides] = useState<WorkbookNumericOverrideMap>({});
   const [editLog, setEditLog] = useState<DataSourceEditLogEntry[]>([]);
+  const [companyOptions, setCompanyOptions] = useState<CompanyWorkbookOption[]>([]);
+  const [workbookThreads, setWorkbookThreads] = useState<ChatThreadSummary[]>([]);
+  const [selectedCompanyTicker, setSelectedCompanyTicker] = useState<string | null>(null);
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [threadSchemaReady, setThreadSchemaReady] = useState(true);
+  const [threadSchemaMessage, setThreadSchemaMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [activeSheet, setActiveSheet] = useState<ActiveSheetKey>("analyze");
+  const [navigatorLoading, setNavigatorLoading] = useState(true);
+  const [creatingThreadTicker, setCreatingThreadTicker] = useState<string | null>(null);
+  const [activeSheet, setActiveSheet] = useState<WorkbookSectionKey>("summary");
   const [filter, setFilter] = useState("");
   const [sortByWorkflow, setSortByWorkflow] = useState<Record<WorkflowOrigin, SortState | null>>({
     analyze: null,
@@ -536,11 +858,21 @@ export default function DataSourcePage() {
     [columnWidths],
   );
 
+  const activeSheetConfig = useMemo(
+    () => WORKBOOK_SECTIONS.find((section) => section.key === activeSheet) ?? WORKBOOK_SECTIONS[0],
+    [activeSheet],
+  );
+
+  const visibleColumns = useMemo(
+    () => getWorkbookColumnsForSection(activeSheetConfig),
+    [activeSheetConfig],
+  );
+
   const totalTableWidth = useMemo(() => {
     let sum = getColumnWidth(ROW_NUMBER_COLUMN_KEY);
-    for (const column of WORKBOOK_COLUMNS) sum += getColumnWidth(column.field);
+    for (const column of visibleColumns) sum += getColumnWidth(column.field);
     return sum;
-  }, [getColumnWidth]);
+  }, [getColumnWidth, visibleColumns]);
 
   const handleColumnResizeStart = useCallback(
     (field: string, event: React.MouseEvent) => {
@@ -570,121 +902,215 @@ export default function DataSourcePage() {
     [getColumnWidth],
   );
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const response = await fetch("/api/data-source");
-      const data = await response.json();
-      const nextRows = Array.isArray(data.rows) ? (data.rows as DataSourceRow[]) : [];
-      const nextWorkbookCells = normalizeWorkbookCellsPayload(data.workbookCells);
-      const nextEditLog = Array.isArray(data.editLog) ? (data.editLog as DataSourceEditLogEntry[]) : [];
-      setBaseRows(nextRows);
-      setWorkbookCells(nextWorkbookCells);
-      setEditLog(nextEditLog);
-      setNumericOverrides({});
-      setUndoStack([]);
-      setRedoStack([]);
-      setEditingCell(null);
-      setContextMenu(null);
-      setSelection(null);
-      setFormulaDraft("");
-      initialWorkbookCellsRef.current = serializeWorkbookRowCellStates(nextWorkbookCells);
-    } finally {
-      setLoading(false);
-    }
+  const applyWorkbookPayload = useCallback((data: Record<string, unknown>) => {
+    const nextRows = Array.isArray(data.rows) ? (data.rows as DataSourceRow[]) : [];
+    const nextWorkbookCells = normalizeWorkbookCellsPayload(data.workbookCells);
+    const nextEditLog = Array.isArray(data.editLog) ? (data.editLog as DataSourceEditLogEntry[]) : [];
+
+    setBaseRows(nextRows);
+    setWorkbookCells(nextWorkbookCells);
+    setEditLog(nextEditLog);
+    setNumericOverrides({});
+    setUndoStack([]);
+    setRedoStack([]);
+    setEditingCell(null);
+    setContextMenu(null);
+    setSelection(null);
+    setFormulaDraft("");
+    setActiveSheet("summary");
+    initialWorkbookCellsRef.current = serializeWorkbookRowCellStates(nextWorkbookCells);
   }, []);
 
-  useEffect(() => {
-    void fetchData();
-  }, [fetchData]);
+  const mergeWorkbookThread = useCallback((thread: ChatThreadSummary) => {
+    setWorkbookThreads((current) => {
+      const next = [thread, ...current.filter((entry) => entry.id !== thread.id)];
+      next.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      return next;
+    });
+  }, []);
+
+  const updateSelectionUrl = useCallback((companyTicker: string, threadId?: string | null) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("company", companyTicker);
+    if (threadId) {
+      params.set("thread", threadId);
+    } else {
+      params.delete("thread");
+    }
+    router.replace(`/data-source?${params.toString()}`, { scroll: false });
+  }, [router, searchParams]);
+
+  const fetchData = useCallback(async (options?: {
+    includeNavigator?: boolean;
+    companyTicker?: string | null;
+    threadId?: string | null;
+  }) => {
+    const includeNavigator = options?.includeNavigator ?? true;
+    const nextCompanyTicker = options?.companyTicker ?? selectedCompanyTicker;
+    const nextThreadId = options?.threadId ?? selectedThreadId;
+
+    if (!nextThreadId && !nextCompanyTicker && !includeNavigator) {
+      setLoading(false);
+      setBaseRows([]);
+      setWorkbookCells({});
+      setEditLog([]);
+      setNumericOverrides({});
+      initialWorkbookCellsRef.current = "{}";
+      return;
+    }
+
+    setLoading(true);
+    if (includeNavigator) setNavigatorLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (includeNavigator) params.set("includeNavigator", "1");
+      if (nextThreadId) {
+        params.set("threadId", nextThreadId);
+      } else if (nextCompanyTicker) {
+        params.set("companyTicker", nextCompanyTicker);
+      }
+      const endpoint = `/api/data-source${params.size > 0 ? `?${params.toString()}` : ""}`;
+      const response = await fetchWithAuth(endpoint);
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        window.alert((data as { error?: string }).error ?? `Failed to load workbook (HTTP ${response.status})`);
+        return;
+      }
+
+      if (includeNavigator) {
+        const schemaReady = (data as { schemaReady?: boolean }).schemaReady !== false;
+        setThreadSchemaReady(schemaReady);
+        setThreadSchemaMessage(
+          schemaReady
+            ? null
+            : ((data as { threadSchemaMessage?: string; error?: string }).threadSchemaMessage ??
+              (data as { error?: string }).error ??
+              "Workbook threads need the latest chat schema."),
+        );
+        setCompanyOptions(normalizeCompanyWorkbookOptions((data as { availableCompanies?: unknown }).availableCompanies));
+        setWorkbookThreads(
+          Array.isArray((data as { workbookThreads?: ChatThreadSummary[] }).workbookThreads)
+            ? (data as { workbookThreads: ChatThreadSummary[] }).workbookThreads
+            : [],
+        );
+
+        const responseCompanyTicker =
+          typeof (data as { selectedCompanyTicker?: unknown }).selectedCompanyTicker === "string"
+            ? ((data as { selectedCompanyTicker: string }).selectedCompanyTicker || null)
+            : nextCompanyTicker;
+        const responseThreadId =
+          typeof (data as { selectedThreadId?: unknown }).selectedThreadId === "string"
+            ? ((data as { selectedThreadId: string }).selectedThreadId || null)
+            : null;
+
+        setSelectedCompanyTicker(responseCompanyTicker ?? null);
+        setSelectedThreadId(responseThreadId);
+        if (responseCompanyTicker) {
+          updateSelectionUrl(responseCompanyTicker, responseThreadId);
+        }
+      }
+
+      applyWorkbookPayload(data as Record<string, unknown>);
+
+      const thread = (data as { thread?: Record<string, unknown> }).thread;
+      if (thread && typeof thread.id === "string") {
+        setWorkbookThreads((current) => {
+          const existing = current.find((entry) => entry.id === thread.id);
+          const nextThread: ChatThreadSummary = {
+            id: thread.id,
+            title: typeof thread.title === "string" ? thread.title : existing?.title ?? "Workbook thread",
+            createdAt: existing?.createdAt ?? (typeof thread.updatedAt === "string" ? thread.updatedAt : new Date().toISOString()),
+            updatedAt: typeof thread.updatedAt === "string" ? thread.updatedAt : existing?.updatedAt ?? new Date().toISOString(),
+            kind: "data-source-workbook",
+            companyTicker: typeof thread.companyTicker === "string" ? thread.companyTicker : existing?.companyTicker ?? null,
+            companyName: typeof thread.companyName === "string" ? thread.companyName : existing?.companyName ?? null,
+            sourceThreadId: existing?.sourceThreadId ?? null,
+          };
+          const next = [nextThread, ...current.filter((entry) => entry.id !== nextThread.id)];
+          next.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+          return next;
+        });
+      }
+    } finally {
+      setLoading(false);
+      if (includeNavigator) setNavigatorLoading(false);
+    }
+  }, [applyWorkbookPayload, selectedCompanyTicker, selectedThreadId, updateSelectionUrl]);
+
+  const threadsByCompany = useMemo(() => {
+    const grouped = new Map<string, ChatThreadSummary[]>();
+    for (const thread of workbookThreads) {
+      if (!thread.companyTicker) continue;
+      const ticker = thread.companyTicker.toUpperCase();
+      if (!grouped.has(ticker)) grouped.set(ticker, []);
+      grouped.get(ticker)!.push({
+        ...thread,
+        companyTicker: ticker,
+      });
+    }
+
+    for (const threadList of grouped.values()) {
+      threadList.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    }
+
+    return grouped;
+  }, [workbookThreads]);
+
+  const companyRailOptions = useMemo(() => {
+    const merged = new Map<string, CompanyWorkbookOption>();
+    for (const company of companyOptions) {
+      merged.set(company.ticker, company);
+    }
+    for (const thread of workbookThreads) {
+      if (!thread.companyTicker) continue;
+      const ticker = thread.companyTicker.toUpperCase();
+      if (!merged.has(ticker)) {
+        merged.set(ticker, {
+          ticker,
+          companyName: thread.companyName?.trim() || ticker,
+        });
+      }
+    }
+
+    return [...merged.values()].sort((a, b) => a.ticker.localeCompare(b.ticker));
+  }, [companyOptions, workbookThreads]);
+
+  const selectedCompany = useMemo(
+    () => companyRailOptions.find((company) => company.ticker === selectedCompanyTicker) ?? null,
+    [companyRailOptions, selectedCompanyTicker],
+  );
+
+  const selectedCompanyThreads = useMemo(
+    () => (selectedCompanyTicker ? (threadsByCompany.get(selectedCompanyTicker) ?? []) : []),
+    [selectedCompanyTicker, threadsByCompany],
+  );
+
+  const activeWorkbookThread = useMemo(
+    () => workbookThreads.find((thread) => thread.id === selectedThreadId) ?? null,
+    [selectedThreadId, workbookThreads],
+  );
 
   const { rows: computedRows, formulaErrors } = useMemo(
     () => computeWorkbookRows(baseRows, numericOverrides, workbookCells),
     [baseRows, numericOverrides, workbookCells],
   );
 
-  const latestFilingByWorkflow = useMemo(() => {
-    const result: Record<WorkflowOrigin, DataSourceRow | null> = { analyze: null, competitor: null };
-    for (const workflow of ["analyze", "competitor"] as WorkflowOrigin[]) {
-      const candidates = computedRows.filter(
-        (row) => row.workflowOrigin === workflow && row.periodEnd !== "TTM" && row.savedAt,
-      );
-      if (candidates.length === 0) continue;
-      candidates.sort((a, b) => (b.savedAt ?? "").localeCompare(a.savedAt ?? ""));
-      result[workflow] = candidates[0];
-    }
-    return result;
-  }, [computedRows]);
+  const activeWorkflow: WorkflowOrigin = "analyze";
 
-  const currentRowsByWorkflow = useMemo(() => {
-    const partition: Record<WorkflowOrigin, DataSourceRow[]> = { analyze: [], competitor: [] };
-    for (const workflow of ["analyze", "competitor"] as WorkflowOrigin[]) {
-      const latest = latestFilingByWorkflow[workflow];
-      if (!latest) continue;
-      partition[workflow] = computedRows.filter(
-        (row) => row.workflowOrigin === workflow && row.ticker === latest.ticker,
-      );
-    }
-    return partition;
-  }, [computedRows, latestFilingByWorkflow]);
-
-  const pastRowsByWorkflow = useMemo(() => {
-    const partition: Record<WorkflowOrigin, DataSourceRow[]> = { analyze: [], competitor: [] };
-    for (const workflow of ["analyze", "competitor"] as WorkflowOrigin[]) {
-      const latest = latestFilingByWorkflow[workflow];
-      partition[workflow] = computedRows.filter((row) => {
-        if (row.workflowOrigin !== workflow) return false;
-        if (!latest) return true;
-        return row.ticker !== latest.ticker;
-      });
-    }
-    return partition;
-  }, [computedRows, latestFilingByWorkflow]);
-
-  const sheetRows = currentRowsByWorkflow;
+  const currentWorkbookRows = useMemo(() => {
+    if (!selectedCompanyTicker) return computedRows;
+    return computedRows.filter((row) => row.ticker.toUpperCase() === selectedCompanyTicker);
+  }, [computedRows, selectedCompanyTicker]);
 
   const sheetRowNumbers = useMemo(
-    () => ({
-      analyze: Object.fromEntries(sheetRows.analyze.map((row, index) => [row.id, index + 1])),
-      competitor: Object.fromEntries(sheetRows.competitor.map((row, index) => [row.id, index + 1])),
-    }),
-    [sheetRows],
+    () => Object.fromEntries(currentWorkbookRows.map((row, index) => [row.id, index + 1])),
+    [currentWorkbookRows],
   );
-
-  const workbookSheets = useMemo(
-    () => [
-      {
-        key: "analyze" as const,
-        title: "Quick Analyze",
-        description: latestFilingByWorkflow.analyze
-          ? `Showing ${latestFilingByWorkflow.analyze.ticker} — latest upload (${latestFilingByWorkflow.analyze.quarterLabel}). Older filings live in the History tab.`
-          : "No Quick Analyze upload yet. Upload a PDF in Quick Analyze to populate this sheet.",
-        rows: sheetRows.analyze,
-        accentClass: "border-emerald-300 bg-emerald-50 text-emerald-700",
-      },
-      {
-        key: "competitor" as const,
-        title: "Competitor Analysis",
-        description: latestFilingByWorkflow.competitor
-          ? `Showing ${latestFilingByWorkflow.competitor.ticker} — latest upload (${latestFilingByWorkflow.competitor.quarterLabel}). Older filings live in the History tab.`
-          : "No Competitor Analysis upload yet.",
-        rows: sheetRows.competitor,
-        accentClass: "border-blue-300 bg-blue-50 text-blue-700",
-      },
-    ],
-    [latestFilingByWorkflow, sheetRows],
-  );
-
-  const activeWorkflow: WorkflowOrigin = activeSheet === "history" ? "analyze" : activeSheet;
-  const activeSheetConfig =
-    activeSheet === "history"
-      ? workbookSheets[0]
-      : workbookSheets.find((sheet) => sheet.key === activeSheet) ?? workbookSheets[0];
 
   const visibleRows = useMemo(() => {
-    if (activeSheet === "history") return [] as DataSourceRow[];
-    const filteredRows = activeSheetConfig.rows.filter((row) => {
-      const query = filter.trim().toLowerCase();
+    const query = filter.trim().toLowerCase();
+    const filteredRows = currentWorkbookRows.filter((row) => {
       if (!query) return true;
       return (
         row.ticker.toLowerCase().includes(query) ||
@@ -695,17 +1121,58 @@ export default function DataSourcePage() {
     });
 
     return sortRows(filteredRows, sortByWorkflow[activeWorkflow]);
-  }, [activeSheet, activeWorkflow, activeSheetConfig.rows, filter, sortByWorkflow]);
+  }, [activeWorkflow, currentWorkbookRows, filter, sortByWorkflow]);
 
-  const selectedRow = selection ? visibleRows[normalizeSelection(selection).endRow] : null;
-  const selectedColumn = selection ? WORKBOOK_COLUMNS[normalizeSelection(selection).endCol] : null;
+  const shouldPadWorkbookRows = filter.trim().length === 0;
+  const workbookDisplayRowCount = shouldPadWorkbookRows
+    ? Math.max(visibleRows.length, MIN_WORKBOOK_VISIBLE_ROWS)
+    : visibleRows.length;
+  const placeholderRowCount = Math.max(0, workbookDisplayRowCount - visibleRows.length);
+
+  const normalizedSelection = selection ? normalizeSelection(selection) : null;
+  const selectedRow = normalizedSelection ? visibleRows[normalizedSelection.endRow] : null;
+  const selectedColumn = normalizedSelection ? visibleColumns[normalizedSelection.endCol] : null;
   const selectedField = selectedColumn?.field ?? null;
+  const selectedRowNumber = selectedRow && normalizedSelection
+    ? (sheetRowNumbers[selectedRow.id] ?? normalizedSelection.endRow + 1)
+    : null;
   const selectedCellState = selectedRow && selectedField
     ? getWorkbookStateForCell(workbookCells, selectedRow.id, selectedField)
     : null;
   const selectedStyle = normalizeCellStyle(selectedCellState?.style);
   const selectedCellError =
     selectedRow && selectedField ? formulaErrors[`${selectedRow.id}:${selectedField}`] ?? null : null;
+  const canEditSelectedCell = Boolean(selectedRow && selectedField && EDITABLE_WORKBOOK_FIELDS.has(selectedField));
+  const selectedDerivedFormula =
+    selectedRow && selectedField && selectedRowNumber
+      ? getWorkbookDerivedFormula(selectedRow, selectedField, selectedRowNumber)
+      : null;
+  const formulaReferenceHighlights = useMemo(() => {
+    const draft = formulaDraft.trim();
+    if (!draft.startsWith("=")) return new Map<string, number>();
+    return getFormulaReferenceHighlights(draft);
+  }, [formulaDraft]);
+
+  const syncFormulaDraftFromSelection = useCallback(() => {
+    if (!selectedRow || !selectedField) {
+      setFormulaDraft("");
+      return;
+    }
+
+    const currentState = getWorkbookStateForCell(workbookCells, selectedRow.id, selectedField);
+    if (currentState?.formula && EDITABLE_WORKBOOK_FIELDS.has(selectedField)) {
+      setFormulaDraft(currentState.formula);
+      return;
+    }
+
+    if (selectedDerivedFormula && EDITABLE_WORKBOOK_FIELDS.has(selectedField)) {
+      setFormulaDraft(selectedDerivedFormula);
+      return;
+    }
+
+    const rawValue = getRowFieldValue(selectedRow, selectedField);
+    setFormulaDraft(rawValue == null ? "" : String(rawValue));
+  }, [selectedDerivedFormula, selectedField, selectedRow, workbookCells]);
 
   const focusWorkbook = useCallback(() => {
     workbookRef.current?.focus();
@@ -721,14 +1188,153 @@ export default function DataSourcePage() {
 
   const hasFormulaErrors = Object.keys(formulaErrors).length > 0;
 
+  const createWorkbookThread = useCallback(async (
+    company: CompanyWorkbookOption,
+    sourceThreadId?: string | null,
+  ) => {
+    setCreatingThreadTicker(company.ticker);
+    try {
+      const response = await fetchWithAuth("/api/chat/threads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "data-source-workbook",
+          companyTicker: company.ticker,
+          companyName: company.companyName,
+          cloneLatestWorkbook: true,
+          sourceThreadId: sourceThreadId ?? undefined,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !(data as { thread?: ChatThreadSummary }).thread) {
+        window.alert((data as { error?: string }).error ?? `Failed to create workbook thread (HTTP ${response.status})`);
+        return null;
+      }
+
+      const nextThread = (data as { thread: ChatThreadSummary }).thread;
+      mergeWorkbookThread(nextThread);
+      return nextThread;
+    } finally {
+      setCreatingThreadTicker((current) => (current === company.ticker ? null : current));
+    }
+  }, [mergeWorkbookThread]);
+
+  const selectCompanyThread = useCallback(async (
+    company: CompanyWorkbookOption,
+    preferredThreadId?: string | null,
+  ) => {
+    if (!threadSchemaReady) {
+      if (company.ticker !== selectedCompanyTicker && hasUnsavedChanges) {
+        const confirmed = window.confirm(
+          "You have unsaved workbook edits. Switch companies and discard those changes?",
+        );
+        if (!confirmed) return;
+      }
+
+      setSelectedCompanyTicker(company.ticker);
+      setSelectedThreadId(null);
+      updateSelectionUrl(company.ticker, null);
+      void fetchData({
+        includeNavigator: true,
+        companyTicker: company.ticker,
+        threadId: null,
+      });
+      return;
+    }
+
+    const isThreadChange = preferredThreadId
+      ? preferredThreadId !== selectedThreadId
+      : company.ticker !== selectedCompanyTicker || !selectedThreadId;
+
+    if (isThreadChange && hasUnsavedChanges) {
+      const confirmed = window.confirm(
+        "You have unsaved workbook edits. Switch threads and discard those changes?",
+      );
+      if (!confirmed) return;
+    }
+
+    setSelectedCompanyTicker(company.ticker);
+
+    const existingThreads = threadsByCompany.get(company.ticker) ?? [];
+    let nextThread =
+      (preferredThreadId ? existingThreads.find((thread) => thread.id === preferredThreadId) : null) ??
+      existingThreads[0] ??
+      null;
+
+    if (!nextThread) {
+      nextThread = await createWorkbookThread(company, null);
+      if (!nextThread) return;
+    }
+
+    if (nextThread.id === selectedThreadId && company.ticker === selectedCompanyTicker) return;
+
+    setSelectedThreadId(nextThread.id);
+    updateSelectionUrl(company.ticker, nextThread.id);
+    void fetchData({
+      includeNavigator: true,
+      companyTicker: company.ticker,
+      threadId: nextThread.id,
+    });
+  }, [
+    createWorkbookThread,
+    fetchData,
+    hasUnsavedChanges,
+    selectedCompanyTicker,
+    selectedThreadId,
+    threadSchemaReady,
+    threadsByCompany,
+    updateSelectionUrl,
+  ]);
+
+  const handleCreateThreadForSelectedCompany = useCallback(async () => {
+    if (!selectedCompany) return;
+    if (!threadSchemaReady) {
+      window.alert("Workbook threads need the latest chat schema. Run supabase-chat-schema.sql in Supabase SQL Editor, then refresh.");
+      return;
+    }
+
+    if (hasUnsavedChanges) {
+      const confirmed = window.confirm(
+        "You have unsaved workbook edits. Create a new thread and discard those changes?",
+      );
+      if (!confirmed) return;
+    }
+
+    const nextThread = await createWorkbookThread(selectedCompany, selectedCompanyThreads[0]?.id ?? null);
+    if (!nextThread) return;
+
+    setSelectedCompanyTicker(selectedCompany.ticker);
+    setSelectedThreadId(nextThread.id);
+    updateSelectionUrl(selectedCompany.ticker, nextThread.id);
+    void fetchData({
+      includeNavigator: true,
+      companyTicker: selectedCompany.ticker,
+      threadId: nextThread.id,
+    });
+  }, [
+    createWorkbookThread,
+    fetchData,
+    hasUnsavedChanges,
+    selectedCompany,
+    selectedCompanyThreads,
+    threadSchemaReady,
+    updateSelectionUrl,
+  ]);
+
   useEffect(() => {
-    if (visibleRows.length === 0) {
+    if (visibleRows.length === 0 || visibleColumns.length === 0) {
       setSelection(null);
       setEditingCell(null);
       return;
     }
 
-    const defaultEditableCol = WORKBOOK_COLUMNS.findIndex((column) => column.editable);
+    const defaultEditableCol = Math.max(
+      0,
+      visibleColumns.findIndex((column) => column.editable),
+    );
+    const maxColIndex = visibleColumns.length - 1;
+
     if (!selection) {
       setSelection({
         startRow: 0,
@@ -740,31 +1346,24 @@ export default function DataSourcePage() {
     }
 
     const normalized = normalizeSelection(selection);
-    if (normalized.endRow >= visibleRows.length || normalized.startRow >= visibleRows.length) {
+    const rowOutOfRange =
+      normalized.endRow >= visibleRows.length || normalized.startRow >= visibleRows.length;
+    const colOutOfRange =
+      normalized.endCol > maxColIndex || normalized.startCol > maxColIndex;
+
+    if (rowOutOfRange || colOutOfRange) {
       setSelection({
-        startRow: 0,
-        endRow: 0,
-        startCol: normalized.startCol,
-        endCol: normalized.endCol,
+        startRow: rowOutOfRange ? 0 : normalized.startRow,
+        endRow: rowOutOfRange ? 0 : normalized.endRow,
+        startCol: Math.min(normalized.startCol, maxColIndex),
+        endCol: Math.min(normalized.endCol, maxColIndex),
       });
     }
-  }, [activeSheet, selection, visibleRows]);
+  }, [activeSheet, selection, visibleColumns, visibleRows]);
 
   useEffect(() => {
-    if (!selectedRow || !selectedField) {
-      setFormulaDraft("");
-      return;
-    }
-
-    const currentState = getWorkbookStateForCell(workbookCells, selectedRow.id, selectedField);
-    if (currentState?.formula && EDITABLE_WORKBOOK_FIELDS.has(selectedField)) {
-      setFormulaDraft(currentState.formula);
-      return;
-    }
-
-    const rawValue = getRowFieldValue(selectedRow, selectedField);
-    setFormulaDraft(rawValue == null ? "" : String(rawValue));
-  }, [selectedField, selectedRow, workbookCells, computedRows]);
+    syncFormulaDraftFromSelection();
+  }, [syncFormulaDraftFromSelection]);
 
   useEffect(() => {
     if (!hasUnsavedChanges) return undefined;
@@ -777,6 +1376,19 @@ export default function DataSourcePage() {
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [hasUnsavedChanges]);
+
+  useEffect(() => {
+    if (initialThreadSelectionAppliedRef.current) return;
+
+    initialThreadSelectionAppliedRef.current = true;
+    const threadId = searchParams.get("thread")?.trim() ?? null;
+    const companyTickerFromQuery = searchParams.get("company")?.trim().toUpperCase() ?? null;
+    void fetchData({
+      includeNavigator: true,
+      threadId,
+      companyTicker: companyTickerFromQuery,
+    });
+  }, [fetchData, searchParams]);
 
   const pushHistory = useCallback(() => {
     const snapshot: HistorySnapshot = {
@@ -864,13 +1476,13 @@ export default function DataSourcePage() {
       const row = visibleRows[rowIndex];
       if (!row) continue;
       for (let colIndex = normalized.startCol; colIndex <= normalized.endCol; colIndex += 1) {
-        const field = WORKBOOK_COLUMNS[colIndex]?.field;
+        const field = visibleColumns[colIndex]?.field;
         if (!field) continue;
         cells.push({ row, rowIndex, field, colIndex });
       }
     }
     return cells;
-  }, [selection, visibleRows]);
+  }, [selection, visibleColumns, visibleRows]);
 
   const selectGridCell = useCallback(
     (
@@ -1088,7 +1700,7 @@ export default function DataSourcePage() {
     const sel = normalizeSelection(selection);
     if (sel.startRow === sel.endRow && sel.startCol === sel.endCol) return;
     const topRow = visibleRows[sel.startRow];
-    const topColumn = WORKBOOK_COLUMNS[sel.startCol];
+    const topColumn = visibleColumns[sel.startCol];
     if (!topRow || !topColumn) return;
     const rowSpan = sel.endRow - sel.startRow + 1;
     const colSpan = sel.endCol - sel.startCol + 1;
@@ -1098,7 +1710,7 @@ export default function DataSourcePage() {
       for (const key of Object.keys(workflowMap)) {
         const [headRowId, headField] = key.split(":");
         const headRowIndex = visibleRows.findIndex((row) => row.id === headRowId);
-        const headColIndex = WORKBOOK_COLUMNS.findIndex((column) => column.field === headField);
+        const headColIndex = visibleColumns.findIndex((column) => column.field === headField);
         if (headRowIndex < 0 || headColIndex < 0) continue;
         if (
           headRowIndex >= sel.startRow &&
@@ -1112,7 +1724,7 @@ export default function DataSourcePage() {
       workflowMap[`${topRow.id}:${topColumn.field}`] = { rowSpan, colSpan };
       return { ...prev, [activeWorkflow]: workflowMap };
     });
-  }, [activeWorkflow, ensureEditingEnabled, selection, visibleRows]);
+  }, [activeWorkflow, ensureEditingEnabled, selection, visibleColumns, visibleRows]);
 
   const unmergeSelection = useCallback(() => {
     if (!selection) return;
@@ -1123,7 +1735,7 @@ export default function DataSourcePage() {
       for (const key of Object.keys(workflowMap)) {
         const [headRowId, headField] = key.split(":");
         const headRowIndex = visibleRows.findIndex((row) => row.id === headRowId);
-        const headColIndex = WORKBOOK_COLUMNS.findIndex((column) => column.field === headField);
+        const headColIndex = visibleColumns.findIndex((column) => column.field === headField);
         if (headRowIndex < 0 || headColIndex < 0) continue;
         if (
           headRowIndex >= sel.startRow &&
@@ -1136,7 +1748,7 @@ export default function DataSourcePage() {
       }
       return { ...prev, [activeWorkflow]: workflowMap };
     });
-  }, [activeWorkflow, ensureEditingEnabled, selection, visibleRows]);
+  }, [activeWorkflow, ensureEditingEnabled, selection, visibleColumns, visibleRows]);
 
   const hiddenMergedCells = useMemo(() => {
     const hidden = new Set<string>();
@@ -1144,20 +1756,20 @@ export default function DataSourcePage() {
     for (const [key, span] of Object.entries(merges)) {
       const [headRowId, headField] = key.split(":");
       const headRowIndex = visibleRows.findIndex((row) => row.id === headRowId);
-      const headColIndex = WORKBOOK_COLUMNS.findIndex((column) => column.field === headField);
+      const headColIndex = visibleColumns.findIndex((column) => column.field === headField);
       if (headRowIndex < 0 || headColIndex < 0) continue;
       for (let r = 0; r < span.rowSpan; r += 1) {
         for (let c = 0; c < span.colSpan; c += 1) {
           if (r === 0 && c === 0) continue;
           const row = visibleRows[headRowIndex + r];
-          const column = WORKBOOK_COLUMNS[headColIndex + c];
+          const column = visibleColumns[headColIndex + c];
           if (!row || !column) continue;
           hidden.add(`${row.id}:${column.field}`);
         }
       }
     }
     return hidden;
-  }, [cellMerges, activeWorkflow, visibleRows]);
+  }, [cellMerges, activeWorkflow, visibleColumns, visibleRows]);
 
   const selectionHasMerge = useMemo(() => {
     if (!selection) return false;
@@ -1166,7 +1778,7 @@ export default function DataSourcePage() {
     for (const key of Object.keys(merges)) {
       const [headRowId, headField] = key.split(":");
       const headRowIndex = visibleRows.findIndex((row) => row.id === headRowId);
-      const headColIndex = WORKBOOK_COLUMNS.findIndex((column) => column.field === headField);
+      const headColIndex = visibleColumns.findIndex((column) => column.field === headField);
       if (headRowIndex < 0 || headColIndex < 0) continue;
       if (
         headRowIndex >= sel.startRow &&
@@ -1178,7 +1790,7 @@ export default function DataSourcePage() {
       }
     }
     return false;
-  }, [selection, cellMerges, activeWorkflow, visibleRows]);
+  }, [selection, cellMerges, activeWorkflow, visibleColumns, visibleRows]);
 
   const canMergeSelection = useMemo(() => {
     if (!selection) return false;
@@ -1233,7 +1845,7 @@ export default function DataSourcePage() {
 
       const values: string[] = [];
       for (let colIndex = normalized.startCol; colIndex <= normalized.endCol; colIndex += 1) {
-        const field = WORKBOOK_COLUMNS[colIndex]?.field;
+        const field = visibleColumns[colIndex]?.field;
         if (!field) continue;
         const state = getWorkbookStateForCell(workbookCells, row.id, field);
         if (state?.formula && EDITABLE_WORKBOOK_FIELDS.has(field)) {
@@ -1257,7 +1869,7 @@ export default function DataSourcePage() {
       document.execCommand("copy");
       document.body.removeChild(textarea);
     }
-  }, [selection, visibleRows, workbookCells]);
+  }, [selection, visibleColumns, visibleRows, workbookCells]);
 
   const applyPastedText = useCallback((text: string) => {
     if (!selection) return;
@@ -1279,7 +1891,7 @@ export default function DataSourcePage() {
       const values = line.split("\t");
       values.forEach((value, colOffset) => {
         const row = visibleRows[normalized.startRow + rowOffset];
-        const column = WORKBOOK_COLUMNS[normalized.startCol + colOffset];
+        const column = visibleColumns[normalized.startCol + colOffset];
         if (!row || !column) return;
         if (!column.editable || row.periodEnd === "TTM") return;
 
@@ -1323,7 +1935,7 @@ export default function DataSourcePage() {
 
     setNumericOverrides(nextOverrides);
     setWorkbookCells(nextWorkbookCells);
-  }, [activeWorkflow, ensureEditingEnabled, numericOverrides, pushHistory, selection, visibleRows, workbookCells]);
+  }, [activeWorkflow, ensureEditingEnabled, numericOverrides, pushHistory, selection, visibleColumns, visibleRows, workbookCells]);
 
   const pasteSelection = useCallback(async () => {
     try {
@@ -1341,9 +1953,9 @@ export default function DataSourcePage() {
   }, [clearSelectionContent, copySelection]);
 
   const moveSelection = useCallback((nextRow: number, nextCol: number, extend = false) => {
-    if (visibleRows.length === 0) return;
+    if (visibleRows.length === 0 || visibleColumns.length === 0) return;
     const boundedRow = Math.max(0, Math.min(visibleRows.length - 1, nextRow));
-    const boundedCol = Math.max(0, Math.min(WORKBOOK_COLUMNS.length - 1, nextCol));
+    const boundedCol = Math.max(0, Math.min(visibleColumns.length - 1, nextCol));
 
     setSelection((prev) => {
       if (extend && prev) {
@@ -1357,13 +1969,13 @@ export default function DataSourcePage() {
         endCol: boundedCol,
       };
     });
-  }, [visibleRows.length]);
+  }, [visibleColumns.length, visibleRows.length]);
 
   const startInlineEdit = useCallback((seedText?: string) => {
     if (!selection) return;
     const normalized = normalizeSelection(selection);
     const row = visibleRows[normalized.endRow];
-    const column = WORKBOOK_COLUMNS[normalized.endCol];
+    const column = visibleColumns[normalized.endCol];
     if (!row || !column?.editable || row.periodEnd === "TTM") return;
     if (!ensureEditingEnabled(activeWorkflow)) return;
 
@@ -1377,7 +1989,7 @@ export default function DataSourcePage() {
     setEditingCell({ rowId: row.id, field: column.field });
     setInlineDraft(seedText ?? currentValue);
     setContextMenu(null);
-  }, [activeWorkflow, ensureEditingEnabled, selection, visibleRows, workbookCells]);
+  }, [activeWorkflow, ensureEditingEnabled, selection, visibleColumns, visibleRows, workbookCells]);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.target instanceof HTMLInputElement) return;
@@ -1403,7 +2015,7 @@ export default function DataSourcePage() {
 
     const normalized = normalizeSelection(selection);
     const row = visibleRows[normalized.endRow];
-    const column = WORKBOOK_COLUMNS[normalized.endCol];
+    const column = visibleColumns[normalized.endCol];
     if (!row || !column) return;
 
     if (event.key === "Delete" || event.key === "Backspace") {
@@ -1453,10 +2065,11 @@ export default function DataSourcePage() {
       event.preventDefault();
       startInlineEdit(event.key);
     }
-  }, [clearSelectionContent, copySelection, handleRedo, handleUndo, moveSelection, selection, startInlineEdit, visibleRows]);
+  }, [clearSelectionContent, copySelection, handleRedo, handleUndo, moveSelection, selection, startInlineEdit, visibleColumns, visibleRows]);
 
   const handleSave = useCallback(async () => {
     if (!hasUnsavedChanges) return;
+    if (!selectedThreadId && threadSchemaReady) return;
     if (hasFormulaErrors) {
       window.alert("Please fix formula errors before saving this workbook.");
       return;
@@ -1487,13 +2100,14 @@ export default function DataSourcePage() {
         mergedEditsMap.set(`${edit.id}:${edit.field}`, edit);
       }
 
-      const response = await fetch("/api/data-source", {
+      const response = await fetchWithAuth("/api/data-source", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           edits: [...mergedEditsMap.values()],
           workbookCells: flattenWorkbookCellsForSave(baseRows, workbookCells),
           workbookTickers: [...new Set(baseRows.map((row) => row.ticker))],
+          threadId: selectedThreadId,
         }),
       });
 
@@ -1509,17 +2123,18 @@ export default function DataSourcePage() {
     } finally {
       setSaving(false);
     }
-  }, [baseRows, computedRows, fetchData, hasFormulaErrors, hasUnsavedChanges, numericOverrides, workbookCells]);
+  }, [baseRows, computedRows, fetchData, hasFormulaErrors, hasUnsavedChanges, numericOverrides, selectedThreadId, threadSchemaReady, workbookCells]);
 
   const handleExportCsv = () => {
-    const headers = ["#", ...WORKBOOK_COLUMNS.map((column) => column.label)];
+    const sectionColumns = getWorkbookColumnsForSection(activeSheetConfig);
+    const headers = ["#", ...sectionColumns.map((column) => column.label)];
     const lines = [headers.join(",")];
 
     visibleRows.forEach((row) => {
-      const rowNumber = sheetRowNumbers[activeWorkflow][row.id] ?? "";
+      const rowNumber = sheetRowNumbers[row.id] ?? "";
       const values = [
         String(rowNumber),
-        ...WORKBOOK_COLUMNS.map((column) => {
+        ...sectionColumns.map((column) => {
           const value = getRowFieldValue(row, column.field);
           return typeof value === "string" ? `"${value.replace(/"/g, '""')}"` : String(value ?? "");
         }),
@@ -1531,7 +2146,7 @@ export default function DataSourcePage() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = activeWorkflow === "analyze" ? "quick-analyze-sheet.csv" : "competitor-analysis-sheet.csv";
+    link.download = `${activeSheetConfig.title.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "workbook"}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -1539,20 +2154,21 @@ export default function DataSourcePage() {
   const handleExportExcel = () => {
     const workbook = XLSX.utils.book_new();
 
-    for (const sheet of workbookSheets) {
-      const rows = sheet.rows;
+    for (const sheet of WORKBOOK_SECTIONS) {
+      const sectionColumns = getWorkbookColumnsForSection(sheet);
+      const rows = currentWorkbookRows;
       const aoa = [
-        ["#", ...WORKBOOK_COLUMNS.map((column) => column.label)],
+        ["#", ...sectionColumns.map((column) => column.label)],
         ...rows.map((row) => [
-          sheetRowNumbers[sheet.key][row.id] ?? "",
-          ...WORKBOOK_COLUMNS.map((column) => getRowFieldValue(row, column.field) ?? ""),
+          sheetRowNumbers[row.id] ?? "",
+          ...sectionColumns.map((column) => getRowFieldValue(row, column.field) ?? ""),
         ]),
       ];
 
       const worksheet = XLSX.utils.aoa_to_sheet(aoa);
       worksheet["!cols"] = [
         { wch: 8 },
-        ...WORKBOOK_COLUMNS.map((column) => {
+        ...sectionColumns.map((column) => {
           switch (column.field) {
             case "ticker":
               return { wch: 10 };
@@ -1579,7 +2195,7 @@ export default function DataSourcePage() {
       }
 
       rows.forEach((row, rowIndex) => {
-        WORKBOOK_COLUMNS.forEach((column, columnIndex) => {
+        sectionColumns.forEach((column, columnIndex) => {
           const address = XLSX.utils.encode_cell({ r: rowIndex + 1, c: columnIndex + 1 });
           const cellState = getWorkbookStateForCell(workbookCells, row.id, column.field);
           const style = buildXlsxStyle(cellState?.style ?? null, column.align);
@@ -1599,12 +2215,12 @@ export default function DataSourcePage() {
         });
       });
 
-      const sheetMerges = cellMerges[sheet.key] ?? {};
+      const sheetMerges = cellMerges[activeWorkflow] ?? {};
       const xlsxMerges: XLSX.Range[] = [];
       for (const [mergeKey, span] of Object.entries(sheetMerges)) {
         const [headRowId, headField] = mergeKey.split(":");
         const headRowIdx = rows.findIndex((row) => row.id === headRowId);
-        const headColIdx = WORKBOOK_COLUMNS.findIndex((column) => column.field === headField);
+        const headColIdx = sectionColumns.findIndex((column) => column.field === headField);
         if (headRowIdx < 0 || headColIdx < 0) continue;
         xlsxMerges.push({
           s: { r: headRowIdx + 1, c: headColIdx + 1 },
@@ -1632,18 +2248,6 @@ export default function DataSourcePage() {
     });
   };
 
-  const fieldLabelByKey = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const column of WORKBOOK_COLUMNS) map.set(column.field, column.label);
-    return map;
-  }, []);
-
-  const formatHistoryValue = (value: number | string | null) => {
-    if (value === null || value === undefined || value === "") return "—";
-    if (typeof value === "number") return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
-    return String(value);
-  };
-
   const formatHistoryTimestamp = (iso: string) => {
     try {
       return new Date(iso).toLocaleString(undefined, {
@@ -1656,108 +2260,6 @@ export default function DataSourcePage() {
     } catch {
       return iso;
     }
-  };
-
-  const renderHistoryView = () => {
-    const allPastRows = [...pastRowsByWorkflow.analyze, ...pastRowsByWorkflow.competitor].filter(
-      (row) => row.periodEnd !== "TTM",
-    );
-    allPastRows.sort((a, b) => (b.savedAt ?? "").localeCompare(a.savedAt ?? ""));
-
-    return (
-      <div className="space-y-6">
-        <section>
-          <div className="mb-3 flex items-baseline justify-between gap-2">
-            <h3 className="text-base font-semibold text-slate-900">Past filings</h3>
-            <span className="text-[11px] text-slate-500">{allPastRows.length} filing(s)</span>
-          </div>
-          <p className="mb-3 text-xs text-slate-500">
-            Older uploads not currently shown in the workbook. Re-upload the same filing in Quick Analyze or Competitor
-            Analysis to make it the current PDF.
-          </p>
-          {allPastRows.length === 0 ? (
-            <p className="rounded-md border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-xs text-slate-400">
-              No past filings yet.
-            </p>
-          ) : (
-            <div className="overflow-x-auto rounded-lg border border-slate-200">
-              <table className="min-w-full text-xs">
-                <thead className="bg-slate-100 text-left text-slate-600">
-                  <tr>
-                    <th className="px-3 py-2 font-semibold">Workflow</th>
-                    <th className="px-3 py-2 font-semibold">Ticker</th>
-                    <th className="px-3 py-2 font-semibold">Quarter</th>
-                    <th className="px-3 py-2 font-semibold">Period End</th>
-                    <th className="px-3 py-2 font-semibold">Uploaded</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {allPastRows.map((row) => (
-                    <tr key={row.id} className="border-t border-slate-100 hover:bg-slate-50">
-                      <td className="px-3 py-2 capitalize text-slate-600">{row.workflowOrigin}</td>
-                      <td className="px-3 py-2 font-semibold text-slate-800">{row.ticker}</td>
-                      <td className="px-3 py-2 text-slate-700">{row.quarterLabel}</td>
-                      <td className="px-3 py-2 text-slate-700">{row.periodEnd}</td>
-                      <td className="px-3 py-2 text-slate-500">
-                        {row.savedAt ? formatHistoryTimestamp(row.savedAt) : "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-
-        <section>
-          <div className="mb-3 flex items-baseline justify-between gap-2">
-            <h3 className="text-base font-semibold text-slate-900">Edit audit log</h3>
-            <span className="text-[11px] text-slate-500">{editLog.length} entr{editLog.length === 1 ? "y" : "ies"}</span>
-          </div>
-          <p className="mb-3 text-xs text-slate-500">
-            Every saved value change to the workbook, capped at the 500 most recent entries per ticker.
-          </p>
-          {editLog.length === 0 ? (
-            <p className="rounded-md border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-xs text-slate-400">
-              No edits saved yet.
-            </p>
-          ) : (
-            <div className="max-h-[60vh] overflow-x-auto overflow-y-auto rounded-lg border border-slate-200">
-              <table className="min-w-full text-xs">
-                <thead className="sticky top-0 bg-slate-100 text-left text-slate-600">
-                  <tr>
-                    <th className="px-3 py-2 font-semibold">When</th>
-                    <th className="px-3 py-2 font-semibold">Ticker</th>
-                    <th className="px-3 py-2 font-semibold">Period</th>
-                    <th className="px-3 py-2 font-semibold">Field</th>
-                    <th className="px-3 py-2 text-right font-semibold">Previous</th>
-                    <th className="px-3 py-2 text-right font-semibold">New</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {editLog.map((entry, idx) => (
-                    <tr key={`${entry.at}-${entry.ticker}-${entry.field}-${idx}`} className="border-t border-slate-100">
-                      <td className="whitespace-nowrap px-3 py-2 text-slate-500">{formatHistoryTimestamp(entry.at)}</td>
-                      <td className="px-3 py-2 font-semibold text-slate-800">{entry.ticker}</td>
-                      <td className="whitespace-nowrap px-3 py-2 text-slate-600">{entry.periodEnd}</td>
-                      <td className="px-3 py-2 text-slate-700">
-                        {entry.fieldLabel ?? fieldLabelByKey.get(entry.field) ?? entry.field}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2 text-right text-slate-500">
-                        {formatHistoryValue(entry.prevValue)}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-slate-800">
-                        {formatHistoryValue(entry.nextValue)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-      </div>
-    );
   };
 
   return (
@@ -1786,8 +2288,8 @@ export default function DataSourcePage() {
                     Heads up before you edit
                   </h2>
                   <p className="mt-2 text-xs leading-relaxed text-slate-600">
-                    Edits in this workbook will change the values shown in Quick Analyze and Competitor Analysis. Verify
-                    any changed values against the original filing PDF or SEC source before saving.
+                    Edits in this workbook are saved to the current company thread only. Verify any changed values
+                    against the original filing PDF or SEC source before saving.
                   </p>
                   <p className="mt-2 text-[11px] font-medium text-slate-400">
                     This message only appears once.
@@ -1818,8 +2320,11 @@ export default function DataSourcePage() {
           <div>
             <h1 className="text-lg font-bold text-slate-900">Centralized Data Source Workbook</h1>
             <p className="text-xs text-slate-500">
-              {baseRows.length} records · Excel-like workbook with formulas, formatting, keyboard navigation, copy/paste,
-              and persisted manual overrides.
+              {!threadSchemaReady && selectedCompany
+                ? `${selectedCompany.ticker} company workbook loaded in compatibility mode until the workbook-thread migration is applied.`
+                : activeWorkbookThread && selectedCompany
+                ? `${selectedCompany.ticker} thread: ${activeWorkbookThread.title}. ${baseRows.length} records in this workbook snapshot.`
+                : `${baseRows.length} records - Excel-like workbook with formulas, formatting, keyboard navigation, copy/paste, and persisted manual overrides.`}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1864,27 +2369,146 @@ export default function DataSourcePage() {
           </div>
         </div>
 
-        {loading ? (
+        {!threadSchemaReady && threadSchemaMessage && (
+          <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <span className="font-semibold">Migration needed:</span> {threadSchemaMessage}. Run <span className="font-mono">supabase-chat-schema.sql</span> in Supabase SQL Editor, then refresh.
+          </div>
+        )}
+
+        {navigatorLoading ? (
           <div className="flex items-center justify-center py-24">
             <Loader2 className="h-5 w-5 animate-spin text-primary" />
-            <span className="ml-2 text-sm text-slate-500">Loading workbook…</span>
+            <span className="ml-2 text-sm text-slate-500">Loading companies and workbook threads...</span>
+          </div>
+        ) : companyRailOptions.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center shadow-sm">
+            <p className="text-sm font-semibold text-slate-900">No company workbooks available yet.</p>
+            <p className="mt-2 text-sm text-slate-500">
+              Upload or analyze filings first, then each company will appear here with its own workbook thread.
+            </p>
           </div>
         ) : (
-          <div className="space-y-6">
-            <div className="rounded-[28px] border border-slate-200/80 bg-gradient-to-b from-slate-50 to-slate-100 p-3 shadow-lg shadow-slate-200/60">
-              <div className="rounded-[24px] border border-slate-200/80 bg-white/90 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
-                {activeSheet === "history" ? renderHistoryView() : (<>
+          <div className="grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
+            <aside className="space-y-4">
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">Companies</p>
+                <div className="mt-3 space-y-2">
+                  {companyRailOptions.map((company) => {
+                    const threadCount = threadsByCompany.get(company.ticker)?.length ?? 0;
+                    const isActive = company.ticker === selectedCompanyTicker;
+
+                    return (
+                      <button
+                        key={company.ticker}
+                        type="button"
+                        onClick={() => void selectCompanyThread(company)}
+                        className={`flex w-full items-center justify-between rounded-xl border px-3 py-3 text-left transition ${
+                          isActive
+                            ? "border-[#217346]/30 bg-[#eef6f0] shadow-sm"
+                            : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-slate-900">{company.ticker}</p>
+                          <p className="truncate text-xs text-slate-500">{company.companyName}</p>
+                        </div>
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
+                          {threadCount}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                      {selectedCompany?.ticker ?? "No company"}
+                    </p>
+                    <h3 className="mt-2 text-sm font-semibold text-slate-900">
+                      {selectedCompany?.companyName ?? "Select a company"}
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleCreateThreadForSelectedCompany()}
+                    disabled={!threadSchemaReady || !selectedCompany || creatingThreadTicker === selectedCompany.ticker}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {creatingThreadTicker === selectedCompany?.ticker ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Plus className="h-3.5 w-3.5" />
+                    )}
+                    New thread
+                  </button>
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  {!threadSchemaReady ? (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-4 text-xs leading-relaxed text-amber-800">
+                      <p className="font-semibold">Workbook threads are waiting on a Supabase migration.</p>
+                      <p className="mt-1">
+                        Run <span className="font-mono">supabase-chat-schema.sql</span> in Supabase SQL Editor, then refresh this page.
+                      </p>
+                    </div>
+                  ) : selectedCompanyThreads.length === 0 || !selectedCompany ? null : (
+                    selectedCompanyThreads.map((thread, index) => {
+                      const isActive = thread.id === selectedThreadId;
+                      return (
+                        <button
+                          key={thread.id}
+                          type="button"
+                          onClick={() => void selectCompanyThread(selectedCompany, thread.id)}
+                          className={`block w-full rounded-xl border px-3 py-3 text-left transition ${
+                            isActive
+                              ? "border-[#217346]/30 bg-[#eef6f0] shadow-sm"
+                              : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="truncate text-sm font-semibold text-slate-900">{thread.title}</p>
+                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
+                              {index + 1}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Updated {formatHistoryTimestamp(thread.updatedAt)}
+                          </p>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </aside>
+
+            <div className="space-y-6">
+              {loading ? (
+                <div className="flex items-center justify-center rounded-[18px] border border-[#d6dbe1] bg-white py-24 shadow-[0_18px_40px_rgba(15,23,42,0.08)]">
+                  <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                  <span className="ml-2 text-sm text-slate-500">Loading workbook...</span>
+                </div>
+              ) : (
+                <div
+                  className="overflow-hidden rounded-[18px] border border-[#d6dbe1] bg-white shadow-[0_18px_40px_rgba(15,23,42,0.08)]"
+                  style={{ fontFamily: WORKBOOK_FONT_FAMILY }}
+                >
+              <div className="border-b border-[#d6dbe1] bg-[#fbfbfb] p-4">
+                <>
                 <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                   <div>
                     <div className="flex items-center gap-2">
                       <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${activeSheetConfig.accentClass}`}>
-                        {activeSheetConfig.rows.length} row(s)
+                        {currentWorkbookRows.length} row(s)
                       </span>
                       <span
                         className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
                           editingEnabled[activeWorkflow]
-                            ? "border-primary/30 bg-primary/10 text-primary"
-                            : "border-slate-200 bg-slate-50 text-slate-600"
+                            ? "border-[#217346]/30 bg-[#217346]/10 text-[#217346]"
+                            : "border-[#d7dce3] bg-white text-slate-600"
                         }`}
                       >
                         {editingEnabled[activeWorkflow] ? "Editing enabled" : "Read-only"}
@@ -1894,8 +2518,15 @@ export default function DataSourcePage() {
                           Fix formula errors before save
                         </span>
                       )}
+                      <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-500">
+                        {editLog.length} saved edit{editLog.length === 1 ? "" : "s"}
+                      </span>
                     </div>
-                    <h2 className="mt-3 text-base font-semibold text-slate-900">{activeSheetConfig.title}</h2>
+                    <h2 className="mt-3 text-base font-semibold text-slate-900">
+                      {selectedCompany
+                        ? `${selectedCompany.companyName} (${selectedCompany.ticker})`
+                        : activeSheetConfig.title}
+                    </h2>
                     <p className="mt-1 text-xs text-slate-500">{activeSheetConfig.description}</p>
                   </div>
 
@@ -1905,8 +2536,8 @@ export default function DataSourcePage() {
                       onClick={() => toggleEditMode(activeWorkflow)}
                       className={`inline-flex items-center gap-1 rounded-md border px-3 py-2 text-xs font-semibold transition ${
                         editingEnabled[activeWorkflow]
-                          ? "border-primary/40 bg-primary/10 text-primary"
-                          : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                          ? "border-[#217346]/35 bg-[#217346]/10 text-[#217346]"
+                          : "border-[#d0d7de] bg-white text-slate-700 hover:bg-[#f7f7f7]"
                       }`}
                     >
                       {editingEnabled[activeWorkflow] ? "Lock sheet" : "Edit data"}
@@ -1917,7 +2548,7 @@ export default function DataSourcePage() {
                         if (!ensureEditingEnabled(activeWorkflow)) return;
                         clearSelectionContent();
                       }}
-                      className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                      className="inline-flex items-center gap-1 rounded-md border border-[#d0d7de] bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-[#f7f7f7]"
                     >
                       <Eraser className="h-3 w-3" />
                       Clear selected
@@ -1925,7 +2556,7 @@ export default function DataSourcePage() {
                   </div>
                 </div>
 
-                <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
+                <div className="mb-4 rounded-xl border border-[#d6dbe1] bg-[#f3f3f3] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]">
                   <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
                     <div className="flex flex-wrap items-center gap-2">
                       <ToolbarButton title="Undo" disabled={undoStack.length === 0} onClick={handleUndo}>
@@ -1978,10 +2609,10 @@ export default function DataSourcePage() {
                           if (value) applyBorderPreset(value);
                           event.target.value = "";
                         }}
-                        className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs outline-none focus:ring-1 focus:ring-primary/40"
+                        className="h-9 rounded-md border border-[#d0d7de] bg-white px-2 text-xs outline-none focus:ring-1 focus:ring-[#217346]/30"
                       >
                         <option value="" disabled>
-                          Border…
+                          Border...
                         </option>
                         <option value="none">None</option>
                         <option value="all">All sides</option>
@@ -2017,7 +2648,7 @@ export default function DataSourcePage() {
                         title={selectionHasMerge ? "Unmerge selection" : "Merge selected cells"}
                         disabled={!canMergeSelection && !selectionHasMerge}
                         onClick={() => (selectionHasMerge ? unmergeSelection() : mergeSelection())}
-                        className="inline-flex h-9 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="inline-flex h-9 items-center gap-1 rounded-md border border-[#d0d7de] bg-white px-2.5 text-xs font-semibold text-slate-600 transition hover:bg-[#f7f7f7] disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {selectionHasMerge ? "Unmerge" : "Merge"}
                       </button>
@@ -2029,7 +2660,7 @@ export default function DataSourcePage() {
                         <select
                           value={selectedStyle?.fontFamily ?? "Calibri"}
                           onChange={(event) => applyStylePatch({ fontFamily: event.target.value })}
-                          className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs outline-none focus:ring-1 focus:ring-primary/40"
+                          className="h-9 rounded-md border border-[#d0d7de] bg-white px-2 text-xs outline-none focus:ring-1 focus:ring-[#217346]/30"
                           style={{ fontFamily: selectedStyle?.fontFamily ?? "Calibri" }}
                         >
                           {["Arial", "Calibri", "Times New Roman", "Courier New", "Georgia", "Verdana"].map((family) => (
@@ -2044,7 +2675,7 @@ export default function DataSourcePage() {
                         <select
                           value={selectedStyle?.fontSize ?? 12}
                           onChange={(event) => applyStylePatch({ fontSize: Number(event.target.value) })}
-                          className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs outline-none focus:ring-1 focus:ring-primary/40"
+                          className="h-9 rounded-md border border-[#d0d7de] bg-white px-2 text-xs outline-none focus:ring-1 focus:ring-[#217346]/30"
                         >
                           {[8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48].map((size) => (
                             <option key={size} value={size}>
@@ -2062,7 +2693,7 @@ export default function DataSourcePage() {
                               numberFormat: event.target.value as "auto" | DataSourceWorkbookNumberFormat,
                             })
                           }
-                          className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs outline-none focus:ring-1 focus:ring-primary/40"
+                          className="h-9 rounded-md border border-[#d0d7de] bg-white px-2 text-xs outline-none focus:ring-1 focus:ring-[#217346]/30"
                         >
                           {NUMBER_FORMAT_OPTIONS.map((option) => (
                             <option key={option.value} value={option.value}>
@@ -2077,7 +2708,7 @@ export default function DataSourcePage() {
                           type="color"
                           value={selectedStyle?.textColor ?? "#0f172a"}
                           onChange={(event) => applyStylePatch({ textColor: event.target.value })}
-                          className="h-9 w-9 cursor-pointer rounded-lg border border-slate-200 bg-white p-1"
+                          className="h-9 w-9 cursor-pointer rounded-md border border-[#d0d7de] bg-white p-1"
                         />
                       </label>
                       <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
@@ -2086,32 +2717,55 @@ export default function DataSourcePage() {
                           type="color"
                           value={selectedStyle?.fillColor ?? "#ffffff"}
                           onChange={(event) => applyStylePatch({ fillColor: event.target.value })}
-                          className="h-9 w-9 cursor-pointer rounded-lg border border-slate-200 bg-white p-1"
+                          className="h-9 w-9 cursor-pointer rounded-md border border-[#d0d7de] bg-white p-1"
                         />
                       </label>
                     </div>
                   </div>
 
-                  <div className="mt-3 grid gap-2 xl:grid-cols-[110px_minmax(0,1fr)]">
-                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600">
-                      {selection && selectedRow && selectedColumn
-                        ? `${columnIndexToLetter(normalizeSelection(selection).endCol)}${sheetRowNumbers[activeWorkflow][selectedRow.id] ?? normalizeSelection(selection).endRow + 1}`
+                  <div className="mt-3 grid gap-2 xl:grid-cols-[96px_36px_36px_minmax(0,1fr)]">
+                      <div className="flex h-9 items-center rounded-md border border-[#cfd6dd] bg-white px-3 text-xs font-semibold text-slate-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
+                      {normalizedSelection && selectedRow && selectedColumn
+                        ? `${columnIndexToLetter(WORKBOOK_COLUMN_INDEX_BY_FIELD.get(selectedColumn.field) ?? normalizedSelection.endCol)}${sheetRowNumbers[selectedRow.id] ?? normalizedSelection.endRow + 1}`
                         : "No cell"}
                     </div>
-                    <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
-                      <span className="text-xs font-semibold text-slate-500">fx</span>
+                    <button
+                      type="button"
+                      onClick={syncFormulaDraftFromSelection}
+                      disabled={!selectedRow || !selectedField}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-[#cfd6dd] bg-white text-slate-500 transition hover:bg-[#f7f7f7] disabled:cursor-not-allowed disabled:opacity-40"
+                      title="Revert formula bar to selected cell value"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!selectedRow || !selectedField || !canEditSelectedCell) return;
+                        void commitCellInput(selectedRow, selectedField, formulaDraft);
+                      }}
+                      disabled={!selectedRow || !selectedField || !canEditSelectedCell}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-[#cfd6dd] bg-white text-[#217346] transition hover:bg-[#eef7f1] disabled:cursor-not-allowed disabled:text-slate-300"
+                      title="Apply formula bar value to selected cell"
+                    >
+                      <span className="text-[10px] font-bold leading-none">OK</span>
+                    </button>
+                    <div className="flex items-center rounded-md border border-[#cfd6dd] bg-white pr-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
+                      <span className="flex h-9 w-10 items-center justify-center border-r border-[#e2e6ea] text-xs font-semibold text-slate-500">
+                        fx
+                      </span>
                       <input
                         value={formulaDraft}
                         onChange={(event) => setFormulaDraft(event.target.value)}
                         onKeyDown={(event) => {
                           if (event.key !== "Enter" || !selectedRow || !selectedField) return;
                           event.preventDefault();
-                          if (EDITABLE_WORKBOOK_FIELDS.has(selectedField)) {
+                          if (canEditSelectedCell) {
                             void commitCellInput(selectedRow, selectedField, formulaDraft);
                           }
                         }}
-                        disabled={!selectedRow || !selectedField || !EDITABLE_WORKBOOK_FIELDS.has(selectedField)}
-                        className="min-w-0 flex-1 bg-transparent text-sm text-slate-700 outline-none disabled:cursor-not-allowed disabled:text-slate-400"
+                        disabled={!selectedRow || !selectedField || !canEditSelectedCell}
+                        className="min-w-0 flex-1 bg-transparent px-3 text-sm text-slate-700 outline-none disabled:cursor-not-allowed disabled:text-slate-400"
                         placeholder="Type a number or formula, e.g. =E2*1.1"
                       />
                     </div>
@@ -2129,7 +2783,7 @@ export default function DataSourcePage() {
                     event.preventDefault();
                     applyPastedText(event.clipboardData.getData("text/plain"));
                   }}
-                  className="max-h-[62vh] overflow-auto rounded-[22px] border border-slate-200 bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] outline-none focus:ring-2 focus:ring-primary/20"
+                  className="max-h-[62vh] overflow-auto border border-[#d6dbe1] bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] outline-none focus:ring-2 focus:ring-[#217346]/20"
                 >
                   <table
                     className="border-separate border-spacing-0 text-xs"
@@ -2137,41 +2791,44 @@ export default function DataSourcePage() {
                   >
                     <colgroup>
                       <col style={{ width: getColumnWidth(ROW_NUMBER_COLUMN_KEY) }} />
-                      {WORKBOOK_COLUMNS.map((column) => (
+                      {visibleColumns.map((column) => (
                         <col key={column.field} style={{ width: getColumnWidth(column.field) }} />
                       ))}
                     </colgroup>
                     <thead className="sticky top-0 z-20">
-                      <tr className="bg-slate-100 text-slate-500">
-                        <th className="sticky left-0 z-30 border-b border-r border-slate-200 bg-slate-100 px-3 py-2 text-center font-semibold">
+                      <tr className="bg-[#f3f3f3] text-[#59636f]">
+                        <th className="sticky left-0 z-30 border-b border-r border-[#d6dbe1] bg-[#f3f3f3] px-3 py-2 text-center font-semibold">
                           #
                         </th>
-                        {WORKBOOK_COLUMNS.map((column, colIndex) => (
-                          <th
-                            key={`${column.field}-letter`}
-                            className="border-b border-r border-slate-200 bg-slate-100 px-3 py-2 text-center font-semibold"
-                          >
-                            {columnIndexToLetter(colIndex)}
-                          </th>
-                        ))}
+                        {visibleColumns.map((column) => {
+                          const globalIndex = WORKBOOK_COLUMN_INDEX_BY_FIELD.get(column.field) ?? 0;
+                          return (
+                            <th
+                              key={`${column.field}-letter`}
+                              className="border-b border-r border-[#d6dbe1] bg-[#f3f3f3] px-3 py-2 text-center font-semibold"
+                            >
+                              {columnIndexToLetter(globalIndex)}
+                            </th>
+                          );
+                        })}
                       </tr>
-                      <tr className="bg-slate-800 text-white">
-                        <th className="sticky left-0 z-30 border-b border-r border-slate-700 bg-slate-800 px-3 py-2 text-center font-semibold">
+                      <tr className="bg-[#fafafa] text-slate-700">
+                        <th className="sticky left-0 z-30 border-b border-r border-[#d6dbe1] bg-[#f8f8f8] px-3 py-2 text-center font-semibold text-slate-500">
                           Row
                         </th>
-                        {WORKBOOK_COLUMNS.map((column) => {
+                        {visibleColumns.map((column) => {
                           const activeSort = sortByWorkflow[activeWorkflow];
                           const sortIndicator =
                             activeSort?.field === column.field
                               ? activeSort.direction === "asc"
-                                ? " ▲"
-                                : " ▼"
+                                ? " ^"
+                                : " v"
                               : "";
 
                           return (
                             <th
                               key={column.field}
-                              className={`relative border-b border-r border-slate-700 bg-slate-800 px-3 py-2 font-semibold ${
+                              className={`relative border-b border-r border-[#d6dbe1] bg-[#fafafa] px-3 py-2 font-semibold ${
                                 column.align === "right"
                                   ? "text-right"
                                   : column.align === "center"
@@ -2182,10 +2839,10 @@ export default function DataSourcePage() {
                               <button
                                 type="button"
                                 onClick={() => toggleSort(column.field)}
-                                className="inline-flex w-full items-center gap-1 truncate text-left"
+                                className="inline-flex w-full items-center gap-1 truncate text-left hover:text-slate-900"
                               >
                                 <span className="truncate">{column.label}</span>
-                                <span className="text-[10px] text-slate-300">{sortIndicator}</span>
+                                <span className="text-[10px] text-slate-400">{sortIndicator}</span>
                               </button>
                               <span
                                 role="separator"
@@ -2193,7 +2850,7 @@ export default function DataSourcePage() {
                                 aria-label={`Resize ${column.label} column`}
                                 onMouseDown={(event) => handleColumnResizeStart(column.field, event)}
                                 onClick={(event) => event.stopPropagation()}
-                                className="absolute right-0 top-0 z-10 flex h-full w-1.5 cursor-col-resize select-none items-center justify-center bg-transparent transition hover:bg-blue-400/70 active:bg-blue-500"
+                                className="absolute right-0 top-0 z-10 flex h-full w-1.5 cursor-col-resize select-none items-center justify-center bg-transparent transition hover:bg-[#217346]/35 active:bg-[#217346]/60"
                               />
                             </th>
                           );
@@ -2202,13 +2859,13 @@ export default function DataSourcePage() {
                     </thead>
                     <tbody>
                       {visibleRows.map((row, rowIndex) => {
-                        const canonicalRowNumber = sheetRowNumbers[activeWorkflow][row.id] ?? rowIndex + 1;
+                        const canonicalRowNumber = sheetRowNumbers[row.id] ?? rowIndex + 1;
                         return (
-                          <tr key={row.id} className={rowIndex % 2 === 1 ? "bg-slate-50/40" : "bg-white"}>
-                            <td className="sticky left-0 z-10 border-b border-r border-slate-200 bg-inherit px-3 py-2 text-center font-semibold text-slate-500">
+                          <tr key={row.id} className="bg-white">
+                            <td className="sticky left-0 z-10 border-b border-r border-[#dfe4ea] bg-[#f8f8f8] px-3 py-2 text-center font-semibold text-slate-500">
                               {canonicalRowNumber}
                             </td>
-                            {WORKBOOK_COLUMNS.map((column, colIndex) => {
+                            {visibleColumns.map((column, colIndex) => {
                               const field = column.field;
                               const cellKey = `${row.id}:${field}`;
                               if (hiddenMergedCells.has(cellKey)) return null;
@@ -2216,7 +2873,15 @@ export default function DataSourcePage() {
                               const cellState = getWorkbookStateForCell(workbookCells, row.id, field);
                               const cellStyle = normalizeCellStyle(cellState?.style);
                               const isSelected = isCellInSelection(selection, rowIndex, colIndex);
+                              const globalColIndex = WORKBOOK_COLUMN_INDEX_BY_FIELD.get(field) ?? colIndex;
+                              const referenceHighlightIndex = formulaReferenceHighlights.get(`${rowIndex}:${globalColIndex}`);
+                              const referenceHighlight =
+                                typeof referenceHighlightIndex === "number"
+                                  ? FORMULA_REFERENCE_COLORS[referenceHighlightIndex]
+                                  : null;
                               const isEditing = editingCell?.rowId === row.id && editingCell?.field === field;
+                              const isActiveCell =
+                                normalizedSelection?.endRow === rowIndex && normalizedSelection?.endCol === colIndex;
                               const formulaError = formulaErrors[`${row.id}:${field}`];
                               const rawValue = getRowFieldValue(row, field);
                               const displayValue = formulaError
@@ -2258,12 +2923,10 @@ export default function DataSourcePage() {
                                       startInlineEdit();
                                     }
                                   }}
-                                  className={`border-b border-r border-slate-200 px-0 py-0 ${
-                                    isSelected ? "ring-2 ring-inset ring-primary/50" : ""
-                                  }`}
+                                  className="border-b border-r border-[#dfe4ea] bg-white px-0 py-0"
                                 >
                                   <div
-                                    className={`min-h-[38px] px-3 py-2 ${
+                                    className={`relative min-h-[32px] px-2.5 py-1.5 ${
                                       column.align === "right"
                                         ? "text-right"
                                         : column.align === "center"
@@ -2273,7 +2936,11 @@ export default function DataSourcePage() {
                                       formulaError ? "font-semibold text-red-600" : "text-slate-700"
                                     }`}
                                     style={{
-                                      backgroundColor: cellStyle?.fillColor ?? (isSelected ? "rgba(59,130,246,0.08)" : undefined),
+                                      backgroundColor:
+                                        cellStyle?.fillColor ??
+                                        (isSelected
+                                          ? EXCEL_SELECTION_FILL
+                                          : referenceHighlight?.fill),
                                       color: formulaError ? undefined : cellStyle?.textColor ?? undefined,
                                       fontWeight: cellStyle?.bold ? 700 : undefined,
                                       fontStyle: cellStyle?.italic ? "italic" : undefined,
@@ -2290,6 +2957,12 @@ export default function DataSourcePage() {
                                       borderRight: cellStyle?.borderRight ? "1px solid #94a3b8" : undefined,
                                       fontSize: cellStyle?.fontSize ? `${cellStyle.fontSize}px` : undefined,
                                       fontFamily: cellStyle?.fontFamily ?? undefined,
+                                      boxShadow: [
+                                        isActiveCell ? `inset 0 0 0 2px ${EXCEL_SELECTION_BORDER}` : null,
+                                        referenceHighlight ? `inset 0 0 0 2px ${referenceHighlight.border}` : null,
+                                      ]
+                                        .filter(Boolean)
+                                        .join(", ") || undefined,
                                     }}
                                   >
                                     {isEditing ? (
@@ -2317,6 +2990,12 @@ export default function DataSourcePage() {
                                         {displayValue}
                                       </span>
                                     )}
+                                    {isActiveCell && !isEditing && (
+                                      <span
+                                        className="pointer-events-none absolute bottom-0 right-0 h-1.5 w-1.5 translate-x-1/2 translate-y-1/2 rounded-[1px]"
+                                        style={{ backgroundColor: EXCEL_SELECTION_BORDER }}
+                                      />
+                                    )}
                                   </div>
                                 </td>
                               );
@@ -2324,10 +3003,41 @@ export default function DataSourcePage() {
                           </tr>
                         );
                       })}
-                      {visibleRows.length === 0 && (
+                      {Array.from({ length: placeholderRowCount }, (_, placeholderOffset) => {
+                        const rowNumber = visibleRows.length + placeholderOffset + 1;
+                        return (
+                          <tr
+                            key={`placeholder-row-${activeSheet}-${rowNumber}`}
+                            className="bg-white"
+                          >
+                            <td className="sticky left-0 z-10 border-b border-r border-[#dfe4ea] bg-[#f8f8f8] px-3 py-2 text-center font-semibold text-slate-300">
+                              {rowNumber}
+                            </td>
+                            {visibleColumns.map((column) => (
+                              <td
+                                key={`placeholder-row-${activeSheet}-${rowNumber}-${column.field}`}
+                                className="border-b border-r border-[#dfe4ea] bg-white px-0 py-0"
+                              >
+                                <div
+                                  className={`min-h-[32px] px-2.5 py-1.5 text-slate-300 ${
+                                    column.align === "right"
+                                      ? "text-right"
+                                      : column.align === "center"
+                                        ? "text-center"
+                                        : "text-left"
+                                  }`}
+                                >
+                                  <span className="block select-none">&nbsp;</span>
+                                </div>
+                              </td>
+                            ))}
+                          </tr>
+                        );
+                      })}
+                      {visibleRows.length === 0 && !shouldPadWorkbookRows && (
                         <tr>
                           <td
-                            colSpan={WORKBOOK_COLUMNS.length + 1}
+                            colSpan={visibleColumns.length + 1}
                             className="px-4 py-10 text-center text-sm text-slate-400"
                           >
                             No rows match the current filter.
@@ -2424,10 +3134,10 @@ export default function DataSourcePage() {
                     </button>
                   </div>
                 ) : null}
-                </>)}
+                </>
               </div>
 
-              <div className="mt-3 flex items-center gap-3 rounded-[20px] border border-slate-200/80 bg-slate-100/95 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
+              <div className="flex items-center gap-3 border-t border-[#d6dbe1] bg-[#f3f3f3] px-3 py-2">
                 <div className="flex items-center gap-1 text-slate-400">
                   <button
                     type="button"
@@ -2450,7 +3160,7 @@ export default function DataSourcePage() {
                 <div className="h-5 w-px bg-slate-200" />
 
                 <div className="flex min-w-0 flex-1 items-end gap-2 overflow-x-auto pb-1">
-                  {workbookSheets.map((sheet) => {
+                  {WORKBOOK_SECTIONS.map((sheet) => {
                     const isActive = sheet.key === activeSheet;
                     return (
                       <button
@@ -2460,63 +3170,23 @@ export default function DataSourcePage() {
                           setActiveSheet(sheet.key);
                           workbookRef.current?.focus();
                         }}
-                        className={`inline-flex min-w-fit items-center gap-2 rounded-t-xl border px-4 py-2 text-sm font-semibold transition ${
+                        className={`inline-flex min-w-fit items-center rounded-t-md border px-4 py-2 text-sm font-semibold transition ${
                           isActive
-                            ? "border-slate-300 border-b-white bg-white text-slate-900 shadow-sm"
-                            : "border-transparent bg-slate-200/80 text-slate-600 hover:bg-slate-200 hover:text-slate-800"
+                            ? "border-[#d6dbe1] border-b-white bg-white text-slate-900 shadow-[inset_0_-2px_0_0_#217346]"
+                            : "border-transparent bg-transparent text-slate-600 hover:bg-white/70 hover:text-slate-800"
                         }`}
                       >
                         <span>{sheet.title}</span>
-                        <span
-                          className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                            isActive ? "bg-slate-100 text-slate-600" : "bg-white/70 text-slate-500"
-                          }`}
-                        >
-                          {sheet.rows.length}
-                        </span>
                       </button>
                     );
                   })}
-
-                  {(() => {
-                    const isActive = activeSheet === "history";
-                    const totalPast = pastRowsByWorkflow.analyze.length + pastRowsByWorkflow.competitor.length;
-                    return (
-                      <button
-                        type="button"
-                        onClick={() => setActiveSheet("history")}
-                        className={`inline-flex min-w-fit items-center gap-2 rounded-t-xl border px-4 py-2 text-sm font-semibold transition ${
-                          isActive
-                            ? "border-slate-300 border-b-white bg-white text-slate-900 shadow-sm"
-                            : "border-transparent bg-slate-200/80 text-slate-600 hover:bg-slate-200 hover:text-slate-800"
-                        }`}
-                      >
-                        <span>History</span>
-                        <span
-                          className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                            isActive ? "bg-slate-100 text-slate-600" : "bg-white/70 text-slate-500"
-                          }`}
-                        >
-                          {totalPast + editLog.length}
-                        </span>
-                      </button>
-                    );
-                  })()}
-
-                  <button
-                    type="button"
-                    disabled
-                    className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white/70 text-slate-400 transition disabled:cursor-not-allowed disabled:opacity-80"
-                    title="Additional workbook sheets can be added in a later iteration."
-                    aria-label="Add sheet disabled"
-                  >
-                    <Plus className="h-4 w-4" />
-                  </button>
                 </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
+      </div>
+    )}
 
         <div className="mt-4 space-y-4">
           <AnalysisCalculationsExplainer />

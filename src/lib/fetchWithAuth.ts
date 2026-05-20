@@ -1,4 +1,4 @@
-import { supabase } from "./supabase";
+import { recoverSupabaseSession, supabase } from "./supabase";
 
 /**
  * Wraps fetch() with an optional Authorization: Bearer header.
@@ -9,7 +9,12 @@ export async function fetchWithAuth(
   url: string,
   options: RequestInit = {}
 ): Promise<Response> {
-  const { data } = await supabase.auth.getSession();
+  const { data, error } = await supabase.auth.getSession();
+
+  if (error) {
+    recoverSupabaseSession(error);
+  }
+
   const token = data.session?.access_token;
 
   const headers: Record<string, string> = {

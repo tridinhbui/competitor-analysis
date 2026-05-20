@@ -4,26 +4,31 @@ import { CreditCard, Lock, Shield, RefreshCw, BadgeCheck, Wallet } from "lucide-
 import { motion } from "framer-motion";
 
 const methods = [
-  { label: "Visa", sub: "Credit & debit" },
-  { label: "Mastercard", sub: "Credit & debit" },
-  { label: "Amex", sub: "Corporate cards" },
+  { label: "Visa", sub: "Corporate cards" },
+  { label: "Mastercard", sub: "Corporate cards" },
+  { label: "Amex", sub: "Executive cards" },
   { label: "ACH", sub: "US bank transfer" },
-  { label: "Apple Pay", sub: "Wallet" },
-  { label: "Google Pay", sub: "Wallet" },
+  { label: "Wire", sub: "Treasury workflow" },
+  { label: "Invoice", sub: "AP / procurement" },
 ] as const;
 
 export function PaymentSection() {
   return (
-    <section id="payment" className="scroll-mt-20 border-t border-border bg-gradient-to-b from-secondary/70 to-white py-16 sm:py-20" aria-labelledby="payment-heading">
+    <section
+      id="payment"
+      className="scroll-mt-20 border-t border-border bg-gradient-to-b from-secondary/70 to-white py-16 sm:py-20"
+      aria-labelledby="payment-heading"
+    >
       <div className="mx-auto max-w-3xl px-4">
         <div className="text-center">
           <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-primary">Checkout</p>
           <h2 id="payment-heading" className="mt-3 text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
-            Secure payment (coming soon)
+            Finance-controlled checkout (coming soon)
           </h2>
           <p className="mx-auto mt-3 max-w-lg text-sm text-muted-foreground">
-            This is a <strong className="font-semibold text-foreground">UI preview</strong> - no charges are processed in-app yet. When billing goes live,
-            checkout will be handled through a certified provider (e.g. Stripe).
+            This is a <strong className="font-semibold text-foreground">UI preview</strong> - no charges are processed
+            in-app yet. When billing goes live, checkout will support annual finance-team plans and procurement-friendly
+            payment flows.
           </p>
           <div className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700">
             <BadgeCheck className="h-3.5 w-3.5" aria-hidden />
@@ -41,12 +46,12 @@ export function PaymentSection() {
           <div className="mb-6 grid gap-4 rounded-2xl border border-border bg-secondary/55 p-4 sm:grid-cols-[1fr_auto] sm:items-center">
             <div>
               <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Mock checkout card</p>
-              <p className="mt-1 text-sm font-semibold text-foreground">Pro plan | Annual billing</p>
-              <p className="mt-1 text-xs text-muted-foreground">3 seats included | next renewal in 365 days</p>
+              <p className="mt-1 text-sm font-semibold text-foreground">Strategic Finance Team | Annual billing</p>
+              <p className="mt-1 text-xs text-muted-foreground">5 seats included | next renewal in 365 days</p>
             </div>
             <div className="rounded-xl border border-border bg-white px-4 py-3 text-right shadow-subtle">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Amount due</p>
-              <p className="text-xl font-bold tabular-nums text-foreground">$1,240.00</p>
+              <p className="text-xl font-bold tabular-nums text-foreground">$2,490.00</p>
             </div>
             <button
               type="button"
@@ -64,15 +69,17 @@ export function PaymentSection() {
             </div>
             <div className="flex items-center gap-2 rounded-xl border border-border bg-secondary px-4 py-2.5">
               <Shield className="h-4 w-4 text-primary" aria-hidden />
-              <span className="text-xs font-semibold text-foreground">PCI-aligned flow</span>
+              <span className="text-xs font-semibold text-foreground">Finance and procurement ready</span>
             </div>
             <div className="flex items-center gap-2 rounded-xl border border-border bg-secondary px-4 py-2.5">
               <RefreshCw className="h-4 w-4 text-muted-foreground" aria-hidden />
-              <span className="text-xs font-semibold text-foreground">Cancel anytime*</span>
+              <span className="text-xs font-semibold text-foreground">Seat-managed subscriptions</span>
             </div>
           </div>
 
-          <p className="mt-6 text-center text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Accepted methods (preview)</p>
+          <p className="mt-6 text-center text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+            Accepted methods (preview)
+          </p>
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
             {methods.map((m) => (
               <div
@@ -87,11 +94,7 @@ export function PaymentSection() {
           </div>
 
           <div className="mt-8 rounded-2xl border border-dashed border-border bg-secondary/60 p-4 text-center text-xs text-muted-foreground">
-            <p>
-              After you pick a plan above, you&apos;ll complete payment on a secure hosted page. Refund and seat policies will be published before
-              charges are enabled.
-            </p>
-            <p className="mt-2 text-[10px] text-muted-foreground">*Applies to subscription tiers; Lifetime is a one-time purchase.</p>
+            <p>Procurement terms, seat policies, and billing controls will be published before charges are enabled.</p>
           </div>
         </motion.div>
       </div>

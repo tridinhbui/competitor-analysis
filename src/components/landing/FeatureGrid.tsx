@@ -1,34 +1,28 @@
 "use client";
 
-import {
-  BarChart3,
-  Bot,
-  FileSearch,
-  FileSpreadsheet,
-  Gauge,
-} from "lucide-react";
+import { BarChart3, Bot, FileOutput, FileSpreadsheet, Gauge } from "lucide-react";
 import { motion } from "framer-motion";
 
 const features = [
   {
-    title: "AI Financial Assistant",
-    body: "Ask targeted questions on notes, debt covenants, and cash bridges, then get fast context-grounded answers.",
+    title: "Analyst Q&A Copilot",
+    body: "Pressure-test talking points on leverage, liquidity, notes, covenants, and bridge logic before Wall Street asks the question.",
     icon: Bot,
   },
   {
-    title: "Interactive Dashboards",
-    body: "Reveal debt pressure and surface cash flow risk with statement-linked visuals that stay easy to read.",
+    title: "Peer Benchmark Workspace",
+    body: "Stack the quarter against competitors in one live workbook so IR, finance, and strategy all work from the same numbers.",
     icon: BarChart3,
   },
   {
-    title: "1-Click Export",
-    body: "Export meeting-ready output to Excel and deck format in one move, with metrics already structured.",
+    title: "Guidance and FP&A Bridges",
+    body: "Convert scanned statements into editable models for scenario planning, margin walks, and strategic finance reviews.",
     icon: FileSpreadsheet,
   },
   {
-    title: "Real-time SEC Extraction",
-    body: "Extract SEC filings in real time from EDGAR and watch pipeline progress before the dashboard is ready.",
-    icon: FileSearch,
+    title: "Executive-ready Exports",
+    body: "Ship Excel, board-deck inputs, and concise narrative summaries without rebuilding the story in separate files.",
+    icon: FileOutput,
   },
 ] as const;
 
@@ -37,10 +31,11 @@ export function FeatureGrid() {
     <section className="mx-auto max-w-6xl px-4 py-14 sm:py-16" aria-labelledby="features-heading">
       <div className="mb-10 text-center">
         <h2 id="features-heading" className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
-          Premium execution, not dashboard clutter
+          Everything the CFO office needs before the call
         </h2>
         <p className="mx-auto mt-3 max-w-2xl text-sm text-muted-foreground sm:text-base">
-          Built for fast leadership decisions across products, channel performance, and operational planning.
+          Built for investor relations, competitor analysis, financial planning and analysis, and strategic finance
+          teams that need speed without losing auditability.
         </p>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
