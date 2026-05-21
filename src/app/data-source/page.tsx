@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import type { DataSourceRow } from "@/types/dataSource";
 import type {
   DataSourceEditLogEntry,
@@ -708,7 +708,6 @@ function ToolbarButton({
 
 export default function DataSourcePage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const workbookRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const initialWorkbookCellsRef = useRef<string>("{}");
@@ -930,7 +929,7 @@ export default function DataSourcePage() {
   }, []);
 
   const updateSelectionUrl = useCallback((companyTicker: string, threadId?: string | null) => {
-    const params = new URLSearchParams(searchParams.toString());
+    const params = new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
     params.set("company", companyTicker);
     if (threadId) {
       params.set("thread", threadId);
@@ -938,7 +937,7 @@ export default function DataSourcePage() {
       params.delete("thread");
     }
     router.replace(`/data-source?${params.toString()}`, { scroll: false });
-  }, [router, searchParams]);
+  }, [router]);
 
   const fetchData = useCallback(async (options?: {
     includeNavigator?: boolean;
@@ -1013,8 +1012,19 @@ export default function DataSourcePage() {
 
       applyWorkbookPayload(data as Record<string, unknown>);
 
-      const thread = (data as { thread?: Record<string, unknown> }).thread;
-      if (thread && typeof thread.id === "string") {
+      const threadPayload = (data as { thread?: unknown }).thread;
+      if (
+        threadPayload &&
+        typeof threadPayload === "object" &&
+        typeof (threadPayload as { id?: unknown }).id === "string"
+      ) {
+        const thread = threadPayload as {
+          id: string;
+          title?: unknown;
+          updatedAt?: unknown;
+          companyTicker?: unknown;
+          companyName?: unknown;
+        };
         setWorkbookThreads((current) => {
           const existing = current.find((entry) => entry.id === thread.id);
           const nextThread: ChatThreadSummary = {
@@ -1257,14 +1267,15 @@ export default function DataSourcePage() {
     setSelectedCompanyTicker(company.ticker);
 
     const existingThreads = threadsByCompany.get(company.ticker) ?? [];
-    let nextThread =
+    let nextThread: ChatThreadSummary | null =
       (preferredThreadId ? existingThreads.find((thread) => thread.id === preferredThreadId) : null) ??
       existingThreads[0] ??
       null;
 
     if (!nextThread) {
-      nextThread = await createWorkbookThread(company, null);
-      if (!nextThread) return;
+      const createdThread = await createWorkbookThread(company, null);
+      if (!createdThread) return;
+      nextThread = createdThread;
     }
 
     if (nextThread.id === selectedThreadId && company.ticker === selectedCompanyTicker) return;
@@ -1381,14 +1392,17 @@ export default function DataSourcePage() {
     if (initialThreadSelectionAppliedRef.current) return;
 
     initialThreadSelectionAppliedRef.current = true;
-    const threadId = searchParams.get("thread")?.trim() ?? null;
-    const companyTickerFromQuery = searchParams.get("company")?.trim().toUpperCase() ?? null;
+    const currentSearchParams = new URLSearchParams(
+      typeof window === "undefined" ? "" : window.location.search,
+    );
+    const threadId = currentSearchParams.get("thread")?.trim() ?? null;
+    const companyTickerFromQuery = currentSearchParams.get("company")?.trim().toUpperCase() ?? null;
     void fetchData({
       includeNavigator: true,
       threadId,
       companyTicker: companyTickerFromQuery,
     });
-  }, [fetchData, searchParams]);
+  }, [fetchData]);
 
   const pushHistory = useCallback(() => {
     const snapshot: HistorySnapshot = {
