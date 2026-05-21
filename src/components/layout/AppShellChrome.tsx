@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { href: "/analyze", label: "Quick Analyze" },
   { href: "/data-source", label: "Data Source" },
   { href: "/workspace", label: "Competitor Analysis" },
+  { href: "/competitor-dashboard", label: "Competitor Dashboard" },
   { href: "/earnings-analysis", label: "Earnings Script Analyze" },
   { href: "/excel-analyze", label: "Excel Analyze" },
 ] as const;

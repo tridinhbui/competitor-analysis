@@ -10,6 +10,87 @@ function findItem(items: BSItem[], tag: string): BSItem | undefined {
   return items.find((i) => i.tag === tag);
 }
 
+const REV_TAGS_FOR_SCALE_CHECK = [
+  "Revenues",
+  "RevenueFromContractWithCustomerExcludingAssessedTax",
+  "SalesRevenueNet",
+  "SalesRevenueGoodsNet",
+] as const;
+
+function extractRevenueForScaleCheck(cf: BSItem[]): number | null {
+  for (const t of REV_TAGS_FOR_SCALE_CHECK) {
+    const it = findItem(cf, t);
+    if (!it || !Number.isFinite(it.value)) continue;
+    const v = Math.abs(it.value);
+    if (v > 100) return v;
+  }
+  return null;
+}
+
+/**
+ * Large-filer PDF/AI slips sometimes multiply EVERYTHING by 1000 twice (classic "triple thousands"
+ * or mis-mapped supplemental row). Symptoms: EBITDA >> revenue and total assets / revenue ratios
+ * that look like percentages were stored as inflated millions.
+ *
+ * Divides offending items by 1000 once — fixes ROE / ROA denoms and EBITDA margin exploding.
+ */
+function repairMegaScaleThousandsDuplicate(
+  bs: BSItem[],
+  cf: BSItem[],
+  repairs: string[]
+): { bs: BSItem[]; cf: BSItem[] } {
+  const revenue = extractRevenueForScaleCheck(cf);
+  const taRow = findItem(bs, "Assets");
+  const ta = taRow && Number.isFinite(taRow.value) ? Math.abs(taRow.value) : null;
+  if (!revenue || revenue < 800 || ta == null) return { bs, cf };
+  const ratio = ta / revenue;
+  if (ratio < 45) return { bs, cf };
+
+  repairs.push(
+    `Scale repair (÷1000): balance sheet totals were ~${Math.round(ratio)}× consolidated revenue (${ta.toLocaleString()}M TA vs ${revenue.toLocaleString()}M Rev); diluted mega BS rows (+ selected IS/CF lines) by one thousands step.`
+  );
+
+  const div1000 = (it: BSItem): BSItem => ({
+    ...it,
+    value: Math.round(it.value * 0.001 * 100) / 100,
+  });
+
+  const minBsAbs = Math.max(500, revenue * 0.025);
+  const nextBs = bs.map((it) => {
+    if (!Number.isFinite(it.value)) return it;
+    if (Math.abs(it.value) < minBsAbs) return it;
+    return div1000(it);
+  });
+
+  /** Do not blanket-scale COGS/Revenue-tier CF lines—they can legitimately rival revenue ($M basis). */
+  const cfMegaTags = new Set([
+    "EBITDA",
+    "EarningsBeforeInterestTaxesDepreciationAmortization",
+    "OperatingIncomeLoss",
+    "IncomeLossFromContinuingOperationsBeforeIncomeTaxes",
+    "IncomeBeforeIncomeTaxes",
+    "NetIncomeLoss",
+    "IncomeTaxExpenseBenefit",
+    "InterestExpense",
+    "InterestExpenseNet",
+    "InterestExpenseDebt",
+    "InterestAndDebtExpense",
+    "DepreciationDepletionAndAmortization",
+    "DepreciationAndAmortization",
+    "Depreciation",
+    "AmortizationOfIntangibleAssets",
+  ]);
+  const minCfMega = Math.max(1800, revenue * 0.035);
+
+  const nextCf = cf.map((it) => {
+    if (!cfMegaTags.has(it.tag) || !Number.isFinite(it.value)) return it;
+    if (Math.abs(it.value) < minCfMega) return it;
+    return div1000(it);
+  });
+
+  return { bs: nextBs, cf: nextCf };
+}
+
 function normLabel(s: string): string {
   return s
     .toLowerCase()
@@ -653,6 +734,14 @@ export function pickDisclosedEbitdaValue(items: BSItem[], revenue: number | null
 
   let tagged = items.filter((i) => {
     if (i.tag !== "EBITDA" && i.tag !== "EarningsBeforeInterestTaxesDepreciationAmortization") return false;
+    const vAbs = Math.abs(i.value ?? 0);
+    if (
+      revenue != null &&
+      revenue > 500 &&
+      vAbs > revenue * 3
+    ) {
+      return false;
+    }
     const el = effectiveRowLabel(i);
     if (labelLooksLikeOperatingIncome(el)) return false;
     if (
@@ -667,14 +756,21 @@ export function pickDisclosedEbitdaValue(items: BSItem[], revenue: number | null
   });
 
   if (tagged.length === 0) return null;
-  if (tagged.length === 1) return Math.abs(tagged[0].value);
+  if (tagged.length === 1) {
+    const v = Math.abs(tagged[0].value);
+    if (revenue != null && revenue > 500 && v > revenue * 3) return null;
+    return v;
+  }
 
   tagged = [...tagged].sort((a, b) => {
     const d = scoreEbitdaSourceItem(b, revenue) - scoreEbitdaSourceItem(a, revenue);
     if (d !== 0) return d;
-    return Math.abs(b.value) - Math.abs(a.value);
+    return Math.abs(a.value) - Math.abs(b.value);
   });
-  return Math.abs(tagged[0].value);
+  const chosen = tagged[0];
+  const vOut = Math.abs(chosen?.value ?? 0);
+  if (revenue != null && revenue > 500 && vOut > revenue * 3) return null;
+  return vOut;
 }
 
 /**
@@ -709,6 +805,9 @@ export function coalesceEbitdaFromLabels(
 
   const best = candidates[0];
   const vBest = Math.abs(best.value);
+  if (revenue != null && revenue > 500 && vBest > revenue * 3) {
+    return { cf, bs };
+  }
 
   const tagged = all.filter(
     (i) => i.tag === "EBITDA" || i.tag === "EarningsBeforeInterestTaxesDepreciationAmortization"
@@ -907,5 +1006,8 @@ export function applyExtractionRepairs(
   bs1 = deriveEquityFromWalkComponents(bs1, repairs);
   bs1 = deriveEquityFromAccountingIdentity(bs1, repairs);
   bs1 = deriveLiabilitiesFromAssetsMinusEquity(bs1, repairs);
+  const megaFixed = repairMegaScaleThousandsDuplicate(bs1, cf1, repairs);
+  bs1 = megaFixed.bs;
+  cf1 = megaFixed.cf;
   return { bs: bs1, cf: cf1, repairs };
 }

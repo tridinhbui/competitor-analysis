@@ -902,19 +902,20 @@ function heuristicExtract(lines: PdfLine[]): { bs: BSItem[]; cf: BSItem[] } {
     }
 
     if (repaired != null) {
+      const scaled = toMillions(repaired);
       if (repurchase) {
-        repurchase.value = repaired;
+        repurchase.value = scaled;
         repurchase.source = "PDF:heuristic:repurchase_repair";
       } else {
         cf.push({
           tag: "PaymentsForRepurchaseOfCommonStock",
           label: "Share repurchases",
-          value: repaired,
+          value: scaled,
           period: periodLabel,
           source: "PDF:heuristic:repurchase_repair",
         });
       }
-      console.log("[repurchase:pdf-heuristic] repaired", repaired);
+      console.log("[repurchase:pdf-heuristic] repaired", repaired, "scaled", scaled);
     }
   }
 

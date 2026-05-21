@@ -9,7 +9,7 @@ import type { BSItem } from "@/types/analysis";
 
 const BASE = "https://data.sec.gov";
 
-/** SEC yêu cầu User-Agent có thông tin liên hệ — cấu hình qua SEC_EDGAR_USER_AGENT. */
+/** SEC requires a User-Agent with contact information; configure it via SEC_EDGAR_USER_AGENT. */
 function secUserAgent(): string {
   const fromEnv = process.env.SEC_EDGAR_USER_AGENT?.trim();
   if (fromEnv) return fromEnv;

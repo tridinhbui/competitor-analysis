@@ -6,13 +6,27 @@
 
 import { debugLog } from "../debugLogger";
 
+function detectScaleNote(text: string): string | undefined {
+  const normalized = text.toLowerCase();
+  if (/in\s+thousands?,\s+except\s+(?:per\s+share|share)/i.test(normalized)) return "thousands";
+  if (/amounts?\s+in\s+thousands/i.test(normalized)) return "thousands";
+  if (/\(\s*in\s+thousands?\s*\)/i.test(normalized)) return "thousands";
+  if (/dollars?\s+in\s+thousands/i.test(normalized)) return "thousands";
+  if (/in\s+millions?,\s+except\s+(?:per\s+share|share)/i.test(normalized)) return "millions";
+  if (/\(\s*in\s+millions?\s*\)/i.test(normalized)) return "millions";
+  if (/dollars?\s+in\s+millions/i.test(normalized)) return "millions";
+  if (/in\s+billions?\b/i.test(normalized) || /\(\s*in\s+billions?\s*\)/i.test(normalized)) return "billions";
+  return undefined;
+}
+
 export function extractShareRepurchasesHeuristic(
   text: string,
   scaleNote: string | undefined
 ): number | null {
   let scale = 1;
-  if (scaleNote === "thousands") scale = 0.001;
-  else if (scaleNote === "billions") scale = 1000;
+  const effectiveScale = scaleNote ?? detectScaleNote(text);
+  if (effectiveScale === "thousands") scale = 0.001;
+  else if (effectiveScale === "billions") scale = 1000;
 
   // All positive decimal/integer values from a string.
   // Parenthesised values ("(26)") are treated as positive outflows.

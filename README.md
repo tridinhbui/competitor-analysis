@@ -1,36 +1,36 @@
-# Dividend — Phân tích 10-Q / SEC
+# Dividend - 10-Q / SEC Analysis
 
-Ứng dụng [Next.js](https://nextjs.org) trích xuất **bảng cân đối, dòng tiền, cấu trúc nợ** và **đánh giá cổ tức** từ:
+This [Next.js](https://nextjs.org) app extracts **balance sheet, cash flow, debt structure**, and **dividend analysis** from:
 
-- **Mã cổ phiếu**: pipeline server gọi **SEC EDGAR** (XBRL), stream tiến trình qua SSE (`GET /api/analyze?ticker=`).
-- **File PDF 10-Q**: xử lý **trên trình duyệt** (pdf.js + worker trong `public/pdf.worker.min.mjs`).
+- **Ticker symbols**: the server pipeline calls **SEC EDGAR** (XBRL) and streams progress over SSE (`GET /api/analyze?ticker=`).
+- **10-Q PDF files**: processed **in the browser** with pdf.js and the worker in `public/pdf.worker.min.mjs`.
 
-Kết quả hiển thị trên dashboard (biểu đồ, bảng), xuất **Excel**, và **chat phân tích** (OpenAI) có kèm context JSON rút gọn.
+Results are shown in the dashboard as charts and tables, can be exported to **Excel**, and support **analysis chat** (OpenAI) with a reduced JSON context payload.
 
-## Biến môi trường
+## Environment variables
 
-Tạo `.env.local` (không commit):
+Create `.env.local` and do not commit it:
 
-| Biến | Bắt buộc | Mô tả |
+| Variable | Required | Description |
 |------|----------|--------|
-| `OPENAI_API_KEY` | Cho chat | [OpenAI API keys](https://platform.openai.com/api-keys) |
-| `OPENAI_MODEL` | Không | Mặc định `gpt-4o-mini` |
-| `SEC_EDGAR_USER_AGENT` | **Khuyến nghị khi deploy** | Chuỗi theo [SEC fair access](https://www.sec.gov/os/webmaster-faq#code-support), ví dụ: `TenQAnalyzer/1.0 (you@company.com)` |
+| `OPENAI_API_KEY` | For chat | [OpenAI API keys](https://platform.openai.com/api-keys) |
+| `OPENAI_MODEL` | No | Defaults to `gpt-4o-mini` |
+| `SEC_EDGAR_USER_AGENT` | **Recommended in production** | String following [SEC fair access](https://www.sec.gov/os/webmaster-faq#code-support), for example: `TenQAnalyzer/1.0 (you@company.com)` |
 
-Nếu thiếu `OPENAI_API_KEY`, nút chat vẫn hiện nhưng API trả `503` và thông báo rõ.
+If `OPENAI_API_KEY` is missing, the chat button still appears but the API returns `503` with a clear message.
 
-Nếu không đặt `SEC_EDGAR_USER_AGENT`, server dùng giá trị mặc định có placeholder email — **hãy đổi sang email thật** trước khi chạy production.
+If `SEC_EDGAR_USER_AGENT` is not set, the server uses a default value with a placeholder email. Replace it with a real contact email before running in production.
 
-Xem mẫu: [`.env.example`](.env.example).
+See the sample file: [`.env.example`](.env.example).
 
-## Chạy local
+## Run locally
 
 ```bash
 npm install
 npm run dev
 ```
 
-Mở [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000).
 
 ## Build
 
@@ -38,12 +38,12 @@ Mở [http://localhost:3000](http://localhost:3000).
 npm run build
 ```
 
-## API nội bộ
+## Internal API
 
-- `GET /api/analyze?ticker=AAPL` — SSE: các bước pipeline + sự kiện `event: result` chứa `FullAnalysis`.
-- `POST /api/chat` — body JSON: `{ messages, context? }` (key OpenAI chỉ trên server).
+- `GET /api/analyze?ticker=AAPL` - SSE stream of pipeline steps plus an `event: result` payload containing `FullAnalysis`.
+- `POST /api/chat` - JSON body: `{ messages, context? }` (the OpenAI key stays server-side only).
 
 ## Deploy
 
-- Đặt `OPENAI_API_KEY` và `SEC_EDGAR_USER_AGENT` trên host (Vercel / env), không đưa key vào repo.
-- Tuân thủ giới hạn truy cập SEC; không gọi `data.sec.gov` trực tiếp từ trình duyệt người dùng (ứng dụng đã gọi từ server).
+- Set `OPENAI_API_KEY` and `SEC_EDGAR_USER_AGENT` on your host (Vercel / environment variables); do not commit keys into the repo.
+- Respect SEC access limits and do not call `data.sec.gov` directly from the browser. This app already routes those requests through the server.
