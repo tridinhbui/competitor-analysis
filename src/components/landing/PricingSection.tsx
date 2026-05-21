@@ -9,53 +9,63 @@ import { cn } from "@/lib/utils";
 const monthlyPlans = [
   {
     id: "starter",
-    name: "Starter",
-    price: 49,
+    name: "IR Desk",
+    price: 79,
     period: "mo",
-    blurb: "Solo analysts exploring filings at your own pace.",
+    blurb: "For lean investor relations or finance leads preparing the quarter.",
     highlight: false,
     badge: null as string | null,
-    features: ["SEC ticker + PDF 10-Q ingest", "Core dashboard & ratios", "Excel export", "5 saved analyses / mo", "Email support"],
-    cta: "Choose plan",
+    features: ["SEC ticker + PDF 10-Q ingest", "Core workbook and ratios", "Excel export", "Analyst Q&A workspace", "Email support"],
+    cta: "Select plan",
     href: "#payment",
   },
   {
     id: "pro",
-    name: "Pro",
-    price: 129,
+    name: "Strategic Finance Team",
+    price: 249,
     period: "mo",
-    blurb: "Teams that live in comps, decks, and quarterly refresh cycles.",
+    blurb: "For CFO office, FP&A, and strategic finance teams running recurring peer and planning cycles.",
     highlight: true,
     badge: "Most popular",
     features: [
-      "Everything in Starter",
+      "Everything in IR Desk",
       "Unlimited saved analyses",
-      "PPTX deck export",
-      "Workspace & peer comparison",
+      "Peer benchmarking workspace",
+      "PPTX export for management decks",
       "Priority support",
-      "Shared team workspace (3 seats)",
+      "Shared team workspace (5 seats)",
     ],
-    cta: "Choose plan",
+    cta: "Select plan",
     href: "#payment",
   },
   {
-    id: "lifetime",
-    name: "Lifetime",
-    price: 1499,
-    period: "once",
-    blurb: "One payment for long-horizon research desks and power users.",
+    id: "executive",
+    name: "Executive Office",
+    price: 499,
+    period: "mo",
+    blurb: "For enterprise finance teams supporting CEO, CFO, board, and investor messaging at scale.",
     highlight: false,
-    badge: "Best value",
-    features: ["All Pro features", "Lifetime product updates", "Early access to new modules", "Dedicated onboarding call"],
-    cta: "Buy now",
+    badge: "Executive",
+    features: [
+      "All Strategic Finance Team features",
+      "Executive onboarding",
+      "Higher seat allowance",
+      "Workflow configuration support",
+      "Priority roadmap access",
+    ],
+    cta: "Talk to sales",
     href: "#payment",
   },
 ] as const;
 
 const yearlyPlans = monthlyPlans.map((p) => {
-  if (p.id === "lifetime") return { ...p, price: p.price, period: "once" as const };
-  const y = p.id === "starter" ? 470 : 1240;
-  return { ...p, price: y, period: "yr" as const, blurb: `${p.blurb} (billed annually)` };
+  const yearlyPrice = p.id === "starter" ? 790 : p.id === "pro" ? 2490 : 4990;
+  return {
+    ...p,
+    price: yearlyPrice,
+    period: "yr" as const,
+    blurb: `${p.blurb} (billed annually)`,
+  };
 });
 
 export function PricingSection() {
@@ -64,24 +74,29 @@ export function PricingSection() {
   const plans = yearly ? yearlyPlans : monthlyPlans;
 
   return (
-    <section id="pricing" className="scroll-mt-20 border-t border-border bg-white/70 py-16 sm:py-20" aria-labelledby="pricing-heading">
+    <section
+      id="pricing"
+      className="scroll-mt-20 border-t border-border bg-white/70 py-16 sm:py-20"
+      aria-labelledby="pricing-heading"
+    >
       <div className="mx-auto max-w-6xl px-4">
         <div className="text-center">
           <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-primary">Pricing</p>
           <h2 id="pricing-heading" className="mt-3 text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
-            Plans for filing-heavy workflows
+            Pricing for IR and strategic finance teams
           </h2>
           <p className="mx-auto mt-3 max-w-xl text-sm text-muted-foreground sm:text-base">
-            Transparent tiers for analysts and desks. Toggle billing - numbers are illustrative until checkout goes live.
+            Illustrative packaging for executive finance workflows. Final commercial terms can be tuned for team size,
+            seat model, and governance needs.
           </p>
           <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-[11px] text-muted-foreground">
             <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-700">
               <Users className="h-3 w-3" aria-hidden />
-              Used by analysts & finance teams
+              Built for CFO office and IR teams
             </span>
             <span className="inline-flex items-center gap-1 rounded-full border border-border bg-secondary px-2.5 py-1 font-semibold text-muted-foreground">
               <BadgeCheck className="h-3 w-3 text-primary" aria-hidden />
-              Cancel anytime (subscription tiers)
+              Annual and monthly packaging
             </span>
           </div>
 
@@ -126,10 +141,8 @@ export function PricingSection() {
               transition={{ delay: i * 0.06, duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
               className={cn(
                 "relative flex flex-col rounded-3xl border bg-white/95 p-6 shadow-subtle transition-all hover:-translate-y-1 hover:shadow-elevation sm:p-7",
-                plan.highlight
-                  ? "border-primary/35 ring-2 ring-primary/15 lg:scale-[1.02]"
-                  : "border-border",
-                activePlan === plan.id && "ring-2 ring-primary/20 border-primary/35"
+                plan.highlight ? "border-primary/35 ring-2 ring-primary/15 lg:scale-[1.02]" : "border-border",
+                activePlan === plan.id && "border-primary/35 ring-2 ring-primary/20"
               )}
             >
               {plan.badge && (
@@ -152,12 +165,10 @@ export function PricingSection() {
               <div className="mt-6 flex items-baseline gap-1">
                 <span className="text-4xl font-bold tabular-nums tracking-tight text-foreground">${plan.price}</span>
                 <span className="text-sm font-medium text-muted-foreground">
-                  {plan.period === "once" ? " once" : plan.period === "yr" ? " / yr" : " / mo"}
+                  {plan.period === "yr" ? " / yr" : " / mo"}
                 </span>
               </div>
-              {plan.period !== "once" && (
-                <p className="mt-2 text-[11px] font-medium text-muted-foreground">Cancel anytime. No lock-in contract.</p>
-              )}
+              <p className="mt-2 text-[11px] font-medium text-muted-foreground">Commercial terms finalized during onboarding.</p>
               <ul className="mt-6 flex flex-1 flex-col gap-2.5 text-sm text-muted-foreground">
                 {plan.features.map((f) => (
                   <li key={f} className="flex gap-2">
@@ -184,20 +195,26 @@ export function PricingSection() {
         <div className="mx-auto mt-8 grid max-w-4xl gap-3 rounded-2xl border border-border bg-white/90 p-4 shadow-subtle sm:grid-cols-3 sm:p-5">
           <div>
             <p className="text-xs font-semibold text-foreground">FAQ: Can I switch plans later?</p>
-            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">Yes. You can upgrade or downgrade at renewal.</p>
+            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+              Teams can move between tiers as workflow complexity grows.
+            </p>
           </div>
           <div>
             <p className="text-xs font-semibold text-foreground">FAQ: Do you support team seats?</p>
-            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">Pro includes shared workspace seats. Enterprise is custom.</p>
+            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+              Strategic Finance Team and Executive Office are built around shared finance workflows.
+            </p>
           </div>
           <div>
-            <p className="text-xs font-semibold text-foreground">FAQ: Is my data isolated?</p>
-            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">Yes, billing and workspace controls are scoped per account.</p>
+            <p className="text-xs font-semibold text-foreground">FAQ: Is governance supported?</p>
+            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+              Seat control, onboarding, and process guardrails can be tuned for finance-team governance.
+            </p>
           </div>
         </div>
 
         <p className="mt-10 text-center text-xs text-muted-foreground">
-          Need SOC2, SSO, or a custom data retention policy?{" "}
+          Need SSO, custom retention, or a procurement review pack?{" "}
           <a href="mailto:sales@example.com" className="font-semibold text-primary hover:underline">
             Contact sales
           </a>

@@ -10,7 +10,6 @@ import { MockResultPreview } from "./MockResultPreview";
 export type DemoRunState = "idle" | "running" | "complete";
 
 interface DemoDropZoneProps {
-  /** When true, no file input—zone is for marketing demo only. */
   demoOnly?: boolean;
   dragOver: boolean;
   onDragOver: (e: React.DragEvent) => void;
@@ -19,7 +18,6 @@ interface DemoDropZoneProps {
   onPickFile: () => void;
   inputRef?: RefObject<HTMLInputElement | null>;
   onFileChange?: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  /** -1 = no step highlighted as current; 0..5 = timeline */
   demoTimelineIndex: number;
   demoRunState: DemoRunState;
   demoFileLabel: string | null;
@@ -69,7 +67,7 @@ export function DemoDropZone({
               dragOver && "bg-primary/[0.04]",
               demoRunState === "running" && "bg-secondary/85"
             )}
-            aria-label={demoOnly ? "Interactive demo: simulate 10-Q extraction" : "Upload a 10-Q PDF for analysis"}
+            aria-label={demoOnly ? "Interactive demo: simulate earnings-prep workflow" : "Upload a 10-Q PDF for analysis"}
           >
             <AnimatePresence mode="wait">
               {demoRunState === "idle" && !dragOver && (
@@ -90,12 +88,12 @@ export function DemoDropZone({
                     <FileUp className="h-7 w-7 sm:h-8 sm:w-8" aria-hidden />
                   </div>
                   <p className="text-base font-bold text-foreground sm:text-lg">
-                    {demoOnly ? "See how a 10-Q flows through extraction" : "Drop your 10-Q PDF here"}
+                    {demoOnly ? "See how an earnings-prep workbook comes together" : "Drop your 10-Q PDF here"}
                   </p>
                   <p className="mt-2 max-w-sm text-xs leading-relaxed text-muted-foreground sm:text-sm">
                     {demoOnly
-                      ? "Simulated pipeline for this page only. Upload real filings on Quick Analyze."
-                      : "Live analysis runs in the app—this zone accepts your filing and opens the extraction pipeline."}
+                      ? "Simulate the workflow finance teams use before analyst calls and investor meetings. Run the live version in Quick Analyze."
+                      : "Live analysis runs in the app; this zone accepts your filing and opens the extraction pipeline."}
                   </p>
                   <span className="mt-5 inline-flex rounded-full bg-secondary px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                     {demoOnly ? "Or click to run demo" : "Or click to browse"}
@@ -128,10 +126,10 @@ export function DemoDropZone({
                   <p className="mt-2 text-xs text-muted-foreground">
                     {demoRunState === "running"
                       ? demoOnly
-                        ? "Demo only — same stages run on real uploads in Analyze."
-                        : "Simulated pipeline — your real PDF follows the same stages."
+                        ? "Demo only - the live product uses the same stages for real filings."
+                        : "Simulated pipeline - your real PDF follows the same stages."
                       : demoOnly
-                        ? "Open Quick Analyze to run this on your actual PDF or ticker."
+                        ? "Open Quick Analyze to run this on your actual filing or ticker."
                         : "Your PDF will open next to the dashboard."}
                   </p>
                   {demoRunState === "complete" && (
@@ -165,7 +163,6 @@ export function DemoDropZone({
               </div>
             )}
 
-            {/* Shimmer overlay while “extracting” */}
             <AnimatePresence>
               {demoRunState === "running" && demoTimelineIndex >= 0 && demoTimelineIndex < EXTRACTION_STEPS.length - 1 && (
                 <motion.div
@@ -198,13 +195,17 @@ export function DemoDropZone({
               !showTimeline && "opacity-60"
             )}
           >
-            <p className="mb-4 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Extraction timeline</p>
+            <p className="mb-4 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Executive workflow</p>
             {showTimeline ? (
               <ExtractionTimeline activeIndex={demoTimelineIndex} />
             ) : (
               <div className="space-y-3" aria-hidden>
                 {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="h-9 animate-pulse rounded-lg bg-secondary/90" style={{ animationDelay: `${i * 100}ms` }} />
+                  <div
+                    key={i}
+                    className="h-9 animate-pulse rounded-lg bg-secondary/90"
+                    style={{ animationDelay: `${i * 100}ms` }}
+                  />
                 ))}
               </div>
             )}

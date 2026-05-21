@@ -14,6 +14,8 @@ import {
   Line,
   ReferenceLine,
   LineChart,
+  AreaChart,
+  Area,
   RadarChart,
   PolarGrid,
   PolarAngleAxis,
@@ -36,9 +38,11 @@ import type {
   MultiTrendPoint,
 } from "@/lib/companyComparison";
 import { StatusPill } from "@/components/ui/status-pill";
+import type { CompetitorEarningsReleasePayload } from "@/types/competitorRelease";
 
 type PresentationSlideId =
   | "executive-snapshot"
+  | "competitor-release"
   | "overview"
   | "performance-diagnosis"
   | "segment-mix"
@@ -67,6 +71,7 @@ const PERIOD_WARNING_CODES = new Set([
 const MULTI_CHART_COLORS = ["#2563eb", "#14b8a6", "#f97316", "#a855f7", "#e11d48", "#0f766e", "#475569"];
 const PRESENTATION_SLIDES: Array<{ id: PresentationSlideId; label: string; title: string }> = [
   { id: "executive-snapshot", label: "Executive", title: "Executive Snapshot" },
+  { id: "competitor-release", label: "Release", title: "Competitor Earnings Release" },
   { id: "overview", label: "Overview", title: "Overview" },
   { id: "performance-diagnosis", label: "Diagnosis", title: "Performance Diagnosis" },
   { id: "segment-mix", label: "Cost Structure", title: "Segmented Cost Structure" },
@@ -100,6 +105,53 @@ function fmt(format: MetricFormat, value: number | string | null): string {
   if (format === "multiple") return `${value.toFixed(2)}x`;
   if (format === "number") return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
   return String(value);
+}
+
+function fmtSignedPercent(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return "N/A";
+  return `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
+}
+
+function fmtPrice(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return "N/A";
+  return `$${value.toFixed(2)}`;
+}
+
+function fmtPriceRaw(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return "NA";
+  return value.toFixed(2);
+}
+
+function fmtAbsChange(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return "";
+  const sign = value >= 0 ? "+" : "";
+  return `${sign}${value.toFixed(2)}`;
+}
+
+function fmtIntegerThousands(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return "NA";
+  return Math.round(value).toLocaleString("en-US");
+}
+
+function fmtMarketTime(iso: string | null): string {
+  if (!iso) return "Latest close";
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return "Latest close";
+  const date = parsed.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const time = parsed.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+  return `${date}, ${time}`;
+}
+
+function formatDateLabel(value: string | null | undefined): string {
+  if (!value) return "Unknown date";
+  const iso = value.slice(0, 10);
+  const parsed = new Date(`${iso}T12:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return iso;
+  return parsed.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 function fmtDiff(row: ComparisonRow): string {
@@ -209,6 +261,180 @@ function TopMetricCard({ label, value }: { label: string; value: string }) {
     <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
       <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{label}</p>
       <p className="mt-1 text-sm font-bold text-slate-900">{value}</p>
+    </div>
+  );
+}
+
+const STOCK_RANGE_TABS = ["1D", "5D", "1M", "6M", "YTD", "1Y", "5Y", "MAX"] as const;
+
+function StatsRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between border-b border-slate-100 py-2 text-[13px]">
+      <span className="text-slate-600">{label}</span>
+      <span className="font-semibold text-slate-900 tabular-nums">{value}</span>
+    </div>
+  );
+}
+
+function StockOverviewCard({
+  ticker,
+  fallbackName,
+  release,
+  loading,
+  yAxisDomain,
+}: {
+  ticker: string;
+  fallbackName: string;
+  release: CompetitorEarningsReleasePayload | null;
+  loading: boolean;
+  yAxisDomain: [number, number];
+}) {
+  const stock = release?.stock;
+  const hasPoints = Boolean(stock?.points.length);
+  const displayName = fallbackName ?? stock?.longName ?? ticker;
+  const positive = (stock?.percentChange ?? 0) >= 0;
+  const accentStroke = positive ? "#16a34a" : "#dc2626";
+  const accentFillTop = positive ? "rgba(34,197,94,0.32)" : "rgba(220,38,38,0.28)";
+  const accentFillBottom = positive ? "rgba(34,197,94,0)" : "rgba(220,38,38,0)";
+  const gradientId = `stock-area-${ticker.toLowerCase()}`;
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-subtle">
+      <h3 className="text-center text-xl font-bold text-slate-900">
+        {displayName} – 1 Year Earnings Overview
+      </h3>
+
+      {hasPoints && stock ? (
+        <>
+          <div className="mt-5 flex flex-wrap items-baseline gap-2.5">
+            <span className="text-3xl font-bold leading-none text-slate-900 tabular-nums sm:text-[2rem]">
+              {fmtPrice(stock.latestPrice)}
+            </span>
+            <span
+              className={`inline-flex items-center gap-0.5 rounded-md px-2 py-0.5 text-xs font-semibold ${
+                positive ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"
+              }`}
+            >
+              <span>{positive ? "↑" : "↓"}</span>
+              <span>{Math.abs(stock.percentChange ?? 0).toFixed(2)}%</span>
+            </span>
+            <span className="text-xs font-medium text-slate-600 tabular-nums sm:text-sm">
+              {fmtAbsChange(stock.absoluteChange)} 1Y
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-slate-500">
+            Closed: {fmtMarketTime(stock.marketTimeIso)}
+            {stock.currency ? ` • ${stock.currency}` : ""}
+            {stock.exchange ? ` • ${stock.exchange}` : ""}
+          </p>
+
+          <div className="mt-4 flex items-center gap-6 border-b border-slate-200">
+            {STOCK_RANGE_TABS.map((label) => {
+              const active = label === "1Y";
+              return (
+                <span
+                  key={label}
+                  className={`pb-2 text-sm font-medium ${
+                    active
+                      ? "border-b-2 border-blue-500 text-blue-600"
+                      : "text-slate-400"
+                  }`}
+                  aria-current={active ? "page" : undefined}
+                >
+                  {label}
+                </span>
+              );
+            })}
+          </div>
+
+          <div className="mt-3 h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={stock.points} margin={{ left: 4, right: 8, top: 8, bottom: 0 }}>
+                <defs>
+                  <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={accentFillTop} stopOpacity={1} />
+                    <stop offset="100%" stopColor={accentFillBottom} stopOpacity={1} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid horizontal vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="date" tick={{ fontSize: 11, fill: "#64748b" }} minTickGap={28} axisLine={false} tickLine={false} />
+                <YAxis
+                  tick={{ fontSize: 11, fill: "#64748b" }}
+                  tickFormatter={(value) => {
+                    const n = Number(value);
+                    if (!Number.isFinite(n)) return "";
+                    return Math.abs(n) >= 100 ? n.toFixed(0) : n.toFixed(2);
+                  }}
+                  domain={yAxisDomain}
+                  allowDataOverflow
+                  axisLine={false}
+                  tickLine={false}
+                  orientation="left"
+                />
+                <Tooltip
+                  formatter={(value) =>
+                    fmtPrice(
+                      typeof value === "number"
+                        ? value
+                        : typeof value === "string"
+                          ? Number(value)
+                          : null
+                    )
+                  }
+                />
+                <Area
+                  type="monotone"
+                  dataKey="close"
+                  name={ticker}
+                  stroke={accentStroke}
+                  strokeWidth={2}
+                  fill={`url(#${gradientId})`}
+                  dot={false}
+                  activeDot={{ r: 4, stroke: accentStroke, fill: accentStroke }}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="mt-4 grid gap-x-10 border-t border-slate-200 pt-2 md:grid-cols-2">
+            <StatsRow label="Last (Delayed)" value={fmtPriceRaw(stock.latestPrice)} />
+            <StatsRow label="Volume" value={fmtIntegerThousands(stock.dayVolume)} />
+            <StatsRow label="VWAP (Delayed)" value="NA" />
+            <StatsRow label="Avg 3M Daily Volume" value="NA" />
+            <StatsRow label="Open" value={fmtPriceRaw(stock.dayOpen)} />
+            <StatsRow label="Shares Out." value="NA" />
+            <StatsRow label="Previous Close" value={fmtPriceRaw(stock.previousClose)} />
+            <StatsRow label="Shares Sold Short" value="NA" />
+            <StatsRow
+              label="Day High/Low"
+              value={
+                stock.dayHigh != null || stock.dayLow != null
+                  ? `${fmtPriceRaw(stock.dayHigh)} / ${fmtPriceRaw(stock.dayLow)}`
+                  : "NA"
+              }
+            />
+            <StatsRow label="Short Int/ShOut (%)" value="NA" />
+            <StatsRow
+              label="52 wk High/Low"
+              value={`${fmtPriceRaw(stock.week52High)} / ${fmtPriceRaw(stock.week52Low)}`}
+            />
+            <StatsRow label="Div. Yield (%)" value="NA" />
+            <StatsRow label="Beta 3Y" value="NA" />
+          </div>
+
+          {release?.reaction ? (
+            <p className="mt-3 text-xs leading-relaxed text-slate-500">
+              First trading day after filing: {fmtSignedPercent(release.reaction.oneDayChangePct)}
+              {" • "}
+              Five trading days after filing: {fmtSignedPercent(release.reaction.fiveDayChangePct)}
+            </p>
+          ) : null}
+        </>
+      ) : (
+        <p className="mt-6 text-center text-sm text-slate-500">
+          {loading ? "Loading stock chart..." : "Stock data unavailable for this competitor."}
+        </p>
+      )}
     </div>
   );
 }
@@ -905,6 +1131,13 @@ export function ComparisonReportContent({
   exportHref,
 }: ComparisonReportContentProps) {
   const isMulti = isMultiComparison(result);
+  const presentationSlides = useMemo(
+    () =>
+      isMulti
+        ? PRESENTATION_SLIDES.filter((slide) => slide.id !== "competitor-release")
+        : PRESENTATION_SLIDES,
+    [isMulti]
+  );
   const multiTickers = isMulti && result.multiCompanies ? result.multiCompanies.map((c) => c.ticker) : [];
   const rowsBySectionMulti = isMulti ? buildMultiRowsBySection(result) : null;
   const hasPeriodWarn = result.warnings.some((warning) => PERIOD_WARNING_CODES.has(warning.code));
@@ -927,6 +1160,9 @@ export function ComparisonReportContent({
   const [marginMiniTab, setMarginMiniTab] = useState<"decomposition" | "gap-trend" | "qoq" | "yoy">("decomposition");
   const [balanceMiniTab, setBalanceMiniTab] = useState<"debt" | "liquidity">("debt");
   const [trendsMiniTab, setTrendsMiniTab] = useState<"margin-trend" | "timeline">("margin-trend");
+  const [competitorRelease, setCompetitorRelease] = useState<CompetitorEarningsReleasePayload | null>(null);
+  const [competitorReleaseLoading, setCompetitorReleaseLoading] = useState(false);
+  const [competitorReleaseError, setCompetitorReleaseError] = useState<string | null>(null);
   const pairCostMixData = useMemo(() => {
     const cogsA = result.companyA.metrics.revenue ? ((result.companyA.metrics.revenue - (result.companyA.metrics.grossProfit ?? 0)) / result.companyA.metrics.revenue) * 100 : 0;
     const cogsB = result.companyB.metrics.revenue ? ((result.companyB.metrics.revenue - (result.companyB.metrics.grossProfit ?? 0)) / result.companyB.metrics.revenue) * 100 : 0;
@@ -1168,8 +1404,12 @@ export function ComparisonReportContent({
       { label: "Generated", value: generatedLabel },
     ];
   }, [generatedLabel, isMulti, result]);
+  const releaseTrendScale = useMemo(
+    () => buildAdaptiveScale((competitorRelease?.stock.points ?? []).map((point) => point.close)),
+    [competitorRelease]
+  );
 
-  const activeSlideMeta = PRESENTATION_SLIDES.find((slide) => slide.id === activeSlide) ?? PRESENTATION_SLIDES[0];
+  const activeSlideMeta = presentationSlides.find((slide) => slide.id === activeSlide) ?? presentationSlides[0];
 
   useEffect(() => {
     setActiveSlide("executive-snapshot");
@@ -1177,7 +1417,77 @@ export function ComparisonReportContent({
     setMarginMiniTab("decomposition");
     setBalanceMiniTab("debt");
     setTrendsMiniTab("margin-trend");
+    setCompetitorRelease(null);
+    setCompetitorReleaseError(null);
+    setCompetitorReleaseLoading(false);
   }, [result.generatedAt]);
+
+  useEffect(() => {
+    if (
+      isMulti ||
+      activeSlide !== "competitor-release" ||
+      competitorRelease ||
+      competitorReleaseLoading
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadCompetitorRelease() {
+      setCompetitorReleaseLoading(true);
+      setCompetitorReleaseError(null);
+
+      try {
+        const response = await fetch("/api/competitor-earnings-release", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            benchmark: result.companyA,
+            competitor: result.companyB,
+            narrative: result.narrative,
+          }),
+        });
+
+        const payload = (await response.json()) as
+          | CompetitorEarningsReleasePayload
+          | { error?: string };
+
+        if (!response.ok) {
+          throw new Error(
+            "error" in payload && payload.error
+              ? payload.error
+              : "Failed to load competitor release context."
+          );
+        }
+
+        if (!cancelled) {
+          setCompetitorRelease(payload as CompetitorEarningsReleasePayload);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setCompetitorReleaseError(
+            error instanceof Error ? error.message : "Failed to load competitor release context."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setCompetitorReleaseLoading(false);
+        }
+      }
+    }
+
+    void loadCompetitorRelease();
+
+    return () => {
+      cancelled = true;
+    };
+    // The guards above use competitorRelease / competitorReleaseLoading as
+    // in-flight gates; including them in deps would re-fire this effect right
+    // after setCompetitorReleaseLoading(true), causing the cleanup to cancel
+    // the in-flight fetch before it can write its result back.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSlide, isMulti, result.generatedAt]);
 
   return (
     <div className="space-y-4">
@@ -1190,7 +1500,7 @@ export function ComparisonReportContent({
                   ? `Peer comparison (${result.multiCompanies.length} companies)`
                   : `${result.companyA.companyName} vs ${result.companyB.companyName}`}
               </span>
-              <StatusPill variant="neutral" size="sm">{PRESENTATION_SLIDES.length}-slide deck</StatusPill>
+              <StatusPill variant="neutral" size="sm">{presentationSlides.length}-slide deck</StatusPill>
             </div>
             <p className="mt-1 text-xs text-slate-500">
               One compare call loads all charts. Slide: {activeSlideMeta.title}
@@ -1220,7 +1530,7 @@ export function ComparisonReportContent({
         </div>
         <div className="mt-4 overflow-x-auto">
           <div className="flex min-w-max gap-2 pb-1">
-            {PRESENTATION_SLIDES.map((slide) => (
+            {presentationSlides.map((slide) => (
               <button
                 key={slide.id}
                 type="button"
@@ -1285,6 +1595,76 @@ export function ComparisonReportContent({
               <TrendCard title="Operating Margin Trend" data={result.trends.operatingMargin} labelA={tA} labelB={tB} isPercent />
             )}
           </div>
+        </section>
+      ) : null}
+
+      {activeSlide === "competitor-release" ? (
+        <section className="space-y-4">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-subtle">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-lg font-bold text-slate-900">
+                    {result.companyB.companyName} Earnings Release
+                  </p>
+                  <PillBadge label={`${tA} benchmark`} color="indigo" />
+                </div>
+                <p className="mt-1 text-xs text-slate-500">
+                  {tB} • {result.companyB.quarterLabel} • Filing date {formatDateLabel(competitorRelease?.filingDate ?? result.companyB.filingDate)}
+                </p>
+              </div>
+              <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-600">
+                Presentation-style competitor story view
+              </div>
+            </div>
+            <p className="mt-3 text-sm leading-relaxed text-slate-700">
+              {competitorRelease?.summary ??
+                (competitorReleaseLoading
+                  ? "Pulling stock reaction and building commentary..."
+                  : `${tB} release commentary will appear here once stock context loads.`)}
+            </p>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            <TopMetricCard label="Revenue" value={fmt("currency", result.companyB.metrics.revenue)} />
+            <TopMetricCard label="EBITDA" value={fmt("currency", result.companyB.metrics.ebitda)} />
+            <TopMetricCard label="Net Income" value={fmt("currency", result.companyB.metrics.netIncome)} />
+            <TopMetricCard label="Free Cash Flow" value={fmt("currency", result.companyB.metrics.freeCashFlow)} />
+            <TopMetricCard
+              label="Day 1 Stock Move"
+              value={fmtSignedPercent(competitorRelease?.reaction?.oneDayChangePct ?? null)}
+            />
+            <TopMetricCard
+              label="5D Stock Move"
+              value={fmtSignedPercent(competitorRelease?.reaction?.fiveDayChangePct ?? null)}
+            />
+          </div>
+
+          {competitorReleaseError ? (
+            <Card title="Stock API Status" sub="Release commentary fallback">
+              <p className="text-sm text-slate-600">
+                {competitorReleaseError}
+              </p>
+            </Card>
+          ) : null}
+
+          <StockOverviewCard
+            ticker={tB}
+            fallbackName={result.companyB.companyName}
+            release={competitorRelease}
+            loading={competitorReleaseLoading}
+            yAxisDomain={releaseTrendScale.domain}
+          />
+
+          <Card title="Presentation Commentary" sub="Market reaction, read-through, and Smithfield relevance">
+            {competitorReleaseLoading && !competitorRelease ? (
+              <p className="text-sm text-slate-500">Building commentary from live stock context...</p>
+            ) : competitorRelease?.commentary.length ? (
+              <ArrowBullets items={competitorRelease.commentary} accent />
+            ) : (
+              <p className="text-sm text-slate-500">Commentary will appear when stock data is available.</p>
+            )}
+          </Card>
         </section>
       ) : null}
 
@@ -1623,6 +2003,5 @@ export function ComparisonReportContent({
     </div>
   );
 }
-
 
 
