@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FullAnalysis, BSItem, IncomeStatement } from "@/types/analysis";
@@ -161,7 +161,7 @@ const tooltipStyle = {
 
 /* ──────────────────── Tabs ──────────────────── */
 
-type TabId = "summary" | "segment" | "income" | "balance" | "cashflow" | "analysis";
+type TabId = "summary" | "segment" | "income" | "balance" | "cashflow" | "dividends" | "analysis";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "summary", label: "Executive Summary" },
@@ -169,6 +169,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "income", label: "Income & Margins" },
   { id: "balance", label: "Balance Sheet" },
   { id: "cashflow", label: "Cash Flow" },
+  { id: "dividends", label: "Dividends" },
   { id: "analysis", label: "Analysis" },
 ];
 
@@ -443,24 +444,6 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
         {/* ─── EXECUTIVE SUMMARY ─── */}
         {activeTab === "summary" && (
           <div className="space-y-4">
-            {/* Verdict */}
-            <div className={cn("flex items-start gap-3 rounded-xl border p-4", verdictColor)}>
-              {div.verdict === "strong" || div.verdict === "adequate"
-                ? <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0" />
-                : <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0" />}
-              <div>
-                <p className="text-sm font-bold">{div.headline}</p>
-                <ul className="mt-1.5 space-y-0.5">
-                  {div.bullets.map((b, i) => (
-                    <li key={i} className="flex items-start gap-1.5 text-xs leading-relaxed opacity-90">
-                      <ArrowRight className="mt-0.5 h-3 w-3 shrink-0 opacity-50" />
-                      <span>{b}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-
             {/* Missing Data Alert */}
             {hasMissingData && (
               <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
@@ -1172,12 +1155,11 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
           return (
             <div className="space-y-4">
               {/* KPIs */}
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <RatioCard label="Operating CF" value={fmt(cf.operatingCashFlow)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Operating CF") : undefined} trace={traceByLabel?.["Operating CF"]} labelMap={traceLabelMap} />
                 <RatioCard label="CapEx" value={cf.capitalExpenditures != null ? fmt(-Math.abs(cf.capitalExpenditures)) : "—"} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Capital Expenditures") : undefined} trace={traceByLabel?.["Capital Expenditures"]} labelMap={traceLabelMap} />
                 <RatioCard label="Free Cash Flow" value={fmt(cf.freeCashFlow)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Free Cash Flow") : undefined} trace={traceByLabel?.["Free Cash Flow"]} labelMap={traceLabelMap} />
                 <RatioCard label="Dividends Paid" value={cf.dividendsPaid != null ? fmt(-Math.abs(cf.dividendsPaid)) : "—"} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Dividends Paid") : undefined} trace={traceByLabel?.["Dividends Paid"]} labelMap={traceLabelMap} />
-                <RatioCard label="FCF Conversion" value={fmtPct(ratios.fcfConversion)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("FCF Conversion") : undefined} trace={traceByLabel?.["FCF Conversion"]} labelMap={traceLabelMap} />
               </div>
 
               <div className="grid gap-4">
@@ -1208,15 +1190,7 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                 </Section>
               </div>
 
-              {/* Dividend Assessment */}
-              <Section title="Dividend Assessment">
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  <RatioCard label="Verdict" value={div.verdict.toUpperCase()} />
-                  <RatioCard label="Payout (NI)" value={fmtPct(div.payoutRatioNI)} />
-                  <RatioCard label="Payout (FCF)" value={fmtPct(div.payoutRatioFCF)} />
-                  <RatioCard label="FCF Coverage" value={div.fcfCoverageYears != null ? `${div.fcfCoverageYears.toFixed(2)}x` : "—"} />
-                </div>
-              </Section>
+              {/* Dividend assessment moved to `Dividends` tab */}
 
               {/* Cash Conversion Cycle */}
               {ccc.cycle != null && (
@@ -1288,6 +1262,62 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                     </div>
                   </div>
                 </div>
+              </Section>
+            </div>
+          );
+        })()}
+
+        {/* ─── DIVIDENDS ─── */}
+        {activeTab === "dividends" && (() => {
+          return (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+                <RatioCard label="Dividends Paid" value={cf.dividendsPaid != null ? fmt(-Math.abs(cf.dividendsPaid)) : "—"} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("Dividends Paid") : undefined} trace={traceByLabel?.["Dividends Paid"]} labelMap={traceLabelMap} />
+                <RatioCard label="Dividend Safety" value={div.fcfCoverageYears != null ? (div.fcfCoverageYears >= 2 ? "Strong" : div.fcfCoverageYears >= 1.2 ? "Adequate" : "Thin") : "—"} />
+                <RatioCard label="Payout (NI)" value={fmtPct(div.payoutRatioNI)} />
+                <RatioCard label="Payout (FCF)" value={fmtPct(div.payoutRatioFCF)} />
+                <RatioCard label="FCF Conversion" value={fmtPct(ratios.fcfConversion)} traceable={!!onTraceMetric} onClick={onTraceMetric ? () => onMetricTableRowClick("FCF Conversion") : undefined} trace={traceByLabel?.["FCF Conversion"]} labelMap={traceLabelMap} />
+              </div>
+              <div className={cn("flex items-start gap-3 rounded-xl border p-4", verdictColor)}>
+                {div.verdict === "strong" || div.verdict === "adequate"
+                  ? <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0" />
+                  : <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0" />}
+                <div>
+                  <p className="text-sm font-bold">{div.headline}</p>
+                  <ul className="mt-1.5 space-y-0.5">
+                    {div.bullets.map((b, i) => (
+                      <li key={i} className="flex items-start gap-1.5 text-xs leading-relaxed opacity-90">
+                        <ArrowRight className="mt-0.5 h-3 w-3 shrink-0 opacity-50" />
+                        <span>{b}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-3 text-xs text-slate-500">
+                    {div.fcfCoverageYears != null
+                      ? `FCF covers dividends ${div.fcfCoverageYears.toFixed(2)}x — this is a useful gauge of dividend sustainability.`
+                      : "Dividend coverage is unavailable when FCF or dividend cash flow is missing."}
+                  </p>
+                </div>
+              </div>
+
+              <Section title="Dividend Detail">
+                <MetricTable
+                  onRowClick={onTraceMetric ? onMetricTableRowClick : undefined}
+                  onRowDoubleClick={(label) => navigateToDataSource({ label })}
+                  onRowContextMenu={onMetricRowContextMenu}
+                  reextractBusyKey={reextractBusyKey}
+                  reextractPrompt={reextractPrompt}
+                  reextractAppliedValues={reextractAppliedValues}
+                  onApplyReextract={applyReextractPrompt}
+                  onDismissReextract={dismissReextractPrompt}
+                  {...metricTableTraceProps}
+                  rows={[
+                    { label: "Dividends Paid", value: fmt(cf.dividendsPaid != null ? -Math.abs(cf.dividendsPaid) : null), traceable: true },
+                    { label: "Payout Ratio (NI)", value: fmtPct(div.payoutRatioNI), dim: true },
+                    { label: "Payout Ratio (FCF)", value: fmtPct(div.payoutRatioFCF), dim: true },
+                    { label: "FCF Coverage (yrs)", value: div.fcfCoverageYears != null ? `${div.fcfCoverageYears.toFixed(2)}x` : "—", dim: true },
+                  ]}
+                />
               </Section>
             </div>
           );
