@@ -1138,8 +1138,8 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
           const dio = inv != null && cogs ? Math.round((inv / cogs) * 365) : null;
           const dpo = ap != null && cogs ? Math.round((ap / cogs) * 365) : null;
           const ccc = dso != null && dio != null && dpo != null
-            ? { dso, dio, dpo, cycle: dso + dio - dpo }
-            : { dso, dio, dpo, cycle: null as number | null };
+            ? { ar, inv, ap, rev, cogs, dso, dio, dpo, cycle: dso + dio - dpo }
+            : { ar, inv, ap, rev, cogs, dso, dio, dpo, cycle: null as number | null };
 
           const sbc = cfItems.find(i => i.tag === "ShareBasedCompensation")?.value ?? null;
           const ocf = cf.operatingCashFlow;
@@ -1197,14 +1197,78 @@ export function AnalysisDashboard({ result, onExport, onTraceMetric }: Props) {
                 <Section title="Cash Conversion Cycle">
                   <div className="space-y-3">
                     <div className="flex flex-wrap items-center justify-center gap-2 text-center">
-                      <DupontFactor label="DSO" value={ccc.dso != null ? `${ccc.dso} days` : "—"} sub="Days Sales Outstanding" />
+                      <DupontFactor
+                        label="DSO"
+                        value={ccc.dso != null ? `${ccc.dso} days` : "—"}
+                        sub="Days Sales Outstanding"
+                        tooltip={
+                          <FactorHoverDetail
+                            title="DSO calculation"
+                            lines={["DSO = receivables ÷ revenue × 365"]}
+                            inputs={[
+                              { label: "Receivables", value: fmt(ccc.ar) },
+                              { label: "Revenue", value: fmt(ccc.rev) },
+                              { label: "Days", value: "365" },
+                            ]}
+                          />
+                        }
+                      />
                       <span className="text-lg font-bold text-slate-400">+</span>
-                      <DupontFactor label="DIO" value={ccc.dio != null ? `${ccc.dio} days` : "—"} sub="Days Inventory Outstanding" />
+                      <DupontFactor
+                        label="DIO"
+                        value={ccc.dio != null ? `${ccc.dio} days` : "—"}
+                        sub="Days Inventory Outstanding"
+                        tooltip={
+                          <FactorHoverDetail
+                            title="DIO calculation"
+                            lines={["DIO = inventory ÷ COGS × 365"]}
+                            inputs={[
+                              { label: "Inventory", value: fmt(ccc.inv) },
+                              { label: "COGS", value: fmt(ccc.cogs) },
+                              { label: "Days", value: "365" },
+                            ]}
+                          />
+                        }
+                      />
                       <span className="text-lg font-bold text-slate-400">−</span>
-                      <DupontFactor label="DPO" value={ccc.dpo != null ? `${ccc.dpo} days` : "—"} sub="Days Payable Outstanding" />
+                      <DupontFactor
+                        label="DPO"
+                        value={ccc.dpo != null ? `${ccc.dpo} days` : "—"}
+                        sub="Days Payable Outstanding"
+                        tooltip={
+                          <FactorHoverDetail
+                            title="DPO calculation"
+                            lines={["DPO = payables ÷ COGS × 365"]}
+                            inputs={[
+                              { label: "Payables", value: fmt(ccc.ap) },
+                              { label: "COGS", value: fmt(ccc.cogs) },
+                              { label: "Days", value: "365" },
+                            ]}
+                          />
+                        }
+                      />
                       <span className="text-lg font-bold text-slate-400">=</span>
-                      <DupontFactor label="CCC" value={`${ccc.cycle} days`} highlight sub="Cash Conversion Cycle" />
+                      <DupontFactor
+                        label="CCC"
+                        value={`${ccc.cycle} days`}
+                        highlight
+                        sub="Cash Conversion Cycle"
+                        tooltip={
+                          <FactorHoverDetail
+                            title="CCC calculation"
+                            lines={["Cash Conversion Cycle = DSO + DIO − DPO"]}
+                            inputs={[
+                              { label: "DSO", value: ccc.dso != null ? `${ccc.dso} days` : "—" },
+                              { label: "DIO", value: ccc.dio != null ? `${ccc.dio} days` : "—" },
+                              { label: "DPO", value: ccc.dpo != null ? `${ccc.dpo} days` : "—" },
+                            ]}
+                          />
+                        }
+                      />
                     </div>
+                    <p className="text-center text-[11px] text-slate-400">
+                      Hover a tile to see the formula and the input values used in the calculation.
+                    </p>
                     <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-3 text-xs text-slate-600">
                       {ccc.cycle < 0 ? (
                         <p><span className="font-semibold text-emerald-600">Negative CCC ({ccc.cycle} days):</span> The company gets paid before paying suppliers — excellent working capital efficiency. Common in companies with strong bargaining power.</p>
@@ -2137,7 +2201,7 @@ function InsightsTab({
     const dio = inv != null && cogs ? Math.round((inv / cogs) * 365) : null;
     const dpo = ap != null && cogs ? Math.round((ap / cogs) * 365) : null;
     const cycle = dso != null && dio != null && dpo != null ? dso + dio - dpo : null;
-    return { dso, dio, dpo, cycle };
+    return { ar, inv, ap, rev, cogs, dso, dio, dpo, cycle };
   }, [inc, cfItems, bs]);
 
   // ── Capital Allocation
@@ -3123,12 +3187,56 @@ function InsightsTab({
   );
 }
 
-function DupontFactor({ label, value, sub, highlight }: { label: string; value: string; sub?: string; highlight?: boolean }) {
+function FactorHoverDetail({
+  title,
+  lines,
+  inputs,
+}: {
+  title: string;
+  lines: string[];
+  inputs: Array<{ label: string; value: string }>;
+}) {
   return (
-    <div className={cn("rounded-lg px-4 py-3 min-w-[100px]", highlight ? "border-2 border-primary/30 bg-primary/5" : "bg-slate-50 border border-slate-200")}>
-      <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{label}</p>
-      <p className={cn("text-lg font-black tabular-nums mt-0.5", highlight ? "text-primary" : "text-slate-900")}>{value}</p>
-      {sub && <p className="text-[9px] text-slate-400 mt-0.5">{sub}</p>}
+    <div className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 hidden w-[min(15.5rem,calc(100vw-2rem))] -translate-x-1/2 rounded-lg border border-slate-200 bg-white px-2 py-2 text-left shadow-lg group-hover/factor:block">
+      <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-500">{title}</p>
+      <div className="mt-1.5 space-y-1 text-[10px] leading-relaxed text-slate-700">
+        {lines.map((line) => (
+          <p key={line}>{line}</p>
+        ))}
+        <div className="mt-1 space-y-0.5 border-t border-slate-100 pt-1 text-slate-600">
+          {inputs.map((input) => (
+            <div key={input.label} className="flex items-center justify-between gap-2">
+              <span>{input.label}</span>
+              <span className="font-semibold text-slate-800">{input.value}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DupontFactor({
+  label,
+  value,
+  sub,
+  highlight,
+  tooltip,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  highlight?: boolean;
+  tooltip?: React.ReactNode;
+}) {
+  return (
+    <div className="group/factor relative">
+      <div className={cn("rounded-lg px-4 py-3 min-w-[100px]", highlight ? "border-2 border-primary/30 bg-primary/5" : "bg-slate-50 border border-slate-200")}>
+        <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{label}</p>
+        <p className={cn("text-lg font-black tabular-nums mt-0.5", highlight ? "text-primary" : "text-slate-900")}>{value}</p>
+        {sub && <p className="text-[9px] text-slate-400 mt-0.5">{sub}</p>}
+      </div>
+      {tooltip}
     </div>
   );
 }

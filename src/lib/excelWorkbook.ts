@@ -4,8 +4,8 @@ import type { DataSourceWorkbookCellStyle } from "@/types/dataSourceWorkbook";
 
 export const EXCEL_ANALYZE_MAX_ROWS = 250;
 export const EXCEL_ANALYZE_MAX_COLS = 20;
-export const EXCEL_EDITOR_MIN_ROWS = 12;
-export const EXCEL_EDITOR_MIN_COLS = 8;
+export const EXCEL_EDITOR_MIN_ROWS = 1;
+export const EXCEL_EDITOR_MIN_COLS = 1;
 
 export interface EditableWorkbookSheet {
   name: string;
