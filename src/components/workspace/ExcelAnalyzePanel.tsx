@@ -223,7 +223,7 @@ export function ExcelAnalyzePanel() {
           <>
             Upload <strong className="font-semibold text-slate-800">.xlsx, .xls, or .csv</strong>, or paste
             tabular text. We generate variance-style narrative, risk angles, and meeting-ready summaries, or
-            preprocess large comparison workbooks into smaller competitor-ready Excel files.
+            split large comparison workbooks into smaller competitor-ready Excel files.
           </>
         }
         left={
@@ -329,8 +329,9 @@ export function ExcelAnalyzePanel() {
                     <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 py-3 text-xs text-emerald-900">
                       <p className="font-semibold">Competitor-prep workflow</p>
                       <p className="mt-1 leading-relaxed">
-                        Use <strong className="font-semibold">Analyze/Process Excel</strong> to extract normalized quarterly rows,
-                        export a smaller workbook, and feed the competitor comparison engine without asking AI to read the raw file.
+                        Use <strong className="font-semibold">Split &amp; Process Excel</strong> to detect sections inside the
+                        main sheet, export focused company tabs, and feed the competitor comparison engine without asking AI to
+                        read the raw file.
                       </p>
                     </div>
                   </div>
@@ -369,7 +370,7 @@ export function ExcelAnalyzePanel() {
                       ) : (
                         <FileScan className="h-4 w-4" />
                       )}
-                      {processingWorkbook ? "Processing workbook" : "Analyze/Process Excel"}
+                      {processingWorkbook ? "Processing workbook" : "Split & Process Excel"}
                     </button>
                   </div>
                 </div>
@@ -554,7 +555,7 @@ export function ExcelAnalyzePanel() {
           <div className="rounded-2xl border border-slate-200/90 bg-white/95 p-5 shadow-subtle sm:p-6">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <p className="text-sm font-semibold text-slate-900">Competitor-prep output</p>
+                <p className="text-sm font-semibold text-slate-900">Split workbook output</p>
                 <p className="mt-1 text-xs text-slate-500">
                   {processedResult.sourceFileName} | {processedResult.rowCount} normalized quarter row(s)
                   {processedResult.primarySheet ? ` | primary sheet: ${processedResult.primarySheet}` : ""}
