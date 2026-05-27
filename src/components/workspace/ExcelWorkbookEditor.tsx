@@ -739,16 +739,27 @@ export function ExcelWorkbookEditor({ workbook, onChange, onError }: ExcelWorkbo
         }}
         className="relative max-h-[30rem] overflow-auto outline-none focus:ring-2 focus:ring-primary/15"
       >
-        <table className="border-separate border-spacing-0 text-xs" style={{ minWidth: `${Math.max(colCount * 120, 760)}px` }}>
+        <table className="border-separate border-spacing-0 text-[11px]" style={{ minWidth: `${Math.max(colCount * 102, 620)}px` }}>
           <thead className="sticky top-0 z-20">
             <tr>
-              <th className="sticky left-0 z-30 border-b border-r border-slate-200 bg-slate-100 px-3 py-2 text-center font-semibold text-slate-500">
+              <th className="sticky left-0 z-30 border-b border-r border-slate-200 bg-slate-100 px-2.5 py-1.5 text-center font-semibold text-slate-500">
                 #
               </th>
               {Array.from({ length: colCount }, (_, colIndex) => (
                 <th
                   key={`column-${colIndex}`}
-                  className="border-b border-r border-slate-200 bg-slate-100 px-3 py-2 text-center font-semibold text-slate-500"
+                  onClick={() => {
+                    focusGrid();
+                    setEditingCell(null);
+                    setContextMenu(null);
+                    setSelection({
+                      startRow: 0,
+                      endRow: Math.max(rowCount - 1, 0),
+                      startCol: colIndex,
+                      endCol: colIndex,
+                    });
+                  }}
+                  className="cursor-pointer select-none border-b border-r border-slate-200 bg-slate-100 px-2.5 py-1.5 text-center font-semibold text-slate-500 hover:bg-slate-200/70"
                 >
                   {columnIndexToLetter(colIndex)}
                 </th>
@@ -758,7 +769,20 @@ export function ExcelWorkbookEditor({ workbook, onChange, onError }: ExcelWorkbo
           <tbody>
             {activeSheet.cells.map((row, rowIndex) => (
               <tr key={`row-${rowIndex}`}>
-                <th className="sticky left-0 z-10 border-b border-r border-slate-200 bg-slate-50 px-3 py-2 text-center font-semibold text-slate-500">
+                <th
+                  onClick={() => {
+                    focusGrid();
+                    setEditingCell(null);
+                    setContextMenu(null);
+                    setSelection({
+                      startRow: rowIndex,
+                      endRow: rowIndex,
+                      startCol: 0,
+                      endCol: Math.max(colCount - 1, 0),
+                    });
+                  }}
+                  className="sticky left-0 z-10 cursor-pointer select-none border-b border-r border-slate-200 bg-slate-50 px-2.5 py-1.5 text-center font-semibold text-slate-500 hover:bg-slate-100"
+                >
                   {rowIndex + 1}
                 </th>
                 {Array.from({ length: colCount }, (_, colIndex) => {
@@ -814,7 +838,7 @@ export function ExcelWorkbookEditor({ workbook, onChange, onError }: ExcelWorkbo
                         });
                       }}
                       className={cn(
-                        "border-b border-r border-slate-200 px-3 py-2 align-middle transition",
+                        "border-b border-r border-slate-200 px-2.5 py-1.5 align-middle transition",
                         selected ? "bg-primary/[0.08]" : "bg-white hover:bg-slate-50/80",
                         active && "shadow-[inset_0_0_0_2px_rgba(43,124,255,0.7)]"
                       )}
@@ -851,7 +875,7 @@ export function ExcelWorkbookEditor({ workbook, onChange, onError }: ExcelWorkbo
                           className="w-full bg-transparent outline-none"
                         />
                       ) : (
-                        <div className="min-h-5 whitespace-pre-wrap break-words text-slate-700">
+                        <div className="min-h-4 whitespace-pre-wrap break-words text-slate-700">
                           {displayValue || <span className="opacity-0">0</span>}
                         </div>
                       )}

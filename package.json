@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "postinstall": "node -e \"const fs=require('fs');const p=require('path');const root=p.join(process.cwd(),'node_modules','xlsx-js-style');const walk=d=>fs.existsSync(d)?fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>{const f=p.join(d,e.name);return e.isDirectory()?walk(f):e.isFile()&&e.name==='tsconfig.json'&&f.includes(p.sep+'types'+p.sep)?[f]:[];}):[];for(const file of walk(root)){const data=JSON.parse(fs.readFileSync(file,'utf8'));if(data.compilerOptions&&Object.prototype.hasOwnProperty.call(data.compilerOptions,'baseUrl')&&data.compilerOptions.ignoreDeprecations!=='6.0'){data.compilerOptions.ignoreDeprecations='6.0';fs.writeFileSync(file,JSON.stringify(data,null,2)+'\\n');console.log('[postinstall] patched '+file);}}\""
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",

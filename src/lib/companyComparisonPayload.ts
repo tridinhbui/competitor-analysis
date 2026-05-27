@@ -23,6 +23,7 @@ import {
   filterFilingsForWorkspace,
   getWorkspaceResetAt,
 } from "@/lib/workspaceReset";
+import type { Filing } from "@/types/competitor";
 
 export class CompanyComparisonRequestError extends Error {
   constructor(
@@ -91,27 +92,20 @@ function periodEndForTicker(
   return undefined;
 }
 
-async function buildPairCompanyComparisonPayload(
+function sortFilingsDesc(filings: Filing[]): Filing[] {
+  return [...filings].sort((a, b) => b.periodEnd.localeCompare(a.periodEnd));
+}
+
+function buildPairCompanyComparisonPayloadFromWorkspaces(
   tickers: [string, string],
-  input: BuildCompanyComparisonPayloadInput
-): Promise<CompanyComparisonPayload> {
+  input: BuildCompanyComparisonPayloadInput,
+  filingsA: Filing[],
+  filingsB: Filing[],
+): CompanyComparisonPayload {
   const companyA = tickers[0];
   const companyB = tickers[1];
   const periodEndA = periodEndForTicker(input, 0, 2);
   const periodEndB = periodEndForTicker(input, 1, 2);
-
-  const [resetAtA, resetAtB] = await Promise.all([
-    getWorkspaceResetAt(companyA),
-    getWorkspaceResetAt(companyB),
-  ]);
-
-  const [allFilingsA, allFilingsB] = await Promise.all([
-    loadAllFilings(companyA),
-    loadAllFilings(companyB),
-  ]);
-
-  const filingsA = filterFilingsForWorkspace(allFilingsA, resetAtA);
-  const filingsB = filterFilingsForWorkspace(allFilingsB, resetAtB);
 
   if (filingsA.length === 0) {
     throw new CompanyComparisonRequestError(
@@ -184,16 +178,12 @@ async function buildPairCompanyComparisonPayload(
   };
 }
 
-async function buildMultiCompanyComparisonPayload(
+function buildMultiCompanyComparisonPayloadFromWorkspaces(
   tickers: string[],
-  input: BuildCompanyComparisonPayloadInput
-): Promise<CompanyComparisonPayload> {
+  input: BuildCompanyComparisonPayloadInput,
+  workspaces: Filing[][],
+): CompanyComparisonPayload {
   const count = tickers.length;
-  const resetAts = await Promise.all(tickers.map((ticker) => getWorkspaceResetAt(ticker)));
-  const allFilings = await Promise.all(tickers.map((ticker) => loadAllFilings(ticker)));
-  const workspaces = allFilings.map((filings, index) =>
-    filterFilingsForWorkspace(filings, resetAts[index])
-  );
 
   for (let i = 0; i < tickers.length; i++) {
     if (workspaces[i].length === 0) {
@@ -284,6 +274,51 @@ async function buildMultiCompanyComparisonPayload(
   };
 }
 
+async function buildPairCompanyComparisonPayload(
+  tickers: [string, string],
+  input: BuildCompanyComparisonPayloadInput
+): Promise<CompanyComparisonPayload> {
+  const companyA = tickers[0];
+  const companyB = tickers[1];
+
+  const [resetAtA, resetAtB] = await Promise.all([
+    getWorkspaceResetAt(companyA),
+    getWorkspaceResetAt(companyB),
+  ]);
+
+  const [allFilingsA, allFilingsB] = await Promise.all([
+    loadAllFilings(companyA),
+    loadAllFilings(companyB),
+  ]);
+
+  const filingsA = filterFilingsForWorkspace(allFilingsA, resetAtA);
+  const filingsB = filterFilingsForWorkspace(allFilingsB, resetAtB);
+
+  return buildPairCompanyComparisonPayloadFromWorkspaces(
+    tickers,
+    input,
+    filingsA,
+    filingsB
+  );
+}
+
+async function buildMultiCompanyComparisonPayload(
+  tickers: string[],
+  input: BuildCompanyComparisonPayloadInput
+): Promise<CompanyComparisonPayload> {
+  const resetAts = await Promise.all(tickers.map((ticker) => getWorkspaceResetAt(ticker)));
+  const allFilings = await Promise.all(tickers.map((ticker) => loadAllFilings(ticker)));
+  const workspaces = allFilings.map((filings, index) =>
+    filterFilingsForWorkspace(filings, resetAts[index])
+  );
+
+  return buildMultiCompanyComparisonPayloadFromWorkspaces(
+    tickers,
+    input,
+    workspaces
+  );
+}
+
 export async function buildCompanyComparisonPayload(
   input: BuildCompanyComparisonPayloadInput
 ): Promise<CompanyComparisonPayload> {
@@ -324,4 +359,60 @@ export async function buildCompanyComparisonPayload(
   }
 
   return buildMultiCompanyComparisonPayload(tickers, input);
+}
+
+export async function buildCompanyComparisonPayloadFromFilings(
+  input: BuildCompanyComparisonPayloadInput & { filings: Filing[] }
+): Promise<CompanyComparisonPayload> {
+  const rawTickers = resolveTickerList(input);
+  const tickers = [...new Set(rawTickers)];
+
+  if (rawTickers.length !== tickers.length) {
+    throw new CompanyComparisonRequestError(400, "Duplicate tickers in comparison list.");
+  }
+
+  if (tickers.length < 2) {
+    throw new CompanyComparisonRequestError(
+      400,
+      "Provide at least two tickers for the Excel-processed comparison."
+    );
+  }
+
+  if (tickers.length > MAX_COMPANIES) {
+    throw new CompanyComparisonRequestError(
+      400,
+      `You can compare at most ${MAX_COMPANIES} companies at once.`
+    );
+  }
+
+  const csv = input.periodEnds
+    ?.split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (csv && csv.length > 0 && csv.length !== tickers.length) {
+    throw new CompanyComparisonRequestError(
+      400,
+      `periodEnds must have the same number of entries as tickers (${tickers.length}), or be omitted.`
+    );
+  }
+
+  const grouped = new Map<string, Filing[]>();
+  for (const filing of input.filings) {
+    const ticker = filing.ticker.trim().toUpperCase();
+    if (!grouped.has(ticker)) grouped.set(ticker, []);
+    grouped.get(ticker)!.push(filing);
+  }
+
+  const workspaces = tickers.map((ticker) => sortFilingsDesc(grouped.get(ticker) ?? []));
+
+  if (tickers.length === 2) {
+    return buildPairCompanyComparisonPayloadFromWorkspaces(
+      [tickers[0], tickers[1]],
+      input,
+      workspaces[0],
+      workspaces[1]
+    );
+  }
+
+  return buildMultiCompanyComparisonPayloadFromWorkspaces(tickers, input, workspaces);
 }

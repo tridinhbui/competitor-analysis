@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { DataSourceRow } from "@/types/dataSource";
 import type {
   DataSourceEditLogEntry,
@@ -34,7 +34,6 @@ import {
   RotateCcw,
   Save,
   Scissors,
-  Search,
   Strikethrough,
   Underline,
   Undo2,
@@ -99,10 +98,33 @@ interface WorkbookSectionConfig {
   focusField?: string;
 }
 
+interface CachedWorkbookPayload {
+  rows: DataSourceRow[];
+  workbookCells: WorkbookRowCellStateMap;
+  editLog: DataSourceEditLogEntry[];
+  availableCompanies: CompanyWorkbookOption[];
+  workbookThreads: ChatThreadSummary[];
+  schemaReady: boolean;
+  threadSchemaMessage: string | null;
+  selectedCompanyTicker: string | null;
+  selectedThreadId: string | null;
+}
+
+interface CachedWorkbookSnapshot {
+  version: 1;
+  selectionKey: string | null;
+  cachedAt: string;
+  viewState: {
+    activeSheet: WorkbookSectionKey;
+  };
+  payload: CachedWorkbookPayload;
+}
+
 const ROW_NUMBER_COLUMN_KEY = "__row__";
 const COLUMN_WIDTHS_STORAGE_KEY = "data-source-column-widths-v1";
 const EDIT_WARNING_STORAGE_KEY = "data-source-edit-warning-acknowledged-v1";
 const CELL_MERGES_STORAGE_KEY = "data-source-cell-merges-v1";
+const WORKBOOK_SNAPSHOT_STORAGE_KEY = "data-source-last-workbook-snapshot-v1";
 const MIN_COLUMN_WIDTH = 60;
 const MAX_COLUMN_WIDTH = 640;
 const DEFAULT_METRIC_COLUMN_WIDTH = 130;
@@ -247,6 +269,10 @@ function getWorkbookColumnsForSection(section: WorkbookSectionConfig) {
 
 function getDefaultColumnWidth(field: string): number {
   return DEFAULT_COLUMN_WIDTHS[field] ?? DEFAULT_METRIC_COLUMN_WIDTH;
+}
+
+function isWorkbookSectionKey(value: string): value is WorkbookSectionKey {
+  return WORKBOOK_SECTIONS.some((section) => section.key === value);
 }
 
 function deepClone<T>(value: T): T {
@@ -586,6 +612,161 @@ function normalizeCompanyWorkbookOptions(payload: unknown): CompanyWorkbookOptio
   return [...deduped.values()].sort((a, b) => a.ticker.localeCompare(b.ticker));
 }
 
+function normalizeWorkbookThreadsPayload(payload: unknown): ChatThreadSummary[] {
+  if (!Array.isArray(payload)) return [];
+
+  return payload.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+
+    const threadEntry = entry as ChatThreadSummary;
+    const id = typeof threadEntry.id === "string"
+      ? threadEntry.id.trim()
+      : "";
+    const title = typeof threadEntry.title === "string"
+      ? threadEntry.title.trim()
+      : "";
+    const createdAt = typeof threadEntry.createdAt === "string"
+      ? threadEntry.createdAt
+      : "";
+    const updatedAt = typeof threadEntry.updatedAt === "string"
+      ? threadEntry.updatedAt
+      : "";
+
+    if (!id || !title || !createdAt || !updatedAt) return [];
+
+    return [{
+      id,
+      title,
+      createdAt,
+      updatedAt,
+      kind: threadEntry.kind === "data-source-workbook" ? "data-source-workbook" : "general",
+      companyTicker:
+        typeof threadEntry.companyTicker === "string"
+          ? threadEntry.companyTicker.trim().toUpperCase() || null
+          : null,
+      companyName:
+        typeof threadEntry.companyName === "string"
+          ? threadEntry.companyName.trim() || null
+          : null,
+      sourceThreadId:
+        typeof threadEntry.sourceThreadId === "string"
+          ? threadEntry.sourceThreadId.trim() || null
+          : null,
+    }];
+  });
+}
+
+function buildCachedWorkbookPayload(data: Record<string, unknown>): CachedWorkbookPayload {
+  return {
+    rows: Array.isArray(data.rows) ? (data.rows as DataSourceRow[]) : [],
+    workbookCells: normalizeWorkbookCellsPayload(data.workbookCells),
+    editLog: Array.isArray(data.editLog) ? (data.editLog as DataSourceEditLogEntry[]) : [],
+    availableCompanies: normalizeCompanyWorkbookOptions((data as { availableCompanies?: unknown }).availableCompanies),
+    workbookThreads: normalizeWorkbookThreadsPayload((data as { workbookThreads?: unknown }).workbookThreads),
+    schemaReady: (data as { schemaReady?: boolean }).schemaReady !== false,
+    threadSchemaMessage:
+      typeof (data as { threadSchemaMessage?: unknown }).threadSchemaMessage === "string"
+        ? ((data as { threadSchemaMessage: string }).threadSchemaMessage || null)
+        : null,
+    selectedCompanyTicker:
+      typeof (data as { selectedCompanyTicker?: unknown }).selectedCompanyTicker === "string"
+        ? ((data as { selectedCompanyTicker: string }).selectedCompanyTicker.trim().toUpperCase() || null)
+        : null,
+    selectedThreadId:
+      typeof (data as { selectedThreadId?: unknown }).selectedThreadId === "string"
+        ? ((data as { selectedThreadId: string }).selectedThreadId.trim() || null)
+        : null,
+  };
+}
+
+function getWorkbookSelectionKey(
+  companyTicker: string | null | undefined,
+  threadId: string | null | undefined,
+): string | null {
+  if (threadId?.trim()) return `thread:${threadId.trim()}`;
+  if (companyTicker?.trim()) return `company:${companyTicker.trim().toUpperCase()}`;
+  return null;
+}
+
+function buildNavigatorSignature(payload: CachedWorkbookPayload): string {
+  return JSON.stringify({
+    availableCompanies: payload.availableCompanies,
+    workbookThreads: payload.workbookThreads,
+    schemaReady: payload.schemaReady,
+    threadSchemaMessage: payload.threadSchemaMessage,
+    selectedCompanyTicker: payload.selectedCompanyTicker,
+    selectedThreadId: payload.selectedThreadId,
+  });
+}
+
+function buildWorkbookSignature(payload: CachedWorkbookPayload): string {
+  return JSON.stringify({
+    rows: payload.rows,
+    workbookCells: payload.workbookCells,
+    editLog: payload.editLog,
+  });
+}
+
+function readCachedWorkbookSnapshot(): CachedWorkbookSnapshot | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = window.sessionStorage.getItem(WORKBOOK_SNAPSHOT_STORAGE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as {
+      version?: unknown;
+      selectionKey?: unknown;
+      cachedAt?: unknown;
+      viewState?: { activeSheet?: unknown };
+      payload?: unknown;
+    };
+
+    if (parsed.version !== 1 || !parsed.payload || typeof parsed.payload !== "object") {
+      return null;
+    }
+
+    const activeSheet =
+      typeof parsed.viewState?.activeSheet === "string" && isWorkbookSectionKey(parsed.viewState.activeSheet)
+        ? parsed.viewState.activeSheet
+        : "summary";
+
+    return {
+      version: 1,
+      selectionKey: typeof parsed.selectionKey === "string" ? parsed.selectionKey : null,
+      cachedAt: typeof parsed.cachedAt === "string" ? parsed.cachedAt : new Date(0).toISOString(),
+      viewState: { activeSheet },
+      payload: buildCachedWorkbookPayload(parsed.payload as Record<string, unknown>),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedWorkbookSnapshot(snapshot: CachedWorkbookSnapshot): void {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.sessionStorage.setItem(WORKBOOK_SNAPSHOT_STORAGE_KEY, JSON.stringify(snapshot));
+  } catch {
+    // ignore quota errors
+  }
+}
+
+function cachedSnapshotMatchesSelection(
+  snapshot: CachedWorkbookSnapshot,
+  companyTicker: string | null,
+  threadId: string | null,
+): boolean {
+  if (threadId) {
+    return snapshot.payload.selectedThreadId === threadId;
+  }
+  if (companyTicker) {
+    return snapshot.payload.selectedCompanyTicker === companyTicker;
+  }
+  return true;
+}
+
 function parseNumericInput(input: string): number | null {
   const cleaned = input.replace(/[$,%\s]/g, "").replace(/,/g, "");
   if (!cleaned || cleaned === "-" || cleaned === "--") return null;
@@ -708,11 +889,13 @@ function ToolbarButton({
 
 export default function DataSourcePage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const workbookRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const initialWorkbookCellsRef = useRef<string>("{}");
   const initialThreadSelectionAppliedRef = useRef(false);
+  const workbookSignatureRef = useRef<string>("");
+  const navigatorSignatureRef = useRef<string>("");
+  const hasUnsavedChangesRef = useRef(false);
 
   const [baseRows, setBaseRows] = useState<DataSourceRow[]>([]);
   const [workbookCells, setWorkbookCells] = useState<WorkbookRowCellStateMap>({});
@@ -725,11 +908,11 @@ export default function DataSourcePage() {
   const [threadSchemaReady, setThreadSchemaReady] = useState(true);
   const [threadSchemaMessage, setThreadSchemaMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [revalidating, setRevalidating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [navigatorLoading, setNavigatorLoading] = useState(true);
   const [creatingThreadTicker, setCreatingThreadTicker] = useState<string | null>(null);
   const [activeSheet, setActiveSheet] = useState<WorkbookSectionKey>("summary");
-  const [filter, setFilter] = useState("");
   const [sortByWorkflow, setSortByWorkflow] = useState<Record<WorkflowOrigin, SortState | null>>({
     analyze: null,
     competitor: null,
@@ -902,23 +1085,79 @@ export default function DataSourcePage() {
     [getColumnWidth],
   );
 
-  const applyWorkbookPayload = useCallback((data: Record<string, unknown>) => {
-    const nextRows = Array.isArray(data.rows) ? (data.rows as DataSourceRow[]) : [];
-    const nextWorkbookCells = normalizeWorkbookCellsPayload(data.workbookCells);
-    const nextEditLog = Array.isArray(data.editLog) ? (data.editLog as DataSourceEditLogEntry[]) : [];
+  const updateSelectionUrl = useCallback((companyTicker: string, threadId?: string | null) => {
+    const params = new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
+    params.set("company", companyTicker);
+    if (threadId) {
+      params.set("thread", threadId);
+    } else {
+      params.delete("thread");
+    }
+    router.replace(`/data-source?${params.toString()}`, { scroll: false });
+  }, [router]);
 
-    setBaseRows(nextRows);
-    setWorkbookCells(nextWorkbookCells);
-    setEditLog(nextEditLog);
+  const applyNavigatorPayload = useCallback((
+    payload: CachedWorkbookPayload,
+    options?: { syncUrl?: boolean },
+  ) => {
+    setThreadSchemaReady(payload.schemaReady);
+    setThreadSchemaMessage(payload.schemaReady ? null : payload.threadSchemaMessage);
+    setCompanyOptions(payload.availableCompanies);
+    setWorkbookThreads(payload.workbookThreads);
+    setSelectedCompanyTicker(payload.selectedCompanyTicker);
+    setSelectedThreadId(payload.selectedThreadId);
+
+    if (options?.syncUrl && payload.selectedCompanyTicker) {
+      updateSelectionUrl(payload.selectedCompanyTicker, payload.selectedThreadId);
+    }
+
+    navigatorSignatureRef.current = buildNavigatorSignature(payload);
+  }, [updateSelectionUrl]);
+
+  const applyWorkbookPayload = useCallback((
+    payload: CachedWorkbookPayload,
+    options?: {
+      preserveSelection?: boolean;
+      preserveActiveSheet?: boolean;
+      activeSheetOverride?: WorkbookSectionKey;
+    },
+  ) => {
+    setBaseRows(payload.rows);
+    setWorkbookCells(payload.workbookCells);
+    setEditLog(payload.editLog);
     setNumericOverrides({});
     setUndoStack([]);
     setRedoStack([]);
     setEditingCell(null);
+    setInlineDraft("");
     setContextMenu(null);
-    setSelection(null);
     setFormulaDraft("");
-    setActiveSheet("summary");
-    initialWorkbookCellsRef.current = serializeWorkbookRowCellStates(nextWorkbookCells);
+    if (!options?.preserveSelection) {
+      setSelection(null);
+    }
+    if (options?.activeSheetOverride) {
+      setActiveSheet(options.activeSheetOverride);
+    } else if (!options?.preserveActiveSheet) {
+      setActiveSheet("summary");
+    }
+    initialWorkbookCellsRef.current = serializeWorkbookRowCellStates(payload.workbookCells);
+    workbookSignatureRef.current = buildWorkbookSignature(payload);
+  }, []);
+
+  const applyWorkbookContentPayload = useCallback((payload: CachedWorkbookPayload) => {
+    startTransition(() => {
+      setBaseRows(payload.rows);
+      setWorkbookCells(payload.workbookCells);
+      setEditLog(payload.editLog);
+      setNumericOverrides({});
+      setUndoStack([]);
+      setRedoStack([]);
+      setEditingCell(null);
+      setInlineDraft("");
+      setContextMenu(null);
+    });
+    initialWorkbookCellsRef.current = serializeWorkbookRowCellStates(payload.workbookCells);
+    workbookSignatureRef.current = buildWorkbookSignature(payload);
   }, []);
 
   const mergeWorkbookThread = useCallback((thread: ChatThreadSummary) => {
@@ -929,38 +1168,48 @@ export default function DataSourcePage() {
     });
   }, []);
 
-  const updateSelectionUrl = useCallback((companyTicker: string, threadId?: string | null) => {
-    const params = new URLSearchParams(searchParams.toString());
-    params.set("company", companyTicker);
-    if (threadId) {
-      params.set("thread", threadId);
-    } else {
-      params.delete("thread");
-    }
-    router.replace(`/data-source?${params.toString()}`, { scroll: false });
-  }, [router, searchParams]);
-
   const fetchData = useCallback(async (options?: {
     includeNavigator?: boolean;
     companyTicker?: string | null;
     threadId?: string | null;
+    preserveVisibleState?: boolean;
+    preserveNavigatorState?: boolean;
+    resetWorkbookUi?: boolean;
   }) => {
     const includeNavigator = options?.includeNavigator ?? true;
     const nextCompanyTicker = options?.companyTicker ?? selectedCompanyTicker;
     const nextThreadId = options?.threadId ?? selectedThreadId;
+    const preserveVisibleState =
+      options?.preserveVisibleState ??
+      (baseRows.length > 0 || Object.keys(workbookCells).length > 0);
+    const preserveNavigatorState =
+      options?.preserveNavigatorState ??
+      (companyOptions.length > 0 || workbookThreads.length > 0);
+    const resetWorkbookUi = options?.resetWorkbookUi ?? !preserveVisibleState;
 
     if (!nextThreadId && !nextCompanyTicker && !includeNavigator) {
       setLoading(false);
+      setRevalidating(false);
       setBaseRows([]);
       setWorkbookCells({});
       setEditLog([]);
       setNumericOverrides({});
       initialWorkbookCellsRef.current = "{}";
+      workbookSignatureRef.current = "";
+      navigatorSignatureRef.current = "";
       return;
     }
 
-    setLoading(true);
-    if (includeNavigator) setNavigatorLoading(true);
+    if (!preserveVisibleState) {
+      setLoading(true);
+    }
+    if (includeNavigator && !preserveNavigatorState) {
+      setNavigatorLoading(true);
+    }
+    if (preserveVisibleState || (includeNavigator && preserveNavigatorState)) {
+      setRevalidating(true);
+    }
+
     try {
       const params = new URLSearchParams();
       if (includeNavigator) params.set("includeNavigator", "1");
@@ -978,65 +1227,75 @@ export default function DataSourcePage() {
         return;
       }
 
+      const payload = buildCachedWorkbookPayload(data as Record<string, unknown>);
+      const nextNavigatorSignature = buildNavigatorSignature(payload);
+      const nextWorkbookSignature = buildWorkbookSignature(payload);
+
       if (includeNavigator) {
-        const schemaReady = (data as { schemaReady?: boolean }).schemaReady !== false;
-        setThreadSchemaReady(schemaReady);
-        setThreadSchemaMessage(
-          schemaReady
-            ? null
-            : ((data as { threadSchemaMessage?: string; error?: string }).threadSchemaMessage ??
-              (data as { error?: string }).error ??
-              "Workbook threads need the latest chat schema."),
-        );
-        setCompanyOptions(normalizeCompanyWorkbookOptions((data as { availableCompanies?: unknown }).availableCompanies));
-        setWorkbookThreads(
-          Array.isArray((data as { workbookThreads?: ChatThreadSummary[] }).workbookThreads)
-            ? (data as { workbookThreads: ChatThreadSummary[] }).workbookThreads
-            : [],
-        );
-
-        const responseCompanyTicker =
-          typeof (data as { selectedCompanyTicker?: unknown }).selectedCompanyTicker === "string"
-            ? ((data as { selectedCompanyTicker: string }).selectedCompanyTicker || null)
-            : nextCompanyTicker;
-        const responseThreadId =
-          typeof (data as { selectedThreadId?: unknown }).selectedThreadId === "string"
-            ? ((data as { selectedThreadId: string }).selectedThreadId || null)
-            : null;
-
-        setSelectedCompanyTicker(responseCompanyTicker ?? null);
-        setSelectedThreadId(responseThreadId);
-        if (responseCompanyTicker) {
-          updateSelectionUrl(responseCompanyTicker, responseThreadId);
+        if (nextNavigatorSignature !== navigatorSignatureRef.current) {
+          applyNavigatorPayload(payload, { syncUrl: true });
         }
       }
 
-      applyWorkbookPayload(data as Record<string, unknown>);
-
-      const thread = (data as { thread?: Record<string, unknown> }).thread;
-      if (thread && typeof thread.id === "string") {
-        setWorkbookThreads((current) => {
-          const existing = current.find((entry) => entry.id === thread.id);
-          const nextThread: ChatThreadSummary = {
-            id: thread.id,
-            title: typeof thread.title === "string" ? thread.title : existing?.title ?? "Workbook thread",
-            createdAt: existing?.createdAt ?? (typeof thread.updatedAt === "string" ? thread.updatedAt : new Date().toISOString()),
-            updatedAt: typeof thread.updatedAt === "string" ? thread.updatedAt : existing?.updatedAt ?? new Date().toISOString(),
-            kind: "data-source-workbook",
-            companyTicker: typeof thread.companyTicker === "string" ? thread.companyTicker : existing?.companyTicker ?? null,
-            companyName: typeof thread.companyName === "string" ? thread.companyName : existing?.companyName ?? null,
-            sourceThreadId: existing?.sourceThreadId ?? null,
-          };
-          const next = [nextThread, ...current.filter((entry) => entry.id !== nextThread.id)];
-          next.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-          return next;
-        });
+      if (nextWorkbookSignature !== workbookSignatureRef.current && !hasUnsavedChangesRef.current) {
+        if (resetWorkbookUi) {
+          applyWorkbookPayload(payload, {
+            preserveSelection: false,
+            preserveActiveSheet: false,
+          });
+        } else {
+          applyWorkbookContentPayload(payload);
+        }
       }
+
+      writeCachedWorkbookSnapshot({
+        version: 1,
+        selectionKey: getWorkbookSelectionKey(payload.selectedCompanyTicker, payload.selectedThreadId),
+        cachedAt: new Date().toISOString(),
+        viewState: {
+          activeSheet: resetWorkbookUi ? "summary" : activeSheet,
+        },
+        payload,
+      });
     } finally {
       setLoading(false);
+      setRevalidating(false);
       if (includeNavigator) setNavigatorLoading(false);
     }
-  }, [applyWorkbookPayload, selectedCompanyTicker, selectedThreadId, updateSelectionUrl]);
+  }, [
+    activeSheet,
+    applyWorkbookContentPayload,
+    applyNavigatorPayload,
+    applyWorkbookPayload,
+    baseRows.length,
+    companyOptions.length,
+    selectedCompanyTicker,
+    selectedThreadId,
+    workbookCells,
+    workbookThreads.length,
+  ]);
+
+  useLayoutEffect(() => {
+    const currentSearchParams = new URLSearchParams(
+      typeof window === "undefined" ? "" : window.location.search,
+    );
+    const requestedThreadId = currentSearchParams.get("thread")?.trim() ?? null;
+    const requestedCompanyTicker = currentSearchParams.get("company")?.trim().toUpperCase() ?? null;
+    const snapshot = readCachedWorkbookSnapshot();
+    if (!snapshot || !cachedSnapshotMatchesSelection(snapshot, requestedCompanyTicker, requestedThreadId)) {
+      return;
+    }
+
+    applyNavigatorPayload(snapshot.payload, {
+      syncUrl: !requestedCompanyTicker && !requestedThreadId,
+    });
+    applyWorkbookPayload(snapshot.payload, {
+      activeSheetOverride: snapshot.viewState.activeSheet,
+    });
+    setLoading(false);
+    setNavigatorLoading(false);
+    setRevalidating(false);
+  }, [applyNavigatorPayload, applyWorkbookPayload]);
 
   const threadsByCompany = useMemo(() => {
     const grouped = new Map<string, ChatThreadSummary[]>();
@@ -1086,11 +1345,6 @@ export default function DataSourcePage() {
     [selectedCompanyTicker, threadsByCompany],
   );
 
-  const activeWorkbookThread = useMemo(
-    () => workbookThreads.find((thread) => thread.id === selectedThreadId) ?? null,
-    [selectedThreadId, workbookThreads],
-  );
-
   const { rows: computedRows, formulaErrors } = useMemo(
     () => computeWorkbookRows(baseRows, numericOverrides, workbookCells),
     [baseRows, numericOverrides, workbookCells],
@@ -1109,21 +1363,10 @@ export default function DataSourcePage() {
   );
 
   const visibleRows = useMemo(() => {
-    const query = filter.trim().toLowerCase();
-    const filteredRows = currentWorkbookRows.filter((row) => {
-      if (!query) return true;
-      return (
-        row.ticker.toLowerCase().includes(query) ||
-        row.companyName.toLowerCase().includes(query) ||
-        row.quarterLabel.toLowerCase().includes(query) ||
-        row.periodEnd.toLowerCase().includes(query)
-      );
-    });
+    return sortRows(currentWorkbookRows, sortByWorkflow[activeWorkflow]);
+  }, [activeWorkflow, currentWorkbookRows, sortByWorkflow]);
 
-    return sortRows(filteredRows, sortByWorkflow[activeWorkflow]);
-  }, [activeWorkflow, currentWorkbookRows, filter, sortByWorkflow]);
-
-  const shouldPadWorkbookRows = filter.trim().length === 0;
+  const shouldPadWorkbookRows = true;
   const workbookDisplayRowCount = shouldPadWorkbookRows
     ? Math.max(visibleRows.length, MIN_WORKBOOK_VISIBLE_ROWS)
     : visibleRows.length;
@@ -1188,6 +1431,26 @@ export default function DataSourcePage() {
 
   const hasFormulaErrors = Object.keys(formulaErrors).length > 0;
 
+  useEffect(() => {
+    hasUnsavedChangesRef.current = hasUnsavedChanges;
+  }, [hasUnsavedChanges]);
+
+  useEffect(() => {
+    const snapshot = readCachedWorkbookSnapshot();
+    const selectionKey = getWorkbookSelectionKey(selectedCompanyTicker, selectedThreadId);
+    if (!snapshot || !selectionKey) return;
+    if (snapshot.selectionKey !== selectionKey) return;
+    if (snapshot.viewState.activeSheet === activeSheet) return;
+
+    writeCachedWorkbookSnapshot({
+      ...snapshot,
+      viewState: {
+        ...snapshot.viewState,
+        activeSheet,
+      },
+    });
+  }, [activeSheet, selectedCompanyTicker, selectedThreadId]);
+
   const createWorkbookThread = useCallback(async (
     company: CompanyWorkbookOption,
     sourceThreadId?: string | null,
@@ -1239,6 +1502,9 @@ export default function DataSourcePage() {
         includeNavigator: true,
         companyTicker: company.ticker,
         threadId: null,
+        preserveVisibleState: false,
+        preserveNavigatorState: true,
+        resetWorkbookUi: true,
       });
       return;
     }
@@ -1257,14 +1523,15 @@ export default function DataSourcePage() {
     setSelectedCompanyTicker(company.ticker);
 
     const existingThreads = threadsByCompany.get(company.ticker) ?? [];
-    let nextThread =
+    let nextThread: ChatThreadSummary | null =
       (preferredThreadId ? existingThreads.find((thread) => thread.id === preferredThreadId) : null) ??
       existingThreads[0] ??
       null;
 
     if (!nextThread) {
-      nextThread = await createWorkbookThread(company, null);
-      if (!nextThread) return;
+      const createdThread = await createWorkbookThread(company, null);
+      if (!createdThread) return;
+      nextThread = createdThread;
     }
 
     if (nextThread.id === selectedThreadId && company.ticker === selectedCompanyTicker) return;
@@ -1275,6 +1542,9 @@ export default function DataSourcePage() {
       includeNavigator: true,
       companyTicker: company.ticker,
       threadId: nextThread.id,
+      preserveVisibleState: false,
+      preserveNavigatorState: true,
+      resetWorkbookUi: true,
     });
   }, [
     createWorkbookThread,
@@ -1311,6 +1581,9 @@ export default function DataSourcePage() {
       includeNavigator: true,
       companyTicker: selectedCompany.ticker,
       threadId: nextThread.id,
+      preserveVisibleState: false,
+      preserveNavigatorState: true,
+      resetWorkbookUi: true,
     });
   }, [
     createWorkbookThread,
@@ -1381,14 +1654,17 @@ export default function DataSourcePage() {
     if (initialThreadSelectionAppliedRef.current) return;
 
     initialThreadSelectionAppliedRef.current = true;
-    const threadId = searchParams.get("thread")?.trim() ?? null;
-    const companyTickerFromQuery = searchParams.get("company")?.trim().toUpperCase() ?? null;
+    const currentSearchParams = new URLSearchParams(
+      typeof window === "undefined" ? "" : window.location.search,
+    );
+    const threadId = currentSearchParams.get("thread")?.trim() ?? null;
+    const companyTickerFromQuery = currentSearchParams.get("company")?.trim().toUpperCase() ?? null;
     void fetchData({
       includeNavigator: true,
       threadId,
       companyTicker: companyTickerFromQuery,
     });
-  }, [fetchData, searchParams]);
+  }, [fetchData]);
 
   const pushHistory = useCallback(() => {
     const snapshot: HistorySnapshot = {
@@ -2119,7 +2395,11 @@ export default function DataSourcePage() {
 
       initialWorkbookCellsRef.current = serializeWorkbookRowCellStates(workbookCells);
       setNumericOverrides({});
-      await fetchData();
+      await fetchData({
+        preserveVisibleState: true,
+        preserveNavigatorState: true,
+        resetWorkbookUi: false,
+      });
     } finally {
       setSaving(false);
     }
@@ -2322,21 +2602,10 @@ export default function DataSourcePage() {
             <p className="text-xs text-slate-500">
               {!threadSchemaReady && selectedCompany
                 ? `${selectedCompany.ticker} company workbook loaded in compatibility mode until the workbook-thread migration is applied.`
-                : activeWorkbookThread && selectedCompany
-                ? `${selectedCompany.ticker} thread: ${activeWorkbookThread.title}. ${baseRows.length} records in this workbook snapshot.`
                 : `${baseRows.length} records - Excel-like workbook with formulas, formatting, keyboard navigation, copy/paste, and persisted manual overrides.`}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <div className="relative">
-              <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-slate-400" />
-              <input
-                className="rounded-md border border-slate-200 bg-white py-2 pl-7 pr-3 text-xs shadow-sm outline-none focus:ring-1 focus:ring-primary/40"
-                placeholder="Filter ticker, company, quarter..."
-                value={filter}
-                onChange={(event) => setFilter(event.target.value)}
-              />
-            </div>
             {hasUnsavedChanges && (
               <button
                 onClick={handleSave}
@@ -2360,11 +2629,15 @@ export default function DataSourcePage() {
               <Download className="h-3 w-3" /> Excel
             </button>
             <button
-              onClick={() => void fetchData()}
+              onClick={() => void fetchData({
+                preserveVisibleState: true,
+                preserveNavigatorState: true,
+                resetWorkbookUi: false,
+              })}
               className="rounded-md p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
               title="Refresh"
             >
-              <RotateCcw className="h-4 w-4" />
+              {revalidating ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
             </button>
           </div>
         </div>
@@ -2375,12 +2648,7 @@ export default function DataSourcePage() {
           </div>
         )}
 
-        {navigatorLoading ? (
-          <div className="flex items-center justify-center py-24">
-            <Loader2 className="h-5 w-5 animate-spin text-primary" />
-            <span className="ml-2 text-sm text-slate-500">Loading companies and workbook threads...</span>
-          </div>
-        ) : companyRailOptions.length === 0 ? (
+        {companyRailOptions.length === 0 && !navigatorLoading && !loading ? (
           <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center shadow-sm">
             <p className="text-sm font-semibold text-slate-900">No company workbooks available yet.</p>
             <p className="mt-2 text-sm text-slate-500">
@@ -2391,7 +2659,15 @@ export default function DataSourcePage() {
           <div className="grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
             <aside className="space-y-4">
               <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">Companies</p>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">Companies</p>
+                  {navigatorLoading && (
+                    <div className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-400">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Syncing...
+                    </div>
+                  )}
+                </div>
                 <div className="mt-3 space-y-2">
                   {companyRailOptions.map((company) => {
                     const threadCount = threadsByCompany.get(company.ticker)?.length ?? 0;
@@ -2486,16 +2762,18 @@ export default function DataSourcePage() {
             </aside>
 
             <div className="space-y-6">
-              {loading ? (
-                <div className="flex items-center justify-center rounded-[18px] border border-[#d6dbe1] bg-white py-24 shadow-[0_18px_40px_rgba(15,23,42,0.08)]">
-                  <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                  <span className="ml-2 text-sm text-slate-500">Loading workbook...</span>
-                </div>
-              ) : (
-                <div
-                  className="overflow-hidden rounded-[18px] border border-[#d6dbe1] bg-white shadow-[0_18px_40px_rgba(15,23,42,0.08)]"
-                  style={{ fontFamily: WORKBOOK_FONT_FAMILY }}
-                >
+              <div
+                className="relative overflow-hidden rounded-[18px] border border-[#d6dbe1] bg-white shadow-[0_18px_40px_rgba(15,23,42,0.08)]"
+                style={{ fontFamily: WORKBOOK_FONT_FAMILY }}
+              >
+                {loading && (
+                  <div className="pointer-events-none absolute inset-0 z-20 bg-white/45 backdrop-blur-[1px]">
+                    <div className="absolute right-4 top-4 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/95 px-3 py-1.5 text-xs font-semibold text-slate-500 shadow-sm">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                      Refreshing workbook content...
+                    </div>
+                  </div>
+                )}
               <div className="border-b border-[#d6dbe1] bg-[#fbfbfb] p-4">
                 <>
                 <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
@@ -3183,7 +3461,6 @@ export default function DataSourcePage() {
                 </div>
               </div>
             </div>
-          )}
         </div>
       </div>
     )}

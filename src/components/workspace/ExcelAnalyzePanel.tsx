@@ -6,6 +6,7 @@ import {
   AlertCircle,
   CheckCircle2,
   ClipboardPaste,
+  Download,
   FileScan,
   FileSpreadsheet,
   Loader2,
@@ -13,7 +14,9 @@ import {
   Upload,
 } from "lucide-react";
 import { AnalyzeLandingShell } from "@/components/workspace/AnalyzeLandingShell";
+import { ComparisonReportContent } from "@/components/workspace/ComparisonReportContent";
 import { ExcelWorkbookEditor } from "@/components/workspace/ExcelWorkbookEditor";
+import type { CompanyComparisonPayload } from "@/lib/companyComparison";
 import { cn } from "@/lib/utils";
 import {
   buildEditableWorkbookFromArrayBuffer,
@@ -36,6 +39,43 @@ type ExcelAnalyzeResult = {
   generatedAt: string;
 };
 
+type ExcelCompetitorPrepPreviewRow = {
+  ticker: string;
+  companyName: string;
+  quarterLabel: string;
+  periodEnd: string;
+  revenue: number | null;
+  operatingIncome: number | null;
+  operatingMargin: number | null;
+  sourceSheet: string;
+  sourceTableLabel: string;
+};
+
+type ExcelCompetitorPrepResult = {
+  sourceFileName: string;
+  processedWorkbookFileName: string;
+  processedWorkbookBase64: string;
+  primarySheet: string | null;
+  comparisonTickers: string[];
+  companies: Array<{
+    ticker: string;
+    companyName: string;
+    quarterCount: number;
+    latestQuarter: string;
+    latestPeriodEnd: string;
+  }>;
+  sheetMatches: Array<{
+    sheetName: string;
+    tableLabel: string;
+    rowCount: number;
+    priority: number;
+  }>;
+  warnings: string[];
+  rowCount: number;
+  rowPreview: ExcelCompetitorPrepPreviewRow[];
+  comparison: CompanyComparisonPayload | null;
+};
+
 export function ExcelAnalyzePanel() {
   const [inputMode, setInputMode] = useState<"excel" | "paste">("excel");
   const [excelFile, setExcelFile] = useState<File | null>(null);
@@ -43,9 +83,11 @@ export function ExcelAnalyzePanel() {
   const [dragOver, setDragOver] = useState(false);
   const [script, setScript] = useState("");
   const [loading, setLoading] = useState(false);
+  const [processingWorkbook, setProcessingWorkbook] = useState(false);
   const [parsingWorkbook, setParsingWorkbook] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ExcelAnalyzeResult | null>(null);
+  const [processedResult, setProcessedResult] = useState<ExcelCompetitorPrepResult | null>(null);
   const excelInputRef = useRef<HTMLInputElement>(null);
 
   const canAnalyze = useMemo(() => {
@@ -53,10 +95,16 @@ export function ExcelAnalyzePanel() {
     return script.trim().length >= 120;
   }, [excelWorkbook, inputMode, script]);
 
+  const canProcessWorkbook = useMemo(
+    () => inputMode === "excel" && !!excelFile && !parsingWorkbook,
+    [excelFile, inputMode, parsingWorkbook]
+  );
+
   async function assignExcelFile(file: File | null) {
     setExcelFile(null);
     setExcelWorkbook(null);
     setError(null);
+    setProcessedResult(null);
     if (!file) return;
 
     const validExt = /\.(xlsx|xls|csv)$/i.test(file.name);
@@ -114,6 +162,58 @@ export function ExcelAnalyzePanel() {
     }
   }
 
+  async function processWorkbookForCompetitorAnalysis() {
+    if (!excelFile) {
+      setError("Please upload an Excel file first.");
+      return;
+    }
+
+    setProcessingWorkbook(true);
+    setError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", excelFile);
+
+      const response = await fetch("/api/excel-preprocess", {
+        method: "POST",
+        body: formData,
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as
+        | ({ error?: string } & Partial<ExcelCompetitorPrepResult>)
+        | undefined;
+
+      if (!response.ok || !payload?.processedWorkbookBase64) {
+        throw new Error(payload?.error || `HTTP ${response.status}`);
+      }
+
+      setProcessedResult(payload as ExcelCompetitorPrepResult);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Failed to process workbook for competitor analysis.");
+    } finally {
+      setProcessingWorkbook(false);
+    }
+  }
+
+  function downloadProcessedWorkbook() {
+    if (!processedResult) return;
+
+    const binary = window.atob(processedResult.processedWorkbookBase64);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    const blob = new Blob([bytes], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const href = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.download = processedResult.processedWorkbookFileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(href);
+  }
+
   return (
     <>
       <AnalyzeLandingShell
@@ -122,7 +222,8 @@ export function ExcelAnalyzePanel() {
         subtitle={
           <>
             Upload <strong className="font-semibold text-slate-800">.xlsx, .xls, or .csv</strong>, or paste
-            tabular text. We generate variance-style narrative, risk angles, and meeting-ready summaries.
+            tabular text. We generate variance-style narrative, risk angles, and meeting-ready summaries, or
+            split large comparison workbooks into smaller competitor-ready Excel files.
           </>
         }
         left={
@@ -225,10 +326,18 @@ export function ExcelAnalyzePanel() {
                       the grid for cut, copy, paste, insert row, delete row, and clear.
                     </div>
                     <ExcelWorkbookEditor workbook={excelWorkbook} onChange={setExcelWorkbook} onError={setError} />
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 py-3 text-xs text-emerald-900">
+                      <p className="font-semibold">Competitor-prep workflow</p>
+                      <p className="mt-1 leading-relaxed">
+                        Use <strong className="font-semibold">Split &amp; Process Excel</strong> to detect sections inside the
+                        main sheet, export focused company tabs, and feed the competitor comparison engine without asking AI to
+                        read the raw file.
+                      </p>
+                    </div>
                   </div>
                 ) : null}
 
-                <div className="flex flex-shrink-0 items-center justify-between gap-3 border-t border-slate-100 pt-4">
+                <div className="flex flex-shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
                   <p className="text-xs text-slate-500">
                     {parsingWorkbook
                       ? "Building editable workbook preview..."
@@ -236,19 +345,34 @@ export function ExcelAnalyzePanel() {
                         ? `${excelFile.name} loaded`
                         : "No file selected"}
                   </p>
-                  <button
-                    type="button"
-                    onClick={analyze}
-                    disabled={!canAnalyze || loading || parsingWorkbook}
-                    className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-white hover:bg-primary/90 disabled:opacity-50 sm:text-sm"
-                  >
-                    {loading || parsingWorkbook ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Upload className="h-4 w-4" />
-                    )}
-                    {parsingWorkbook ? "Preparing workbook" : "Run analysis"}
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={analyze}
+                      disabled={!canAnalyze || loading || parsingWorkbook || processingWorkbook}
+                      className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 sm:text-sm"
+                    >
+                      {loading || parsingWorkbook ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Upload className="h-4 w-4" />
+                      )}
+                      {parsingWorkbook ? "Preparing workbook" : "Run narrative analysis"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={processWorkbookForCompetitorAnalysis}
+                      disabled={!canProcessWorkbook || processingWorkbook || loading}
+                      className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-white hover:bg-primary/90 disabled:opacity-50 sm:text-sm"
+                    >
+                      {processingWorkbook ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <FileScan className="h-4 w-4" />
+                      )}
+                      {processingWorkbook ? "Processing workbook" : "Split & Process Excel"}
+                    </button>
+                  </div>
                 </div>
               </>
             ) : (
@@ -311,8 +435,8 @@ export function ExcelAnalyzePanel() {
               <li className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
                 <p className="font-semibold text-slate-900">3) Review output</p>
                 <p className="mt-1 text-xs text-slate-600">
-                  Executive takeaway, thematic bullets, and extracted metrics surface below for screenshots or follow-on
-                  work.
+                  Executive takeaway, thematic bullets, processed workbook exports, and competitor-ready normalized rows
+                  surface below for follow-on work.
                 </p>
               </li>
             </ol>
@@ -423,6 +547,138 @@ export function ExcelAnalyzePanel() {
               </div>
             ) : null}
           </div>
+        </div>
+      ) : null}
+
+      {processedResult ? (
+        <div className="mx-auto mb-10 w-full max-w-6xl space-y-4 px-4">
+          <div className="rounded-2xl border border-slate-200/90 bg-white/95 p-5 shadow-subtle sm:p-6">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Split workbook output</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {processedResult.sourceFileName} | {processedResult.rowCount} normalized quarter row(s)
+                  {processedResult.primarySheet ? ` | primary sheet: ${processedResult.primarySheet}` : ""}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={downloadProcessedWorkbook}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  <Download className="h-4 w-4" />
+                  Download processed workbook
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setProcessedResult(null)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              <div className="rounded-xl border border-slate-100 bg-slate-50/80 p-4">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Companies detected</p>
+                <div className="mt-3 space-y-2">
+                  {processedResult.companies.map((company) => (
+                    <div key={company.ticker} className="rounded-lg border border-slate-100 bg-white px-3 py-2 text-xs">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-semibold text-slate-900">
+                          {company.ticker} | {company.companyName}
+                        </span>
+                        <span className="text-slate-500">{company.quarterCount} quarter(s)</span>
+                      </div>
+                      <p className="mt-1 text-slate-500">
+                        Latest: {company.latestQuarter} ({company.latestPeriodEnd})
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-100 bg-slate-50/80 p-4">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Detected sheets</p>
+                <div className="mt-3 space-y-2">
+                  {processedResult.sheetMatches.map((sheet) => (
+                    <div key={`${sheet.sheetName}-${sheet.tableLabel}`} className="rounded-lg border border-slate-100 bg-white px-3 py-2 text-xs">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-semibold text-slate-900">{sheet.sheetName}</span>
+                        <span className="text-slate-500">{sheet.rowCount} row(s)</span>
+                      </div>
+                      <p className="mt-1 text-slate-500">{sheet.tableLabel}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {processedResult.warnings.length > 0 ? (
+              <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50/80 p-4 text-xs text-amber-900">
+                <p className="font-semibold">Preprocess notes</p>
+                <ul className="mt-2 space-y-1.5">
+                  {processedResult.warnings.map((warning, index) => (
+                    <li key={`${warning}-${index}`}>{warning}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            {processedResult.rowPreview.length > 0 ? (
+              <div className="mt-5">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Normalized row preview</p>
+                <div className="overflow-x-auto rounded-xl border border-slate-100">
+                  <table className="min-w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50">
+                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Ticker</th>
+                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Quarter</th>
+                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Revenue</th>
+                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Op Income</th>
+                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Op Margin</th>
+                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Source</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {processedResult.rowPreview.map((row, index) => (
+                        <tr key={`${row.ticker}-${row.periodEnd}-${index}`} className="border-b border-slate-100">
+                          <td className="px-3 py-2 text-slate-800">{row.ticker}</td>
+                          <td className="px-3 py-2 text-slate-700">{row.quarterLabel}</td>
+                          <td className="px-3 py-2 text-slate-900">
+                            {row.revenue == null ? "N/A" : row.revenue.toLocaleString("en-US", { maximumFractionDigits: 1 })}
+                          </td>
+                          <td className="px-3 py-2 text-slate-900">
+                            {row.operatingIncome == null
+                              ? "N/A"
+                              : row.operatingIncome.toLocaleString("en-US", { maximumFractionDigits: 1 })}
+                          </td>
+                          <td className="px-3 py-2 text-slate-700">
+                            {row.operatingMargin == null ? "N/A" : `${row.operatingMargin.toFixed(1)}%`}
+                          </td>
+                          <td className="px-3 py-2 text-slate-600">{row.sourceSheet}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          {processedResult.comparison ? (
+            <ComparisonReportContent result={processedResult.comparison} />
+          ) : (
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-subtle">
+              <p className="text-sm font-semibold text-slate-900">Comparison not generated</p>
+              <p className="mt-1 text-sm text-slate-500">
+                We exported the cleaned workbook, but the processed file did not contain enough company rows to run the
+                competitor comparison engine yet.
+              </p>
+            </div>
+          )}
         </div>
       ) : null}
     </>
