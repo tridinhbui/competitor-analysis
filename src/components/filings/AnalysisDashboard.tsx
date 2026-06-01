@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FullAnalysis, BSItem, IncomeStatement } from "@/types/analysis";
@@ -2079,8 +2079,8 @@ function InsightsTab({
       cashAndEquivalents: latest.cashAndEquivalents,
       debtToEquity: latest.debtToEquity,
       currentRatio: latest.currentRatio,
-      roe: ni != null && latest.totalEquity ? Math.round((ni / latest.totalEquity) * 1000) / 10 : null,
-      roa: ni != null && latest.totalAssets ? Math.round((ni / latest.totalAssets) * 1000) / 10 : null,
+      roe: ni != null && latest.totalEquity ? Math.round((ni / latest.totalEquity) * 10000) / 100 : null,
+      roa: ni != null && latest.totalAssets ? Math.round((ni / latest.totalAssets) * 10000) / 100 : null,
     };
   }, [historyRows]);
 

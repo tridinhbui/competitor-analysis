@@ -292,6 +292,28 @@ export function TenQDropAnalyzer() {
     setResult(null);
     setError("");
     try {
+      const resolveAnalysisMeta = (analysis: FullAnalysis): FullAnalysis => {
+        const resolvedTicker = resolveTicker({
+          metaTicker: analysis.meta.ticker,
+          fileName: file.name,
+          companyName: analysis.meta.companyName,
+        });
+        const resolvedCompanyName = normalizeCompanyName({
+          candidate: analysis.meta.companyName,
+          fileName: file.name,
+          ticker: resolvedTicker,
+        });
+        return {
+          ...analysis,
+          meta: {
+            ...analysis.meta,
+            ticker: resolvedTicker,
+            fileName: analysis.meta.fileName ?? file.name,
+            companyName: resolvedCompanyName,
+          },
+        };
+      };
+
       const analysis = await analyzePdf(
         file,
         (evt) => setEvents((prev) => [...prev, evt]),
@@ -300,30 +322,13 @@ export function TenQDropAnalyzer() {
           onExtractedText: (text) => {
             extractedFilingTextRef.current = text;
           },
+          onPartial: (partial) => {
+            setResult(resolveAnalysisMeta(partial));
+          },
         }
       );
-      const resolvedTicker = resolveTicker({
-        metaTicker: analysis.meta.ticker,
-        fileName: file.name,
-        companyName: analysis.meta.companyName,
-      });
-      const resolvedCompanyName = normalizeCompanyName({
-        candidate: analysis.meta.companyName,
-        fileName: file.name,
-        ticker: resolvedTicker,
-      });
 
-      const resolvedAnalysis: FullAnalysis = {
-        ...analysis,
-        meta: {
-          ...analysis.meta,
-          ticker: resolvedTicker,
-          fileName: analysis.meta.fileName ?? file.name,
-          companyName: resolvedCompanyName,
-        },
-      };
-
-      setResult(resolvedAnalysis);
+      setResult(resolveAnalysisMeta(analysis));
       setPhase("done");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -439,8 +444,19 @@ export function TenQDropAnalyzer() {
 
           {/* Analysis dashboard */}
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto border-l border-slate-200/80 bg-white p-3 sm:p-4">
-            {result && phase === "done" ? (
-              <AnalysisDashboard result={result} onExport={handleExport} onTraceMetric={(m: TraceMetric) => setTraceTarget(m)} />
+            {result && (phase === "done" || phase === "analyzing") ? (
+              <div className="flex min-h-0 flex-1 flex-col gap-2">
+                {phase === "analyzing" && (
+                  <div className="shrink-0 rounded-lg border border-primary/25 bg-primary/[0.06] px-3 py-2 text-[11px] font-medium text-primary">
+                    Live preview — numbers update as extraction completes.
+                  </div>
+                )}
+                <AnalysisDashboard
+                  result={result}
+                  onExport={phase === "done" ? handleExport : undefined}
+                  onTraceMetric={(m: TraceMetric) => setTraceTarget(m)}
+                />
+              </div>
             ) : (
               <div className="flex flex-1 items-center justify-center p-6 text-center">
                 <div>
@@ -516,11 +532,16 @@ export function TenQDropAnalyzer() {
           <AnalysisChatPanel analysis={result} inline />
         </div>
 
-        {result && phase === "done" && (
-          <div className="min-w-0 rounded-2xl border border-slate-200/80 bg-white p-3 shadow-elevation sm:p-5">
+        {result && (phase === "done" || phase === "analyzing") && (
+          <div className="min-w-0 space-y-2 rounded-2xl border border-slate-200/80 bg-white p-3 shadow-elevation sm:p-5">
+            {phase === "analyzing" && (
+              <div className="rounded-lg border border-primary/25 bg-primary/[0.06] px-3 py-2 text-[11px] font-medium text-primary">
+                Live preview — numbers update as extraction completes.
+              </div>
+            )}
             <AnalysisDashboard
               result={result}
-              onExport={handleExport}
+              onExport={phase === "done" ? handleExport : undefined}
               onTraceMetric={hasPdf ? (m: TraceMetric) => setTraceTarget(m) : undefined}
             />
           </div>

@@ -14,7 +14,11 @@
 import type { BSItem, FullAnalysis, StepEvent } from "@/types/analysis";
 import { PIPELINE_STEPS } from "@/types/analysis";
 import { assembleAnalysis } from "./analysisEngine";
-import { mergeRebuiltAnalysisWithSupplementals } from "./analysisMerge";
+import {
+  mergeProgressivePdfAnalysis,
+  mergeRebuiltAnalysisWithSupplementals,
+} from "./analysisMerge";
+import { parseSseBlock, isFullAnalysisPayload } from "./sseClient";
 import {
   buildHeuristicPdfProvenance,
   extractPdfFinancialValue,
@@ -163,16 +167,98 @@ export async function extractPdfLines(
 // 2. AI-powered extraction via /api/analyze-pdf (3 parallel calls)
 // ===========================================================================
 
+type AnalyzeWithAIResult = {
+  analysis: FullAnalysis;
+  degraded: boolean;
+  warning?: string;
+};
+
+async function consumeAnalyzePdfStream(
+  resp: Response,
+  onPartial?: (analysis: FullAnalysis) => void
+): Promise<AnalyzeWithAIResult> {
+  const reader = resp.body?.getReader();
+  if (!reader) {
+    throw new Error("Streaming response has no body");
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let latest: AnalyzeWithAIResult | null = null;
+  let accumulated: FullAnalysis | null = null;
+
+  const applyPartial = (analysis: FullAnalysis) => {
+    accumulated = mergeProgressivePdfAnalysis(accumulated, analysis);
+    onPartial?.(accumulated);
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const blocks = buffer.split("\n\n");
+    buffer = blocks.pop() ?? "";
+
+    for (const block of blocks) {
+      const trimmed = block.trim();
+      if (!trimmed) continue;
+      const { data } = parseSseBlock(trimmed);
+      if (!data) continue;
+
+      let payload: unknown;
+      try {
+        payload = JSON.parse(data) as unknown;
+      } catch {
+        continue;
+      }
+
+      if (!payload || typeof payload !== "object") continue;
+      const evt = payload as {
+        event?: string;
+        analysis?: unknown;
+        message?: string;
+        degraded?: boolean;
+        warning?: string;
+      };
+
+      if (evt.event === "error") {
+        throw new Error(evt.message ?? "Analysis stream failed");
+      }
+
+      if (evt.event === "partial" && isFullAnalysisPayload(evt.analysis)) {
+        applyPartial(evt.analysis);
+        continue;
+      }
+
+      if (evt.event === "result" && isFullAnalysisPayload(evt.analysis)) {
+        applyPartial(evt.analysis);
+        latest = {
+          analysis: accumulated ?? evt.analysis,
+          degraded: Boolean(evt.degraded),
+          warning: evt.warning,
+        };
+      }
+    }
+  }
+
+  if (!latest?.analysis) {
+    throw new Error("No analysis result from streaming API");
+  }
+  return latest;
+}
+
 async function analyzeWithAI(
   fullText: string,
   fileName: string,
   pages: number,
-  chars: number
-): Promise<{ analysis: FullAnalysis; degraded: boolean; warning?: string }> {
+  chars: number,
+  onPartial?: (analysis: FullAnalysis) => void
+): Promise<AnalyzeWithAIResult> {
   const resp = await fetch("/api/analyze-pdf", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text: fullText, fileName, pages, chars }),
+    body: JSON.stringify({ text: fullText, fileName, pages, chars, stream: true }),
   });
 
   if (!resp.ok) {
@@ -183,6 +269,11 @@ async function analyzeWithAI(
         ? `${e.error}: ${e.message}`
         : (e.message ?? e.error ?? `API returned ${resp.status}`);
     throw new Error(msg);
+  }
+
+  const contentType = resp.headers.get("content-type") ?? "";
+  if (contentType.includes("text/event-stream")) {
+    return consumeAnalyzePdfStream(resp, onPartial);
   }
 
   const data = (await resp.json()) as {
@@ -199,6 +290,7 @@ async function analyzeWithAI(
         : (data.message ?? data.error ?? "No analysis result from API");
     throw new Error(msg);
   }
+  onPartial?.(data.analysis);
   return {
     analysis: data.analysis,
     degraded: Boolean(data.degraded),
@@ -1050,7 +1142,12 @@ function mergeHeuristicDebtIfAiMissing(
 export async function analyzePdf(
   file: File,
   onStep: (event: StepEvent) => void,
-  options?: { useAI?: boolean; onExtractedText?: (text: string) => void }
+  options?: {
+    useAI?: boolean;
+    onExtractedText?: (text: string) => void;
+    /** Called as soon as heuristic or streamed AI data is available. */
+    onPartial?: (analysis: FullAnalysis) => void;
+  }
 ): Promise<FullAnalysis> {
   const useAI = options?.useAI !== false; // default true
   const t0 = performance.now();
@@ -1078,15 +1175,44 @@ export async function analyzePdf(
     detail: { pages, lines: lines.length, chars: rawChars },
   });
 
+  if (options?.onPartial) {
+    const { bs: previewBs, cf: previewCf } = heuristicExtract(lines);
+    const preview = assembleAnalysis(previewBs, previewCf, {
+      source: "pdf",
+      fileName: file.name,
+      pagesRead: pages,
+      charsExtracted: rawChars,
+      periodEnd: detectPeriod(lines),
+      confidence: "low",
+      extractionMethod: "pdf-heuristic",
+    });
+    options.onPartial(preview);
+    onStep({
+      step: "extract_bs",
+      label: pipeLabel("extract_bs"),
+      status: "running",
+      message: `Preview: ${previewBs.length} balance sheet + ${previewCf.length} P&L/CF lines (refining with AI…)`,
+    });
+  }
+
   // Step 3: AI extraction (5 parallel calls) or heuristic fallback — surfaced as extract_bs
-  onStep({
-    step: "extract_bs",
-    label: pipeLabel("extract_bs"),
-    status: "running",
-    message: useAI
-      ? "Running 5 parallel AI extractions (BS, IS/CF, qualitative, segments, non-recurring)…"
-      : "AI extraction disabled — running heuristic extraction…",
-  });
+  if (!options?.onPartial) {
+    onStep({
+      step: "extract_bs",
+      label: pipeLabel("extract_bs"),
+      status: "running",
+      message: useAI
+        ? "Running 5 parallel AI extractions (BS, IS/CF, qualitative, segments, non-recurring)…"
+        : "AI extraction disabled — running heuristic extraction…",
+    });
+  } else if (useAI) {
+    onStep({
+      step: "extract_bs",
+      label: pipeLabel("extract_bs"),
+      status: "running",
+      message: "Running 5 parallel AI extractions (refining preview)…",
+    });
+  }
 
   const tAi = performance.now();
   let analysis: FullAnalysis;
@@ -1121,7 +1247,13 @@ export async function analyzePdf(
   } else
 
   try {
-    const aiResult = await analyzeWithAI(fullText, file.name, pages, rawChars);
+    const aiResult = await analyzeWithAI(
+      fullText,
+      file.name,
+      pages,
+      rawChars,
+      options?.onPartial
+    );
     analysis = aiResult.analysis;
     usedAI = true;
 

@@ -12,7 +12,17 @@ import {
   Sparkles,
 } from "lucide-react";
 import { AnalyzeLandingShell } from "@/components/workspace/AnalyzeLandingShell";
+import { SourceTxtFileCard } from "@/components/workspace/SourceTxtFileCard";
+import { TextTxtAttachment } from "@/components/workspace/TextTxtAttachment";
 import { extractPdfLines } from "@/lib/pdfAnalysis";
+import {
+  isTextLikeFile,
+  normalizeUploadToTxtFile,
+  readTxtFileContent,
+  resolveSourceTxtFileName,
+  TEXT_TXT_AUTO_ATTACH_CHARS,
+  textContentToTxtFile,
+} from "@/lib/textTxtFile";
 import { cn } from "@/lib/utils";
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, ReferenceLine, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis } from "recharts";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -74,6 +84,7 @@ export type EarningsScriptAnalysis = {
   generatedAt: string;
   source: "yahoo-finance-script" | "earnings-call-transcript" | "user-input";
   rawScriptPreview: string;
+  sourceFileName?: string;
   processingMode?: "analysis" | "format-only";
   slides?: {
     resultsVsExpectations?: {
@@ -410,7 +421,11 @@ function formatTranscriptText(input: string): string {
   return paragraphs.join("\n\n");
 }
 
-function buildFormatOnlyResult(text: string, source: EarningsScriptAnalysis["source"]): EarningsScriptAnalysis {
+function buildFormatOnlyResult(
+  text: string,
+  source: EarningsScriptAnalysis["source"],
+  sourceFileName?: string
+): EarningsScriptAnalysis {
   const generatedAt = new Date().toISOString();
   return {
     sessionTitle: "Reorganized Transcript",
@@ -442,7 +457,23 @@ function buildFormatOnlyResult(text: string, source: EarningsScriptAnalysis["sou
     generatedAt,
     source,
     rawScriptPreview: formatTranscriptText(text).slice(0, 50000),
+    sourceFileName,
     processingMode: "format-only",
+  };
+}
+
+function withSourceFileName(
+  analysis: EarningsScriptAnalysis,
+  opts: { textFileName?: string; pdfFileName?: string }
+): EarningsScriptAnalysis {
+  return {
+    ...analysis,
+    sourceFileName: resolveSourceTxtFileName({
+      sourceFileName: analysis.sourceFileName,
+      textFileName: opts.textFileName,
+      pdfFileName: opts.pdfFileName,
+      sessionTitle: analysis.sessionTitle,
+    }),
   };
 }
 
@@ -473,14 +504,18 @@ export function EarningsScriptAnalysisPanel() {
   const showResultScreen = view === "result";
   const [inputMode, setInputMode] = useState<"paste" | "pdf">("paste");
   const [script, setScript] = useState("");
+  const [textFile, setTextFile] = useState<File | null>(null);
+  const [dragOverTxt, setDragOverTxt] = useState(false);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [dragOverPdf, setDragOverPdf] = useState(false);
   const pdfInputRef = useRef<HTMLInputElement>(null);
+  const txtInputRef = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [latest, setLatest] = useState<EarningsScriptAnalysis | null>(null);
   const [history, setHistory] = useState<EarningsScriptAnalysis[]>([]);
   const [activeSlide, setActiveSlide] = useState<SlideId>("results");
+  const [pasteFieldExpanded, setPasteFieldExpanded] = useState(false);
   const growthChartData = useMemo(() => toChartPoints(latest?.growth), [latest?.growth]);
   const profitabilityChartData = useMemo(() => toChartPoints(latest?.profitability), [latest?.profitability]);
   const investmentChartData = useMemo(() => toChartPoints(latest?.investment), [latest?.investment]);
@@ -511,14 +546,56 @@ export function EarningsScriptAnalysisPanel() {
     if (match) setLatest(match);
   }, [showResultScreen, resultId, history]);
 
+  const pasteCharCount = script.trim().length;
+  const collapsePasteInput =
+    inputMode === "paste" && !!textFile && pasteCharCount >= TEXT_TXT_AUTO_ATTACH_CHARS && !pasteFieldExpanded;
+
   const canAnalyze = useMemo(() => {
-    if (inputMode === "paste") return script.trim().length >= 300;
+    if (inputMode === "paste") return pasteCharCount >= 300;
     return !!pdfFile;
-  }, [inputMode, pdfFile, script]);
+  }, [inputMode, pdfFile, pasteCharCount]);
   const canFormatOnly = useMemo(() => {
-    if (inputMode === "paste") return script.trim().length >= 80;
+    if (inputMode === "paste") return pasteCharCount >= 80;
     return !!pdfFile;
-  }, [inputMode, pdfFile, script]);
+  }, [inputMode, pdfFile, pasteCharCount]);
+
+  useEffect(() => {
+    if (inputMode !== "paste") return;
+    const trimmed = script.trim();
+    if (trimmed.length < TEXT_TXT_AUTO_ATTACH_CHARS) return;
+    const handle = window.setTimeout(() => {
+      setTextFile(textContentToTxtFile(trimmed, "earnings-transcript"));
+    }, 400);
+    return () => window.clearTimeout(handle);
+  }, [inputMode, script]);
+
+  const getPasteSourceText = useCallback(async () => {
+    const fromFile = await readTxtFileContent(textFile);
+    return (fromFile || script).trim();
+  }, [script, textFile]);
+
+  const assignTextUpload = useCallback(async (file: File | null | undefined) => {
+    setError(null);
+    if (!file) return;
+    if (!isTextLikeFile(file)) {
+      setError("Only text files are supported (.txt, .md, .csv, or plain text).");
+      return;
+    }
+    try {
+      const { file: txt, text } = await normalizeUploadToTxtFile(file);
+      setScript(text);
+      setTextFile(txt);
+    } catch {
+      setError("Could not read the text file.");
+    }
+  }, []);
+
+  const clearTextAttachment = useCallback(() => {
+    setTextFile(null);
+    setScript("");
+    setPasteFieldExpanded(false);
+    if (txtInputRef.current) txtInputRef.current.value = "";
+  }, []);
 
   const assignPdfFile = useCallback((file: File | null | undefined) => {
     setPdfFile(null);
@@ -537,7 +614,8 @@ export function EarningsScriptAnalysisPanel() {
     try {
       let payload: { script?: string; text?: string; sourceHint?: string } = {};
       if (inputMode === "paste") {
-        payload = { script: script.trim(), sourceHint: "user-input" };
+        const pasted = await getPasteSourceText();
+        payload = { script: pasted, sourceHint: "user-input" };
       } else {
         if (!pdfFile) throw new Error("Please upload a PDF file first.");
         const extracted = await extractPdfLines(pdfFile);
@@ -558,18 +636,23 @@ export function EarningsScriptAnalysisPanel() {
         throw new Error(responsePayload.error || `HTTP ${response.status}`);
       }
 
-      saveHistory(responsePayload.analysis);
-      setLatest(responsePayload.analysis);
-      setHistory((current) => [responsePayload.analysis!, ...current].slice(0, 15));
+      const withSource = withSourceFileName(responsePayload.analysis, {
+        textFileName: inputMode === "paste" ? textFile?.name : undefined,
+        pdfFileName: inputMode === "pdf" ? pdfFile?.name : undefined,
+      });
+      saveHistory(withSource);
+      setLatest(withSource);
+      setHistory((current) => [withSource, ...current].slice(0, 15));
       setScript("");
+      setTextFile(null);
       setPdfFile(null);
-      router.push(`/earnings-analysis?view=result&id=${encodeURIComponent(responsePayload.analysis.generatedAt)}`);
+      router.push(`/earnings-analysis?view=result&id=${encodeURIComponent(withSource.generatedAt)}`);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Failed to analyze script");
     } finally {
       setLoading(false);
     }
-  }, [inputMode, pdfFile, router, script]);
+  }, [getPasteSourceText, inputMode, pdfFile, router, textFile]);
 
   const reorganizeTextOnly = useCallback(async () => {
     setLoading(true);
@@ -578,7 +661,7 @@ export function EarningsScriptAnalysisPanel() {
       let sourceText = "";
       let sourceHint: EarningsScriptAnalysis["source"] = "user-input";
       if (inputMode === "paste") {
-        sourceText = script.trim();
+        sourceText = await getPasteSourceText();
       } else {
         if (!pdfFile) throw new Error("Please upload a PDF file first.");
         const extracted = await extractPdfLines(pdfFile);
@@ -588,11 +671,19 @@ export function EarningsScriptAnalysisPanel() {
       if (!sourceText || sourceText.length < 80) {
         throw new Error("Text is too short to reorganize.");
       }
-      const formatted = buildFormatOnlyResult(sourceText, sourceHint);
+      const formatted = buildFormatOnlyResult(
+        sourceText,
+        sourceHint,
+        resolveSourceTxtFileName({
+          textFileName: inputMode === "paste" ? textFile?.name : undefined,
+          pdfFileName: inputMode === "pdf" ? pdfFile?.name : undefined,
+        })
+      );
       saveHistory(formatted);
       setLatest(formatted);
       setHistory((current) => [formatted, ...current].slice(0, 15));
       setScript("");
+      setTextFile(null);
       setPdfFile(null);
       router.push(`/earnings-analysis?view=result&id=${encodeURIComponent(formatted.generatedAt)}`);
     } catch (nextError) {
@@ -600,9 +691,16 @@ export function EarningsScriptAnalysisPanel() {
     } finally {
       setLoading(false);
     }
-  }, [inputMode, pdfFile, router, script]);
+  }, [getPasteSourceText, inputMode, pdfFile, router, textFile]);
 
   const isFormatOnly = latest?.processingMode === "format-only";
+  const resultSourceText = (latest?.rawScriptPreview || "").trim();
+  const resultSourceFileName = latest
+    ? resolveSourceTxtFileName({
+        sourceFileName: latest.sourceFileName,
+        sessionTitle: latest.sessionTitle,
+      })
+    : "transcript.txt";
 
   return (
     <div className={`mx-auto w-full space-y-4 px-4 py-5 ${showResultScreen ? "max-w-[96vw]" : ""}`}>
@@ -635,6 +733,7 @@ export function EarningsScriptAnalysisPanel() {
                   onClick={() => {
                     setInputMode("paste");
                     setError(null);
+                    setPdfFile(null);
                   }}
                   className={cn(
                     "rounded-full border px-4 py-1.5 text-xs font-semibold transition",
@@ -650,6 +749,7 @@ export function EarningsScriptAnalysisPanel() {
                   onClick={() => {
                     setInputMode("pdf");
                     setError(null);
+                    setTextFile(null);
                   }}
                   className={cn(
                     "rounded-full border px-4 py-1.5 text-xs font-semibold transition",
@@ -663,13 +763,60 @@ export function EarningsScriptAnalysisPanel() {
               </div>
 
               {inputMode === "paste" ? (
-                <div className="flex flex-1 flex-col rounded-2xl border border-slate-200 bg-white/90 shadow-inner">
-                  <textarea
-                    value={script}
-                    onChange={(event) => setScript(event.target.value)}
-                    placeholder="Paste full earnings transcript (Yahoo Finance format supported)…"
-                    className="min-h-[16rem] w-full flex-1 resize-none rounded-2xl border-0 bg-transparent px-4 py-3 text-sm leading-relaxed text-slate-800 outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-primary/15"
-                  />
+                <div className="flex flex-1 flex-col gap-2">
+                  {textFile ? (
+                    <TextTxtAttachment
+                      file={textFile}
+                      onRemove={clearTextAttachment}
+                      onExpandRequest={collapsePasteInput ? () => setPasteFieldExpanded(true) : undefined}
+                    />
+                  ) : null}
+                  {!collapsePasteInput ? (
+                  <div
+                    className={cn(
+                      "flex flex-1 flex-col rounded-2xl border bg-white/90 shadow-inner transition-colors",
+                      dragOverTxt ? "border-primary ring-2 ring-primary/15" : "border-slate-200"
+                    )}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setDragOverTxt(true);
+                    }}
+                    onDragLeave={() => setDragOverTxt(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setDragOverTxt(false);
+                      void assignTextUpload(e.dataTransfer.files?.[0]);
+                    }}
+                  >
+                    <textarea
+                      value={script}
+                      onChange={(event) => setScript(event.target.value)}
+                      placeholder="Paste transcript, or drop a .txt / .md file (500+ chars saves as transcript.txt)…"
+                      className="min-h-[16rem] w-full flex-1 resize-none rounded-2xl border-0 bg-transparent px-4 py-3 text-sm leading-relaxed text-slate-800 outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-primary/15"
+                    />
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-3 py-2">
+                      <p className="text-[10px] text-slate-500">
+                        {pasteCharCount >= TEXT_TXT_AUTO_ATTACH_CHARS
+                          ? "Saved as .txt attachment"
+                          : `${TEXT_TXT_AUTO_ATTACH_CHARS - pasteCharCount} more chars for auto .txt`}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => txtInputRef.current?.click()}
+                        className="text-[10px] font-semibold text-primary hover:underline"
+                      >
+                        Upload text file
+                      </button>
+                      <input
+                        ref={txtInputRef}
+                        type="file"
+                        accept=".txt,.md,.csv,.log,text/plain"
+                        className="hidden"
+                        onChange={(event) => void assignTextUpload(event.target.files?.[0])}
+                      />
+                    </div>
+                  </div>
+                  ) : null}
                 </div>
               ) : (
                 <div
@@ -727,7 +874,9 @@ export function EarningsScriptAnalysisPanel() {
               <div className="flex flex-shrink-0 flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-xs text-slate-500">
                   {inputMode === "paste"
-                    ? `${script.trim().length} characters (min ~300 for full analysis)`
+                    ? textFile
+                      ? `${textFile.name} · ${pasteCharCount.toLocaleString()} characters`
+                      : `${pasteCharCount.toLocaleString()} characters (min ~300 for full analysis)`
                     : pdfFile
                       ? pdfFile.name
                       : "No file selected"}
@@ -772,7 +921,7 @@ export function EarningsScriptAnalysisPanel() {
                 <li className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
                   <p className="font-semibold text-slate-900">1) Normalize the source</p>
                   <p className="mt-1 text-xs text-slate-600">
-                    PDFs are OCR-free text extraction in-browser; pasted transcripts skip file handling entirely.
+                    Large pastes and text uploads are normalized to a .txt attachment; PDFs extract in-browser.
                   </p>
                 </li>
                 <li className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
@@ -832,23 +981,16 @@ export function EarningsScriptAnalysisPanel() {
           <p className="mt-1 text-xs text-slate-500">
             {latest.companyFocus} • {latest.quarter} • {new Date(latest.generatedAt).toLocaleString("en-US")}
           </p>
-          {isFormatOnly ? (
-            <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Source Text</p>
-              <p className="max-h-[74vh] overflow-y-auto whitespace-pre-wrap pr-2 text-xs leading-relaxed text-slate-700">
-                {(latest.rawScriptPreview || "").trim() || "Transcript preview unavailable."}
-              </p>
-            </div>
-          ) : (
-            <div className="mt-3 grid min-h-[78vh] gap-4 xl:grid-cols-[1.2fr_1.1fr]">
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Source Text</p>
-                <p className="max-h-[74vh] overflow-y-auto whitespace-pre-wrap pr-2 text-xs leading-relaxed text-slate-700">
-                  {(latest.rawScriptPreview || "").trim() || "Transcript preview unavailable."}
-                </p>
-              </div>
+          <SourceTxtFileCard
+            className="mt-3"
+            fileName={resultSourceFileName}
+            sizeBytes={resultSourceText ? new Blob([resultSourceText]).size : undefined}
+            content={resultSourceText || "Transcript preview unavailable."}
+            startCollapsed
+          />
 
-              <div className="max-h-[74vh] space-y-3 overflow-y-auto pr-1">
+          {!isFormatOnly ? (
+            <div className="mt-3 max-h-[78vh] space-y-3 overflow-y-auto pr-1">
                 <div className="rounded-lg border border-slate-200 bg-white p-3">
                   <div className="mb-2 flex flex-wrap gap-2">
                     {[
@@ -1096,9 +1238,8 @@ export function EarningsScriptAnalysisPanel() {
                     </ul>
                   </div>
                 ) : null}
-              </div>
             </div>
-          )}
+          ) : null}
         </div>
       ) : null}
 

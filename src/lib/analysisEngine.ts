@@ -78,6 +78,12 @@ function pct(a: number | null, b: number | null): number | null {
   return r != null ? Math.round(r * 1000) / 10 : null;
 }
 
+/** Return ratio (e.g. NI ÷ assets) as a display percent with 2 decimals — matches fmtPct in the dashboard. */
+function returnPct(a: number | null, b: number | null): number | null {
+  const r = ratio(a, b);
+  return r != null ? Math.round(r * 10000) / 100 : null;
+}
+
 function fmt2(v: number): string {
   return v.toFixed(2);
 }
@@ -622,12 +628,9 @@ export function buildRatiosFull(
 
   // Returns
   const netIncome = cf.netIncome;
-  let roe = ratio(netIncome, bs.totalEquity);
-  // Null only absurd ratios (>5000% or <−5000%); prior 5x cap hid valid high-ROE names
-  if (roe != null && (roe > 50 || roe < -50)) {
-    roe = null;
-  }
-  const roa = ratio(netIncome, bs.totalAssets);
+  const roeRatio = ratio(netIncome, bs.totalEquity);
+  const roeValid =
+    roeRatio != null && roeRatio <= 50 && roeRatio >= -50;
   // ROIC: prefer company-disclosed % from supplemental tables when extracted as a line item
   const disclosedRoicRaw = findOrNull(allItems, "ReturnOnInvestedCapital");
   let roic: number | null = null;
@@ -698,9 +701,9 @@ export function buildRatiosFull(
     operatingMargin: opMarginR,
     netMargin: netMarginR,
     ebitdaMargin: ebitdaMarginR,
-    returnOnEquity: roe != null ? Math.round(roe * 1000) / 10 : null,
-    returnOnAssets: roa != null ? Math.round(roa * 1000) / 10 : null,
-    returnOnInvestedCapital: roic != null ? Math.round(roic * 1000) / 10 : null,
+    returnOnEquity: roeValid ? returnPct(netIncome, bs.totalEquity) : null,
+    returnOnAssets: returnPct(netIncome, bs.totalAssets),
+    returnOnInvestedCapital: roic != null ? Math.round(roic * 10000) / 100 : null,
     assetTurnover: r1(assetTurnover),
     inventoryTurnover: r10(inventoryTurnover),
     receivablesTurnover: r10(receivablesTurnover),

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   AlertCircle,
@@ -16,6 +16,7 @@ import {
 import { AnalyzeLandingShell } from "@/components/workspace/AnalyzeLandingShell";
 import { ComparisonReportContent } from "@/components/workspace/ComparisonReportContent";
 import { ExcelWorkbookEditor } from "@/components/workspace/ExcelWorkbookEditor";
+import { TextTxtAttachment } from "@/components/workspace/TextTxtAttachment";
 import type { CompanyComparisonPayload } from "@/lib/companyComparison";
 import { cn } from "@/lib/utils";
 import {
@@ -23,6 +24,13 @@ import {
   serializeWorkbookForAnalysis,
 } from "@/lib/excelWorkbook";
 import type { EditableWorkbook } from "@/lib/excelWorkbook";
+import {
+  isTextLikeFile,
+  normalizeUploadToTxtFile,
+  readTxtFileContent,
+  TEXT_TXT_AUTO_ATTACH_CHARS,
+  textContentToTxtFile,
+} from "@/lib/textTxtFile";
 
 type ExcelAnalyzeResult = {
   sessionTitle: string;
@@ -82,18 +90,68 @@ export function ExcelAnalyzePanel() {
   const [excelWorkbook, setExcelWorkbook] = useState<EditableWorkbook | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [script, setScript] = useState("");
+  const [textFile, setTextFile] = useState<File | null>(null);
+  const [dragOverTxt, setDragOverTxt] = useState(false);
   const [loading, setLoading] = useState(false);
   const [processingWorkbook, setProcessingWorkbook] = useState(false);
   const [parsingWorkbook, setParsingWorkbook] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ExcelAnalyzeResult | null>(null);
   const [processedResult, setProcessedResult] = useState<ExcelCompetitorPrepResult | null>(null);
+  const [pasteFieldExpanded, setPasteFieldExpanded] = useState(false);
   const excelInputRef = useRef<HTMLInputElement>(null);
+  const txtInputRef = useRef<HTMLInputElement>(null);
+
+  const pasteCharCount = script.trim().length;
+  const collapsePasteInput =
+    inputMode === "paste" && !!textFile && pasteCharCount >= TEXT_TXT_AUTO_ATTACH_CHARS && !pasteFieldExpanded;
 
   const canAnalyze = useMemo(() => {
     if (inputMode === "excel") return !!excelWorkbook;
-    return script.trim().length >= 120;
-  }, [excelWorkbook, inputMode, script]);
+    return pasteCharCount >= 120;
+  }, [excelWorkbook, inputMode, pasteCharCount]);
+
+  useEffect(() => {
+    if (inputMode !== "paste") return;
+    const trimmed = script.trim();
+    if (trimmed.length === 0) {
+      setTextFile(null);
+      return;
+    }
+    if (trimmed.length < TEXT_TXT_AUTO_ATTACH_CHARS) return;
+    const handle = window.setTimeout(() => {
+      setTextFile(textContentToTxtFile(trimmed, "spreadsheet-context"));
+    }, 400);
+    return () => window.clearTimeout(handle);
+  }, [inputMode, script]);
+
+  const getPasteSourceText = useCallback(async () => {
+    const fromFile = await readTxtFileContent(textFile);
+    return (fromFile || script).trim();
+  }, [script, textFile]);
+
+  const assignTextUpload = useCallback(async (file: File | null | undefined) => {
+    setError(null);
+    if (!file) return;
+    if (!isTextLikeFile(file)) {
+      setError("Only text files are supported (.txt, .md, .csv, or plain text).");
+      return;
+    }
+    try {
+      const { file: txt, text } = await normalizeUploadToTxtFile(file);
+      setScript(text);
+      setTextFile(txt);
+    } catch {
+      setError("Could not read the text file.");
+    }
+  }, []);
+
+  const clearTextAttachment = useCallback(() => {
+    setTextFile(null);
+    setScript("");
+    setPasteFieldExpanded(false);
+    if (txtInputRef.current) txtInputRef.current.value = "";
+  }, []);
 
   const canProcessWorkbook = useMemo(
     () => inputMode === "excel" && !!excelFile && !parsingWorkbook,
@@ -130,10 +188,12 @@ export function ExcelAnalyzePanel() {
     setError(null);
 
     try {
-      let text = script.trim();
+      let text = "";
       if (inputMode === "excel") {
         if (!excelWorkbook) throw new Error("Please upload an Excel file first.");
         text = serializeWorkbookForAnalysis(excelWorkbook);
+      } else {
+        text = await getPasteSourceText();
       }
 
       const response = await fetch("/api/earnings-script-analysis", {
@@ -234,6 +294,7 @@ export function ExcelAnalyzePanel() {
                 onClick={() => {
                   setInputMode("excel");
                   setError(null);
+                  setTextFile(null);
                 }}
                 className={cn(
                   "rounded-full border px-4 py-1.5 text-xs font-semibold transition",
@@ -249,6 +310,8 @@ export function ExcelAnalyzePanel() {
                 onClick={() => {
                   setInputMode("paste");
                   setError(null);
+                  setExcelFile(null);
+                  setExcelWorkbook(null);
                 }}
                 className={cn(
                   "rounded-full border px-4 py-1.5 text-xs font-semibold transition",
@@ -377,16 +440,67 @@ export function ExcelAnalyzePanel() {
               </>
             ) : (
               <>
-                <div className="flex flex-1 flex-col rounded-2xl border border-slate-200 bg-white/90 shadow-inner">
-                  <textarea
-                    value={script}
-                    onChange={(event) => setScript(event.target.value)}
-                    placeholder="Paste forecast snippets, KPI tables, or model exports (120+ characters)..."
-                    className="min-h-[16rem] w-full flex-1 resize-none rounded-2xl border-0 bg-transparent px-4 py-3 text-sm leading-relaxed text-slate-800 outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-primary/15"
-                  />
+                <div className="flex flex-1 flex-col gap-2">
+                  {textFile ? (
+                    <TextTxtAttachment
+                      file={textFile}
+                      onRemove={clearTextAttachment}
+                      onExpandRequest={collapsePasteInput ? () => setPasteFieldExpanded(true) : undefined}
+                    />
+                  ) : null}
+                  {!collapsePasteInput ? (
+                  <div
+                    className={cn(
+                      "flex flex-1 flex-col rounded-2xl border bg-white/90 shadow-inner transition-colors",
+                      dragOverTxt ? "border-primary ring-2 ring-primary/15" : "border-slate-200"
+                    )}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      setDragOverTxt(true);
+                    }}
+                    onDragLeave={() => setDragOverTxt(false)}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      setDragOverTxt(false);
+                      void assignTextUpload(event.dataTransfer.files?.[0]);
+                    }}
+                  >
+                    <textarea
+                      value={script}
+                      onChange={(event) => setScript(event.target.value)}
+                      placeholder="Paste model notes or drop a .txt file (500+ chars saves as spreadsheet-context.txt)..."
+                      className="min-h-[16rem] w-full flex-1 resize-none rounded-2xl border-0 bg-transparent px-4 py-3 text-sm leading-relaxed text-slate-800 outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-primary/15"
+                    />
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-3 py-2">
+                      <p className="text-[10px] text-slate-500">
+                        {pasteCharCount >= TEXT_TXT_AUTO_ATTACH_CHARS
+                          ? "Saved as .txt attachment"
+                          : `${Math.max(0, TEXT_TXT_AUTO_ATTACH_CHARS - pasteCharCount)} more chars for auto .txt`}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => txtInputRef.current?.click()}
+                        className="text-[10px] font-semibold text-primary hover:underline"
+                      >
+                        Upload text file
+                      </button>
+                      <input
+                        ref={txtInputRef}
+                        type="file"
+                        accept=".txt,.md,.csv,.log,text/plain"
+                        className="hidden"
+                        onChange={(event) => void assignTextUpload(event.target.files?.[0])}
+                      />
+                    </div>
+                  </div>
+                  ) : null}
                 </div>
                 <div className="flex flex-shrink-0 items-center justify-between gap-3 border-t border-slate-100 pt-4">
-                  <p className="text-xs tabular-nums text-slate-500">{script.trim().length} characters</p>
+                  <p className="text-xs tabular-nums text-slate-500">
+                    {textFile
+                      ? `${textFile.name} · ${pasteCharCount.toLocaleString()} characters`
+                      : `${pasteCharCount.toLocaleString()} characters`}
+                  </p>
                   <button
                     type="button"
                     onClick={analyze}

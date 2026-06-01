@@ -100,6 +100,12 @@ function pct(numerator: number | null, denominator: number | null): number | nul
   return Math.round((numerator / denominator) * 1000) / 10;
 }
 
+/** Return ratios (ROE, ROA) need 2 decimal places on small percentages. */
+function returnPct(numerator: number | null, denominator: number | null): number | null {
+  if (numerator == null || denominator == null || denominator === 0) return null;
+  return Math.round((numerator / denominator) * 10000) / 100;
+}
+
 export function extractMetrics(
   filing: Filing,
   peerType: PeerType = "diversified-protein"
@@ -154,8 +160,8 @@ export function extractMetrics(
     operatingMargin: pct(operatingIncome, revenue),
     netMargin: pct(netIncome, revenue),
     fcfMargin: pct(a.cashFlow.freeCashFlow, revenue),
-    roe: pct(netIncome, a.balanceSheet.totalEquity || null),
-    roa: pct(netIncome, a.balanceSheet.totalAssets || null),
+    roe: returnPct(netIncome, a.balanceSheet.totalEquity || null),
+    roa: returnPct(netIncome, a.balanceSheet.totalAssets || null),
     segments: a.segments ?? [],
     methodologyVariants: a.methodologyVariants,
   };
