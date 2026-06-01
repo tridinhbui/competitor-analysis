@@ -514,6 +514,9 @@ const METRICS: Record<PdfFinancialMetric, MetricConfig> = {
   },
 };
 
+/** All metrics the PDF heuristic scanner can detect (for supplemental financial board rows). */
+export const PDF_FINANCIAL_METRIC_KEYS = Object.keys(METRICS) as PdfFinancialMetric[];
+
 /** Old SEC PDFs often omit the words "Total assets" on the final BS row (numbers + $ only). */
 function isLikelyUnlabeledTotalAssetsRow(line: ParsedLine): boolean {
   const lbl = line.label.trim();

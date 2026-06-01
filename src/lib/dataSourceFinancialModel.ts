@@ -1,4 +1,10 @@
 import * as XLSX from "xlsx-js-style";
+import {
+  deriveFinancialModelFromRows,
+  filingMetricRowToCells,
+  type FilingCategorySection,
+  type FilingDerivedFinancialModel,
+} from "@/lib/financialModelFromFiling";
 import type { DataSourceRow } from "@/types/dataSource";
 
 export type FinancialModelSheetKey = "underwriting" | "annualCf";
@@ -17,6 +23,8 @@ export interface FinancialModelContext {
   freeCashFlowM: number | null;
   totalAssetsM: number | null;
   ebitdaM: number | null;
+  /** Populated from PDF-derived workbook rows (per company). */
+  derived: FilingDerivedFinancialModel;
 }
 
 const NAVY = "1E3A5F";
@@ -79,6 +87,10 @@ function fmtM(value: number | null, digits = 1): string {
 export function buildFinancialModelContext(
   company: { ticker: string; companyName: string } | null,
   rows: DataSourceRow[],
+  options?: {
+    categorySections?: FilingCategorySection[];
+    boardHeadline?: string;
+  },
 ): FinancialModelContext {
   const quarterRows = rows.filter((row) => row.periodEnd !== "TTM");
   const latest =
@@ -93,10 +105,12 @@ export function buildFinancialModelContext(
     return ttmVal ?? latestVal;
   };
 
+  const derived = deriveFinancialModelFromRows(rows, company, options);
+
   return {
     companyName: company?.companyName ?? latest?.companyName ?? "Portfolio Company",
     ticker: company?.ticker ?? latest?.ticker ?? "—",
-    subtitle: "Development & Operations Financial Model",
+    subtitle: derived.sourceLabel,
     latestQuarterLabel: latest?.quarterLabel ?? "Latest quarter",
     latestPeriodEnd: latest?.periodEnd ?? "—",
     revenueM: pick("revenue"),
@@ -106,7 +120,115 @@ export function buildFinancialModelContext(
     freeCashFlowM: pick("freeCashFlow"),
     totalAssetsM: pick("totalAssets"),
     ebitdaM: pick("ebitda"),
+    derived,
   };
+}
+
+function writeCategorySectionsHorizontal(
+  ws: XLSX.WorkSheet,
+  startRow: number,
+  sections: FilingCategorySection[],
+  styles: {
+    headerStyle: XLSX.CellObject["s"];
+    bodyStyle: XLSX.CellObject["s"];
+    numStyle: XLSX.CellObject["s"];
+    sectionStyle: XLSX.CellObject["s"];
+  },
+  panelsPerRow = 2,
+  gapBetweenPanels = 0,
+): { endRow: number; colCount: number } {
+  let r = startRow;
+  let maxColCount = 0;
+  const { headerStyle, bodyStyle, numStyle, sectionStyle } = styles;
+
+  const panelWidth = (section: FilingCategorySection) => Math.max(1, section.columnHeaders.length);
+
+  for (let bandIndex = 0; bandIndex < sections.length; bandIndex += panelsPerRow) {
+    const panels = sections.slice(bandIndex, bandIndex + panelsPerRow);
+    const bandColCount = panels.reduce(
+      (sum, panel, index) =>
+        sum + panelWidth(panel) + (index < panels.length - 1 ? gapBetweenPanels : 0),
+      0,
+    );
+    maxColCount = Math.max(maxColCount, bandColCount);
+
+    let c = 0;
+    panels.forEach((panel, index) => {
+      const w = panelWidth(panel);
+      setCell(ws, r, c, panel.title, sectionStyle);
+      merge(ws, r, c, r, c + w - 1);
+      c += w;
+      if (index < panels.length - 1) c += gapBetweenPanels;
+    });
+    r += 1;
+
+    c = 0;
+    panels.forEach((panel, index) => {
+      const w = panelWidth(panel);
+      panel.columnHeaders.forEach((header, colIndex) => {
+        setCell(ws, r, c + colIndex, header, headerStyle);
+      });
+      c += w;
+      if (index < panels.length - 1) c += gapBetweenPanels;
+    });
+    r += 1;
+
+    const maxDataRows = Math.max(1, ...panels.map((panel) => panel.rows.length));
+    for (let rowIndex = 0; rowIndex < maxDataRows; rowIndex += 1) {
+      c = 0;
+      panels.forEach((panel, index) => {
+        const w = panelWidth(panel);
+        const metricRow = panel.rows[rowIndex];
+        if (metricRow) {
+          filingMetricRowToCells(metricRow).forEach((cell, colIndex) => {
+            setCell(ws, r, c + colIndex, cell, colIndex === 0 ? bodyStyle : numStyle);
+          });
+        }
+        c += w;
+        if (index < panels.length - 1) c += gapBetweenPanels;
+      });
+      r += 1;
+    }
+  }
+
+  return { endRow: r, colCount: maxColCount };
+}
+
+function writeCategorySections(
+  ws: XLSX.WorkSheet,
+  startRow: number,
+  sections: FilingCategorySection[],
+  styles: {
+    headerStyle: XLSX.CellObject["s"];
+    bodyStyle: XLSX.CellObject["s"];
+    numStyle: XLSX.CellObject["s"];
+    sectionStyle: XLSX.CellObject["s"];
+  },
+): number {
+  let r = startRow;
+  const { headerStyle, bodyStyle, numStyle, sectionStyle } = styles;
+
+  for (const section of sections) {
+    const lastCol = Math.max(section.columnHeaders.length - 1, 0);
+    setCell(ws, r, 0, section.title, sectionStyle);
+    merge(ws, r, 0, r, lastCol);
+    r += 1;
+
+    section.columnHeaders.forEach((header, col) => {
+      setCell(ws, r, col, header, headerStyle);
+    });
+    r += 1;
+
+    for (const row of section.rows) {
+      filingMetricRowToCells(row).forEach((cell, col) => {
+        setCell(ws, r, col, cell, col === 0 ? bodyStyle : numStyle);
+      });
+      r += 1;
+    }
+    r += 1;
+  }
+
+  return r;
 }
 
 function getRowNumber(row: DataSourceRow, field: keyof DataSourceRow): number | null {
@@ -116,46 +238,60 @@ function getRowNumber(row: DataSourceRow, field: keyof DataSourceRow): number | 
 
 export function buildUnderwritingWorksheet(ctx: FinancialModelContext): XLSX.WorkSheet {
   const ws: XLSX.WorkSheet = {};
+  const { derived } = ctx;
   const titleStyle = styleCell(NAVY, { bold: true, color: WHITE, sz: 14 });
   const subtitleStyle = styleCell(NAVY, { bold: true, color: WHITE, sz: 11 });
-  const labelStyle = styleCell(LIGHT_BLUE, { bold: true, color: NAVY_DARK });
+  const navySubStyle = styleCell(NAVY, { color: WHITE, sz: 10 }, { wrapText: true, vertical: "top" });
   const headerStyle = styleCell(BLUE_HEADER, { bold: true, color: WHITE });
   const sectionStyle = styleCell(BLUE_HEADER, { bold: true, color: WHITE, sz: 11 });
   const bodyStyle = styleCell(WHITE, undefined, { horizontal: "left" }, true);
   const numStyle = styleCell(WHITE, undefined, { horizontal: "right" }, true);
   const metricLabelStyle = styleCell(undefined, { bold: true, color: NAVY_DARK });
+  const shortcutStyle = styleCell("3B82F6", { bold: true, color: WHITE }, { horizontal: "center" });
+  const wrapBodyStyle = styleCell(WHITE, { sz: 9 }, { horizontal: "left", vertical: "top", wrapText: true }, true);
 
-  setCell(ws, 0, 0, "DATA CENTER DEVELOPMENT MODEL", titleStyle);
-  merge(ws, 0, 0, 0, 7);
-  setCell(ws, 1, 0, `${ctx.companyName.toUpperCase()} — ${ctx.ticker}`, subtitleStyle);
-  merge(ws, 1, 0, 1, 7);
-  setCell(ws, 2, 0, ctx.subtitle, styleCell(NAVY, { color: WHITE, sz: 10 }));
-  merge(ws, 2, 0, 2, 7);
-  setCell(ws, 3, 0, "Modular and scalable phased development (English template)", styleCell(NAVY, { color: WHITE, sz: 9 }));
-  merge(ws, 3, 0, 3, 7);
-
-  const params: Array<[string, string]> = [
-    ["IT Load Power (MW)", "20"],
-    ["Total Facility Power (MW)", "30"],
-    ["Analysis Start Date", "1-Jul-25"],
-    ["Construction Duration", "24 Months"],
-    ["Operations Start Month", "Month 25"],
-    ["First Stabilization Month", "Month 46"],
-    ["Sale / Hold Period End", "Month 72"],
-  ];
-  let r = 5;
-  setCell(ws, r, 0, "Project Parameters", sectionStyle);
-  merge(ws, r, 0, r, 2);
-  r += 1;
-  for (const [label, value] of params) {
-    setCell(ws, r, 0, label, metricLabelStyle);
-    setCell(ws, r, 1, value, bodyStyle);
-    merge(ws, r, 1, r, 2);
-    r += 1;
+  const dataColCount = Math.max(
+    3,
+    ...derived.categorySections.map((section) => section.columnHeaders.length),
+  );
+  const colCount = Math.max(10, dataColCount);
+  let paramsW = Math.max(3, Math.floor(colCount * 0.3));
+  let shortcutsW = Math.max(3, Math.floor(colCount * 0.34));
+  let metricsW = colCount - paramsW - shortcutsW;
+  if (metricsW < 2) {
+    metricsW = 2;
+    shortcutsW = Math.max(3, Math.floor((colCount - paramsW - metricsW) / 2));
+    metricsW = colCount - paramsW - shortcutsW;
   }
+  const paramsStart = 0;
+  const shortcutsStart = paramsStart + paramsW;
+  const metricsStart = shortcutsStart + shortcutsW;
 
-  setCell(ws, 5, 3, "Shortcuts to Sections", sectionStyle);
-  merge(ws, 5, 3, 5, 5);
+  setCell(ws, 0, 0, "FILING FINANCIAL EXTRACT — UNDERWRITING", titleStyle);
+  merge(ws, 0, 0, 0, colCount - 1);
+  setCell(ws, 1, 0, `${ctx.companyName.toUpperCase()} — ${ctx.ticker}`, subtitleStyle);
+  merge(ws, 1, 0, 1, colCount - 1);
+  setCell(ws, 2, 0, derived.sourceLabel, navySubStyle);
+  merge(ws, 2, 0, 2, colCount - 1);
+
+  const yieldOnCost =
+    ctx.operatingIncomeM != null && ctx.totalAssetsM != null && ctx.totalAssetsM > 0
+      ? `${((ctx.operatingIncomeM / ctx.totalAssetsM) * 100).toFixed(2)}%`
+      : "—";
+  const keyMetrics: Array<[string, string]> = [
+    ["Equity Multiple", derived.equityMultipleDisplay || "—"],
+    ["Yield on Cost", yieldOnCost],
+    ["Market Cap Rate", derived.marketCapRateDisplay || "—"],
+    [
+      "Dev. Spread",
+      yieldOnCost && derived.marketCapRateDisplay
+        ? `${(parseFloat(yieldOnCost) - parseFloat(derived.marketCapRateDisplay)).toFixed(2)}%`
+        : "—",
+    ],
+    [`Revenue (${ctx.latestQuarterLabel})`, ctx.revenueM != null ? `$${fmtM(ctx.revenueM)}M` : "—"],
+    [`CapEx`, ctx.capexM != null ? `$${fmtM(Math.abs(ctx.capexM))}M` : "—"],
+    ["EBITDA", ctx.ebitdaM != null ? `$${fmtM(ctx.ebitdaM)}M` : "—"],
+  ];
   const shortcuts = [
     "Investment Description",
     "Investment Cash Flow",
@@ -163,92 +299,68 @@ export function buildUnderwritingWorksheet(ctx: FinancialModelContext): XLSX.Wor
     "Reversion Cash Flow",
     "Returns",
   ];
-  shortcuts.forEach((label, index) => {
-    setCell(ws, 6 + index, 3, label, styleCell("3B82F6", { bold: true, color: WHITE }, { horizontal: "center" }));
-    merge(ws, 6 + index, 3, 6 + index, 5);
-  });
 
-  setCell(ws, 5, 6, "Key Metrics", sectionStyle);
-  merge(ws, 5, 6, 5, 7);
-  const yieldOnCost =
-    ctx.operatingIncomeM != null && ctx.totalAssetsM != null && ctx.totalAssetsM > 0
-      ? ((ctx.operatingIncomeM / ctx.totalAssetsM) * 100).toFixed(2)
-      : "—";
-  const metrics: Array<[string, string]> = [
-    ["Equity Multiple", "16.93x"],
-    ["Yield on Cost (excl. escalation)", `${yieldOnCost}%`],
-    ["Market Cap Rate", "—"],
-    ["Development Spread", "—"],
-    [`Latest Revenue (${ctx.latestQuarterLabel})`, ctx.revenueM != null ? `$${fmtM(ctx.revenueM)}M` : "—"],
-    ["Latest EBITDA", ctx.ebitdaM != null ? `$${fmtM(ctx.ebitdaM)}M` : "—"],
-  ];
-  metrics.forEach(([label, value], index) => {
-    setCell(ws, 6 + index, 6, label, metricLabelStyle);
-    setCell(ws, 6 + index, 7, value, numStyle);
-  });
-
-  r = 14;
-  setCell(ws, r, 0, "USES OF FUNDS", sectionStyle);
-  merge(ws, r, 0, r, 7);
+  let r = 4;
+  setCell(ws, r, paramsStart, "Project parameters", sectionStyle);
+  merge(ws, r, paramsStart, r, paramsStart + paramsW - 1);
+  setCell(ws, r, shortcutsStart, "Shortcuts to sections", sectionStyle);
+  merge(ws, r, shortcutsStart, r, shortcutsStart + shortcutsW - 1);
+  setCell(ws, r, metricsStart, "Key metrics", sectionStyle);
+  merge(ws, r, metricsStart, r, metricsStart + metricsW - 1);
   r += 1;
 
-  const headers = ["USES", "End Month", "Method", "/SF Land", "/SF Total", "/SF Leasable", "/kW IT Load", "Total ($M)"];
-  headers.forEach((header, col) => {
-    setCell(ws, r, col, header, headerStyle);
-  });
-  r += 1;
-
-  const landItems: Array<[string, number, string, number, number, number, number, number]> = [
-    ["Land Cost", 1, "Straight-Line", 50.05, 72.67, 68.2, 1200, 4.5],
-    ["Closing Costs", 1, "Straight-Line", 2.1, 3.05, 2.86, 50, 0.2],
-    ["Other", 1, "Straight-Line", 0, 0, 0, 0, 0],
-  ];
-  setCell(ws, r, 0, "Land Costs", labelStyle);
-  merge(ws, r, 0, r, 7);
-  r += 1;
-  for (const row of landItems) {
-    row.forEach((cell, col) => {
-      setCell(ws, r, col, cell, col === 0 ? bodyStyle : numStyle);
-    });
+  const maxBandRows = Math.max(derived.projectParams.length, shortcuts.length, keyMetrics.length);
+  for (let index = 0; index < maxBandRows; index += 1) {
+    const param = derived.projectParams[index];
+    if (param) {
+      setCell(ws, r, paramsStart, param.label, metricLabelStyle);
+      setCell(
+        ws,
+        r,
+        paramsStart + 1,
+        param.value,
+        param.label === "Categories in model" ? wrapBodyStyle : bodyStyle,
+      );
+      if (paramsW > 2) merge(ws, r, paramsStart + 1, r, paramsStart + paramsW - 1);
+    }
+    const shortcut = shortcuts[index];
+    if (shortcut) {
+      setCell(ws, r, shortcutsStart, shortcut, shortcutStyle);
+      merge(ws, r, shortcutsStart, r, shortcutsStart + shortcutsW - 1);
+    }
+    const metric = keyMetrics[index];
+    if (metric) {
+      const [label, value] = metric;
+      if (metricsW >= 2) {
+        setCell(ws, r, metricsStart, label, metricLabelStyle);
+        setCell(ws, r, metricsStart + 1, value, numStyle);
+        if (metricsW > 2) merge(ws, r, metricsStart + 1, r, metricsStart + metricsW - 1);
+      } else {
+        setCell(ws, r, metricsStart, `${label}: ${value}`, numStyle);
+      }
+    }
     r += 1;
   }
-  setCell(ws, r, 0, "Total Land Costs", sectionStyle);
-  setCell(ws, r, 7, 4.7, numStyle);
-  merge(ws, r, 0, r, 6);
-  r += 2;
 
-  const constructionItems: Array<[string, number, string, number, number, number, number, number]> = [
-    ["Site leveling and civil infrastructure", 24, "S-Curve", 0, 45.2, 42.1, 850, 18.2],
-    ["Concrete and steel structure", 24, "S-Curve", 0, 120.5, 112.3, 2200, 48.5],
-    ["Building envelope", 24, "S-Curve", 0, 38.4, 35.8, 680, 15.4],
-    ["Raised floor", 24, "Straight-Line", 0, 12.6, 11.8, 220, 5.1],
-    ["Mechanical systems — HVAC and cooling", 24, "S-Curve", 0, 95.2, 88.6, 1750, 38.2],
-    ["Electrical system", 24, "S-Curve", 0, 88.1, 82.0, 1620, 35.4],
-  ];
-  setCell(ws, r, 0, "Construction Costs", labelStyle);
-  merge(ws, r, 0, r, 7);
-  r += 1;
-  for (const row of constructionItems) {
-    row.forEach((cell, col) => {
-      setCell(ws, r, col, cell, col === 0 ? bodyStyle : numStyle);
-    });
-    r += 1;
-  }
-  setCell(ws, r, 0, "Total Construction Costs", sectionStyle);
-  setCell(ws, r, 7, 160.8, numStyle);
-  merge(ws, r, 0, r, 6);
+  const { endRow, colCount: bandCols } = writeCategorySectionsHorizontal(ws, r, derived.categorySections, {
+    headerStyle,
+    bodyStyle,
+    numStyle,
+    sectionStyle,
+  });
+  const maxCols = Math.max(colCount, bandCols);
 
-  ws["!cols"] = [
-    { wch: 38 },
-    { wch: 12 },
-    { wch: 14 },
-    { wch: 10 },
-    { wch: 10 },
-    { wch: 12 },
-    { wch: 12 },
-    { wch: 12 },
-  ];
-  ws["!rows"] = [{ hpt: 22 }, { hpt: 18 }, { hpt: 16 }, { hpt: 14 }];
+  setCell(ws, 0, 0, "FILING FINANCIAL EXTRACT — UNDERWRITING", titleStyle);
+  merge(ws, 0, 0, 0, maxCols - 1);
+  setCell(ws, 1, 0, `${ctx.companyName.toUpperCase()} — ${ctx.ticker}`, subtitleStyle);
+  merge(ws, 1, 0, 1, maxCols - 1);
+  setCell(ws, 2, 0, derived.sourceLabel, navySubStyle);
+  merge(ws, 2, 0, 2, maxCols - 1);
+
+  ws["!cols"] = Array.from({ length: maxCols }, (_, i) => ({ wch: i === 0 ? 34 : 12 }));
+  ws["!rows"] = Array.from({ length: endRow + 1 }, (_, i) => ({
+    hpt: i <= 2 ? 20 : 15,
+  }));
 
   return ws;
 }
@@ -260,81 +372,31 @@ export function buildAnnualCfWorksheet(ctx: FinancialModelContext): XLSX.WorkShe
   const sectionStyle = styleCell(BLUE_HEADER, { bold: true, color: WHITE, sz: 10 });
   const bodyStyle = styleCell(WHITE, undefined, { horizontal: "left" }, true);
   const numStyle = styleCell(WHITE, undefined, { horizontal: "right" }, true);
-  const totalStyle = styleCell(LIGHT_BLUE, { bold: true, color: NAVY_DARK }, { horizontal: "right" }, true);
+
+  const { endRow, colCount } = writeCategorySectionsHorizontal(
+    ws,
+    3,
+    ctx.derived.categorySections,
+    {
+      headerStyle,
+      bodyStyle,
+      numStyle,
+      sectionStyle,
+    },
+    2,
+    1,
+  );
+  const maxCols = Math.max(12, colCount);
 
   setCell(ws, 0, 0, `${ctx.companyName.toUpperCase()} — ANNUAL CASH FLOW`, titleStyle);
-  merge(ws, 0, 0, 0, 8);
-  setCell(ws, 1, 0, "Annual development, operating, and expense forecast (USD millions)", styleCell(NAVY, { color: WHITE, sz: 9 }));
-  merge(ws, 1, 0, 1, 8);
+  merge(ws, 0, 0, 0, maxCols - 1);
+  setCell(ws, 1, 0, ctx.derived.sourceLabel, styleCell(NAVY, { color: WHITE, sz: 9 }));
+  merge(ws, 1, 0, 1, maxCols - 1);
 
-  const colHeaders = [
-    "",
-    "Total",
-    "Analysis Phase",
-    "Type",
-    "Period End",
-    "Year 0 (Jun-25)",
-    "Year 1 (2026)",
-    "Year 2 (2027)",
-    "Year 3 (Jun-28)",
-  ];
-  colHeaders.forEach((header, col) => setCell(ws, 3, col, header, headerStyle));
-
-  const revY3 = ctx.revenueM ?? 0;
-  const revY2 = revY3 * 0.85;
-  const revY1 = revY3 * 0.7;
-  const capexAnnual = ctx.capexM != null ? Math.abs(ctx.capexM) : 45;
-  const opexElectric = revY3 * 0.08;
-  const ocfY3 = ctx.operatingCashFlowM ?? revY3 * 0.35;
-
-  type RowDef = { label: string; section?: boolean; total?: boolean; values: (string | number)[] };
-
-  const sections: RowDef[] = [
-    { label: "ANNUAL DEVELOPMENT CASH FLOW", section: true, values: [] },
-    { label: "Total Land Costs", values: ["", 4.7, "Development", "Uses", "Jun-25", 4.7, 0, 0, 0] },
-    { label: "Total Construction Costs", values: ["", 160.8, "Development", "Uses", "Jun-28", 80.4, 80.4, 0, 0] },
-    { label: "Total Soft Costs", values: ["", 12.5, "Development", "Uses", "Jun-28", 6.2, 6.3, 0, 0] },
-    { label: "Total Project Cost Before Financing", total: true, values: ["", 178.0, "", "", "", 91.3, 86.7, 0, 0] },
-    { label: "Capitalized Construction Interest", values: ["", 8.2, "Financing", "Uses", "Jun-28", 4.1, 4.1, 0, 0] },
-    { label: "Financing Fees", values: ["", 3.1, "Financing", "Uses", "Jun-28", 1.5, 1.6, 0, 0] },
-    { label: "Operating Shortfall", values: ["", 0, "Operations", "Uses", "Jun-28", 0, 0, 0, 0] },
-    { label: "Total Use of Funds", total: true, values: ["", 189.3, "", "", "", 96.9, 92.4, 0, 0] },
-    { label: "Total Source of Funds", total: true, values: ["", 189.3, "", "", "", 96.9, 92.4, 0, 0] },
-    { label: "ANNUAL OPERATING CASH FLOW", section: true, values: [] },
-    { label: "Rental Income", values: ["", revY3, "Operations", "Income", "Jun-28", 0, 0, revY2, revY3] },
-    { label: "Recovery Income", values: ["", revY3 * 0.05, "Operations", "Income", "Jun-28", 0, 0, revY2 * 0.05, revY3 * 0.05] },
-    { label: "Total Potential Gross Income", total: true, values: ["", revY3 * 1.05, "", "", "", 0, 0, revY2 * 1.05, revY3 * 1.05] },
-    { label: "Vacancy and Credit Risk (5%)", values: ["", revY3 * -0.05, "Operations", "Income", "Jun-28", 0, 0, revY2 * -0.05, revY3 * -0.05] },
-    { label: "Effective Gross Revenue (EGR)", total: true, values: ["", revY3, "", "", "", 0, 0, revY2, revY3] },
-    { label: "OPERATING EXPENSES", section: true, values: [] },
-    { label: "Electricity", values: ["", opexElectric, "Operations", "Expense", "Jun-28", 0, 0, opexElectric * 0.9, opexElectric] },
-    { label: "Equipment Maintenance", values: ["", revY3 * 0.02, "Operations", "Expense", "Jun-28", 0, 0, revY2 * 0.02, revY3 * 0.02] },
-    { label: "Facility Maintenance", values: ["", revY3 * 0.015, "Operations", "Expense", "Jun-28", 0, 0, revY2 * 0.015, revY3 * 0.015] },
-    { label: "Personnel & Security", values: ["", revY3 * 0.04, "Operations", "Expense", "Jun-28", 0, 0, revY2 * 0.04, revY3 * 0.04] },
-    { label: "Insurance", values: ["", revY3 * 0.01, "Operations", "Expense", "Jun-28", 0, 0, revY2 * 0.01, revY3 * 0.01] },
-    { label: "General & Administrative (G&A)", values: ["", revY3 * 0.03, "Operations", "Expense", "Jun-28", 0, 0, revY2 * 0.03, revY3 * 0.03] },
-    { label: "Net Operating Cash Flow", total: true, values: ["", ocfY3, "", "", "", 0, 0, ocfY3 * 0.85, ocfY3] },
-  ];
-
-  let r = 4;
-  for (const row of sections) {
-    if (row.section) {
-      setCell(ws, r, 0, row.label, sectionStyle);
-      merge(ws, r, 0, r, 8);
-      r += 1;
-      continue;
-    }
-    const rowStyle = row.total ? totalStyle : bodyStyle;
-    setCell(ws, r, 0, row.label, row.total ? styleCell(LIGHT_BLUE, { bold: true }, undefined, true) : bodyStyle);
-    row.values.forEach((value, col) => {
-      if (col === 0) return;
-      const cellStyle = typeof value === "number" ? numStyle : rowStyle;
-      setCell(ws, r, col, value, cellStyle);
-    });
-    r += 1;
-  }
-
-  ws["!cols"] = [{ wch: 34 }, { wch: 10 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 14 }];
+  ws["!cols"] = Array.from({ length: maxCols }, (_, i) => ({ wch: i === 0 ? 34 : 12 }));
+  ws["!rows"] = Array.from({ length: endRow + 1 }, (_, i) => ({
+    hpt: i <= 1 ? 20 : 15,
+  }));
   return ws;
 }
 
