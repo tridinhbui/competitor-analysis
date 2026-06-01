@@ -310,7 +310,8 @@ export function FinancialModelExcelGrid({
                       colSpan={colspan}
                       rowSpan={rowspan}
                       className={cn(
-                        "border border-[#e2e8f0] p-0 align-middle transition-colors",
+                        "border border-[#e2e8f0] p-0 transition-colors",
+                        meta?.wrapText || display.includes("\n") ? "align-top" : "align-middle",
                         STYLE_CLASSES[styleKey] ?? STYLE_CLASSES.empty,
                         sectionHighlight && "bg-amber-100/90 ring-1 ring-inset ring-amber-400/70",
                         isSelected && !editingThis && !sectionHighlight && "ring-2 ring-inset",
@@ -345,7 +346,16 @@ export function FinancialModelExcelGrid({
                           className="h-full w-full border-0 bg-white px-1.5 py-1 text-[11px] outline-none"
                         />
                       ) : (
-                        <span className="block truncate px-1.5 py-1">{display}</span>
+                        <span
+                          className={cn(
+                            "block px-1.5 py-1",
+                            meta?.wrapText || display.includes("\n")
+                              ? "whitespace-pre-wrap break-words text-[10px] leading-snug"
+                              : "truncate",
+                          )}
+                        >
+                          {display}
+                        </span>
                       )}
                     </td>
                   );

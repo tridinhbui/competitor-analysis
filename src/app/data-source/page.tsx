@@ -21,6 +21,7 @@ import {
   financialGridStorageKey,
   type FinancialShortcutTarget,
 } from "@/lib/financialModelGrid";
+import type { FilingCategorySection } from "@/lib/financialModelFromFiling";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import {
@@ -942,6 +943,11 @@ export default function DataSourcePage() {
   const hasUnsavedChangesRef = useRef(false);
 
   const [baseRows, setBaseRows] = useState<DataSourceRow[]>([]);
+  const [aiFinancialBoard, setAiFinancialBoard] = useState<{
+    sections: FilingCategorySection[];
+    headline: string;
+  } | null>(null);
+  const [aiBoardLoading, setAiBoardLoading] = useState(false);
   const [workbookCells, setWorkbookCells] = useState<WorkbookRowCellStateMap>({});
   const [numericOverrides, setNumericOverrides] = useState<WorkbookNumericOverrideMap>({});
   const [editLog, setEditLog] = useState<DataSourceEditLogEntry[]>([]);
@@ -1168,6 +1174,7 @@ export default function DataSourcePage() {
     },
   ) => {
     setBaseRows(payload.rows);
+    setAiFinancialBoard(null);
     setWorkbookCells(payload.workbookCells);
     setEditLog(payload.editLog);
     setNumericOverrides({});
@@ -1192,6 +1199,7 @@ export default function DataSourcePage() {
   const applyWorkbookContentPayload = useCallback((payload: CachedWorkbookPayload) => {
     startTransition(() => {
       setBaseRows(payload.rows);
+      setAiFinancialBoard(null);
       setWorkbookCells(payload.workbookCells);
       setEditLog(payload.editLog);
       setNumericOverrides({});
@@ -1403,9 +1411,67 @@ export default function DataSourcePage() {
   }, [computedRows, selectedCompanyTicker]);
 
   const isFinancialTemplateSheet = Boolean(activeSheetConfig.isFinancialTemplate);
+  useEffect(() => {
+    if (!selectedCompanyTicker || currentWorkbookRows.length === 0) {
+      setAiFinancialBoard(null);
+      setAiBoardLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    let cancelled = false;
+
+    (async () => {
+      setAiBoardLoading(true);
+      try {
+        const response = await fetchWithAuth("/api/data-source/financial-board", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rows: currentWorkbookRows,
+            company: selectedCompany,
+          }),
+          signal: controller.signal,
+        });
+        const data = (await response.json().catch(() => ({}))) as {
+          categorySections?: FilingCategorySection[];
+          headline?: string;
+        };
+        if (cancelled || !response.ok) return;
+        setAiFinancialBoard({
+          sections: Array.isArray(data.categorySections) ? data.categorySections : [],
+          headline: typeof data.headline === "string" ? data.headline : "",
+        });
+      } catch {
+        if (!cancelled) setAiFinancialBoard(null);
+      } finally {
+        if (!cancelled) setAiBoardLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [selectedCompany, selectedCompanyTicker, currentWorkbookRows]);
+
   const financialModelContext = useMemo(
-    () => buildFinancialModelContext(selectedCompany, currentWorkbookRows),
-    [selectedCompany, currentWorkbookRows],
+    () =>
+      buildFinancialModelContext(
+        selectedCompany,
+        currentWorkbookRows,
+        aiFinancialBoard
+          ? {
+              categorySections: aiFinancialBoard.sections,
+              boardHeadline: aiBoardLoading
+                ? "Updating AI financial board…"
+                : aiFinancialBoard.headline,
+            }
+          : aiBoardLoading
+            ? { boardHeadline: "Building AI financial board…" }
+            : undefined,
+      ),
+    [selectedCompany, currentWorkbookRows, aiFinancialBoard, aiBoardLoading],
   );
 
   const handleFinancialShortcut = useCallback((target: FinancialShortcutTarget) => {

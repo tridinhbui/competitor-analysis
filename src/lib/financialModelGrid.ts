@@ -1,4 +1,8 @@
 import type { FinancialModelContext, FinancialModelSheetKey } from "@/lib/dataSourceFinancialModel";
+import {
+  filingMetricRowToCells,
+  type FilingCategorySection,
+} from "@/lib/financialModelFromFiling";
 
 export type FinancialCellStyle =
   | "navyTitle"
@@ -31,6 +35,7 @@ export interface FinancialGridCell {
   readOnly?: boolean;
   colspan?: number;
   rowspan?: number;
+  wrapText?: boolean;
   sectionId?: FinancialShortcutId;
   shortcutTarget?: FinancialShortcutTarget;
 }
@@ -104,15 +109,70 @@ export const FINANCIAL_SHORTCUTS: Array<{
   { label: "Returns", target: { sheet: "underwriting", sectionId: "returns" } },
 ];
 
+function maxCategoryColumnCount(sections: FilingCategorySection[]): number {
+  return Math.max(3, ...sections.map((s) => s.columnHeaders.length));
+}
+
+function appendCategorySectionsToGrid(
+  cells: Map<string, FinancialGridCell>,
+  sectionRanges: FinancialSectionRange[],
+  sections: FilingCategorySection[],
+  startRow: number,
+  colCount: number,
+): number {
+  let r = startRow;
+
+  for (const section of sections) {
+    const span = Math.min(colCount, Math.max(section.columnHeaders.length, 1));
+    const sectionStart = r;
+    put(cells, r, 0, section.title, "sectionHeader", {
+      colspan: span,
+      sectionId: section.sectionId as FinancialShortcutId | undefined,
+      readOnly: true,
+    });
+    r += 1;
+
+    section.columnHeaders.forEach((header, col) => {
+      if (col >= colCount) return;
+      put(cells, r, col, header, "tableHeader", { readOnly: true });
+    });
+    r += 1;
+
+    for (const metricRow of section.rows) {
+      const rowCells = filingMetricRowToCells(metricRow);
+      rowCells.forEach((cell, col) => {
+        if (col >= colCount) return;
+        put(cells, r, col, cell, col === 0 ? "text" : "number");
+      });
+      r += 1;
+    }
+
+    if (section.sectionId) {
+      sectionRanges.push({
+        sectionId: section.sectionId as FinancialShortcutId,
+        startRow: sectionStart,
+        endRow: r - 1,
+        startCol: 0,
+        endCol: span - 1,
+      });
+    }
+    r += 1;
+  }
+
+  return r;
+}
+
 export function buildFinancialGrid(sheetKey: FinancialModelSheetKey, ctx: FinancialModelContext): FinancialGridModel {
   return sheetKey === "underwriting" ? buildUnderwritingGrid(ctx) : buildAnnualCfGrid(ctx);
 }
 
 function buildUnderwritingGrid(ctx: FinancialModelContext): FinancialGridModel {
   const cells = new Map<string, FinancialGridCell>();
-  const rowCount = 48;
-  const colCount = 10;
-  const colWidths = [220, 88, 100, 168, 48, 48, 100, 100, 48, 48];
+  const { derived } = ctx;
+  const colCount = Math.max(10, maxCategoryColumnCount(derived.categorySections));
+  const colWidths = Array.from({ length: colCount }, (_, i) =>
+    i === 0 ? 220 : i === 1 ? 56 : 96,
+  );
   const sectionRanges: FinancialSectionRange[] = [];
 
   const yieldOnCost =
@@ -120,10 +180,11 @@ function buildUnderwritingGrid(ctx: FinancialModelContext): FinancialGridModel {
       ? `${((ctx.operatingIncomeM / ctx.totalAssetsM) * 100).toFixed(2)}%`
       : "";
 
-  put(cells, 0, 0, "DATA CENTER DEVELOPMENT MODEL", "navyTitle", { colspan: 8, readOnly: true });
-  put(cells, 1, 0, `${ctx.companyName.toUpperCase()} — ${ctx.ticker}`, "navyTitle", { colspan: 8, readOnly: true });
-  put(cells, 2, 0, ctx.subtitle, "navySub", { colspan: 8, readOnly: true });
-  put(cells, 3, 0, "Modular and scalable phased development · English template", "navySub", { colspan: 8, readOnly: true });
+  const headerSpan = Math.min(colCount, 8);
+  put(cells, 0, 0, "FILING FINANCIAL EXTRACT — UNDERWRITING", "navyTitle", { colspan: headerSpan, readOnly: true });
+  put(cells, 1, 0, `${ctx.companyName.toUpperCase()} — ${ctx.ticker}`, "navyTitle", { colspan: headerSpan, readOnly: true });
+  put(cells, 2, 0, ctx.subtitle, "navySub", { colspan: headerSpan, readOnly: true });
+  put(cells, 3, 0, derived.sourceLabel, "navySub", { colspan: headerSpan, readOnly: true });
 
   put(cells, 5, 0, "Project Parameters", "sectionHeader", { colspan: 3, sectionId: "investment-description" });
   put(cells, 5, 3, "Shortcuts to Sections", "sectionHeader", { colspan: 3, readOnly: true });
@@ -131,19 +192,11 @@ function buildUnderwritingGrid(ctx: FinancialModelContext): FinancialGridModel {
   sectionRanges.push({ sectionId: "investment-description", startRow: 5, endRow: 12, startCol: 0, endCol: 2 });
   sectionRanges.push({ sectionId: "returns", startRow: 5, endRow: 12, startCol: 6, endCol: 7 });
 
-  const params: Array<[string, string]> = [
-    ["IT Load Power (MW)", "20"],
-    ["Total Facility Power (MW)", "30"],
-    ["Analysis Start Date", "1-Jul-25"],
-    ["Construction Duration", "24 Months"],
-    ["Operations Start Month", "Month 25"],
-    ["First Stabilization Month", "Month 46"],
-    ["Sale / Hold Period End", "Month 72"],
-  ];
-  params.forEach(([label, value], index) => {
+  derived.projectParams.forEach(({ label, value }, index) => {
     const r = 6 + index;
+    const wraps = label === "Categories in model" && value.includes("\n");
     put(cells, r, 0, label, "metricLabel", { readOnly: true });
-    put(cells, r, 1, value, "text", { colspan: 2 });
+    put(cells, r, 1, value, "text", { colspan: 2, wrapText: wraps });
   });
 
   FINANCIAL_SHORTCUTS.forEach((shortcut, index) => {
@@ -156,11 +209,17 @@ function buildUnderwritingGrid(ctx: FinancialModelContext): FinancialGridModel {
   });
 
   const metrics: Array<[string, string]> = [
-    ["Equity Multiple", "16.93x"],
+    ["Equity Multiple", derived.equityMultipleDisplay || ""],
     ["Yield on Cost (excl. escalation)", yieldOnCost],
-    ["Market Cap Rate", ""],
-    ["Development Spread", ""],
+    ["Market Cap Rate", derived.marketCapRateDisplay || ""],
+    [
+      "Development Spread",
+      yieldOnCost && derived.marketCapRateDisplay
+        ? `${(parseFloat(yieldOnCost) - parseFloat(derived.marketCapRateDisplay)).toFixed(2)}%`
+        : "",
+    ],
     [`Latest Revenue (${ctx.latestQuarterLabel})`, ctx.revenueM != null ? `$${fmtM(ctx.revenueM)}M` : ""],
+    [`Latest CapEx (TTM / 4Q)`, ctx.capexM != null ? `$${fmtM(Math.abs(ctx.capexM))}M` : ""],
     ["Latest EBITDA", ctx.ebitdaM != null ? `$${fmtM(ctx.ebitdaM)}M` : ""],
   ];
   metrics.forEach(([label, value], index) => {
@@ -169,133 +228,33 @@ function buildUnderwritingGrid(ctx: FinancialModelContext): FinancialGridModel {
     put(cells, r, 7, value, "number");
   });
 
-  const usesRow = 14;
-  put(cells, usesRow, 0, "USES OF FUNDS", "sectionHeader", { colspan: 8, sectionId: "investment-cash-flow" });
-  const headers = ["USES", "End Month", "Method", "/SF Land", "/SF Total", "/SF Leasable", "/kW IT Load", "Total ($M)"];
-  headers.forEach((header, col) => put(cells, usesRow + 1, col, header, "tableHeader", { readOnly: true }));
-
-  const landItems = [
-    ["Land Cost", "1", "Straight-Line", "50.05", "72.67", "68.20", "1200", "4.5"],
-    ["Closing Costs", "1", "Straight-Line", "2.10", "3.05", "2.86", "50", "0.2"],
-    ["Other", "1", "Straight-Line", "", "", "", "", "0"],
-  ];
-  let r = usesRow + 2;
-  put(cells, r, 0, "Land Costs", "label", { colspan: 8, readOnly: true });
-  r += 1;
-  for (const row of landItems) {
-    row.forEach((cell, col) => put(cells, r, col, cell, col === 0 ? "text" : "number"));
-    r += 1;
-  }
-  put(cells, r, 0, "Total Land Costs", "total", { colspan: 7, readOnly: true });
-  put(cells, r, 7, "4.7", "total");
-  r += 2;
-
-  const constructionItems = [
-    ["Site leveling and civil infrastructure", "24", "S-Curve", "", "45.2", "42.1", "850", "18.2"],
-    ["Concrete and steel structure", "24", "S-Curve", "", "120.5", "112.3", "2200", "48.5"],
-    ["Building envelope", "24", "S-Curve", "", "38.4", "35.8", "680", "15.4"],
-    ["Raised floor", "24", "Straight-Line", "", "12.6", "11.8", "220", "5.1"],
-    ["Mechanical systems — HVAC and cooling", "24", "S-Curve", "", "95.2", "88.6", "1750", "38.2"],
-    ["Electrical system", "24", "S-Curve", "", "88.1", "82.0", "1620", "35.4"],
-  ];
-  put(cells, r, 0, "Construction Costs", "label", { colspan: 8, readOnly: true });
-  r += 1;
-  for (const row of constructionItems) {
-    row.forEach((cell, col) => put(cells, r, col, cell, col === 0 ? "text" : "number"));
-    r += 1;
-  }
-  put(cells, r, 0, "Total Construction Costs", "total", { colspan: 7, readOnly: true });
-  put(cells, r, 7, "160.8", "total");
-  sectionRanges.push({ sectionId: "investment-cash-flow", startRow: usesRow, endRow: r, startCol: 0, endCol: 7 });
+  const endRow = appendCategorySectionsToGrid(
+    cells,
+    sectionRanges,
+    derived.categorySections,
+    14,
+    colCount,
+  );
+  const rowCount = Math.max(48, endRow + 4);
 
   return { sheetKey: "underwriting", rowCount, colCount, colWidths, cells, sectionRanges };
 }
 
 function buildAnnualCfGrid(ctx: FinancialModelContext): FinancialGridModel {
   const cells = new Map<string, FinancialGridCell>();
-  const rowCount = 42;
-  const colCount = 10;
-  const colWidths = [240, 72, 100, 72, 88, 100, 88, 88, 88, 48];
+  const { derived } = ctx;
+  const colCount = Math.max(10, maxCategoryColumnCount(derived.categorySections));
+  const colWidths = Array.from({ length: colCount }, (_, i) => (i === 0 ? 240 : i === 1 ? 56 : 96));
   const sectionRanges: FinancialSectionRange[] = [];
-  let activeSection: FinancialShortcutId | null = null;
-  let activeSectionStartRow = 0;
 
-  const revY3 = ctx.revenueM ?? 0;
-  const revY2 = revY3 * 0.85;
-  const ocfY3 = ctx.operatingCashFlowM ?? revY3 * 0.35;
-
-  put(cells, 0, 0, `${ctx.companyName.toUpperCase()} — ANNUAL CASH FLOW`, "navyTitle", { colspan: 9, readOnly: true });
-  put(cells, 1, 0, "Annual development, operating, and expense forecast (USD millions)", "navySub", {
-    colspan: 9,
+  put(cells, 0, 0, `${ctx.companyName.toUpperCase()} — FILING METRICS BY PERIOD`, "navyTitle", {
+    colspan: colCount,
     readOnly: true,
   });
+  put(cells, 1, 0, derived.sourceLabel, "navySub", { colspan: colCount, readOnly: true });
 
-  const colHeaders = ["", "Total", "Phase", "Type", "Period End", "Year 0", "Year 1", "Year 2", "Year 3"];
-  colHeaders.forEach((header, col) => put(cells, 3, col, header, "tableHeader", { readOnly: true }));
-
-  type RowDef = {
-    label: string;
-    section?: boolean;
-    total?: boolean;
-    sectionId?: FinancialShortcutId;
-    values: string[];
-  };
-
-  const rows: RowDef[] = [
-    { label: "ANNUAL DEVELOPMENT CASH FLOW", section: true, sectionId: "investment-cash-flow", values: [] },
-    { label: "Total Land Costs", values: ["4.7", "Development", "Uses", "Jun-25", "4.7", "0", "0", "0"] },
-    { label: "Total Construction Costs", values: ["160.8", "Development", "Uses", "Jun-28", "80.4", "80.4", "0", "0"] },
-    { label: "Total Soft Costs", values: ["12.5", "Development", "Uses", "Jun-28", "6.2", "6.3", "0", "0"] },
-    { label: "Total Project Cost Before Financing", total: true, values: ["178.0", "", "", "", "91.3", "86.7", "0", "0"] },
-    { label: "Capitalized Construction Interest", values: ["8.2", "Financing", "Uses", "Jun-28", "4.1", "4.1", "0", "0"] },
-    { label: "Financing Fees", values: ["3.1", "Financing", "Uses", "Jun-28", "1.5", "1.6", "0", "0"] },
-    { label: "Total Use of Funds", total: true, values: ["189.3", "", "", "", "96.9", "92.4", "0", "0"] },
-    { label: "Total Source of Funds", total: true, values: ["189.3", "", "", "", "96.9", "92.4", "0", "0"] },
-    { label: "ANNUAL OPERATING CASH FLOW", section: true, sectionId: "operating-cash-flow", values: [] },
-    { label: "Rental Income", values: [fmtM(revY3), "Operations", "Income", "Jun-28", "", "", fmtM(revY2), fmtM(revY3)] },
-    { label: "Recovery Income", values: [fmtM(revY3 * 0.05), "Operations", "Income", "Jun-28", "", "", fmtM(revY2 * 0.05), fmtM(revY3 * 0.05)] },
-    { label: "Effective Gross Revenue (EGR)", total: true, values: [fmtM(revY3), "", "", "", "", "", fmtM(revY2), fmtM(revY3)] },
-    { label: "OPERATING EXPENSES", section: true, values: [] },
-    { label: "Electricity", values: [fmtM(revY3 * 0.08), "Operations", "Expense", "Jun-28", "", "", fmtM(revY2 * 0.08), fmtM(revY3 * 0.08)] },
-    { label: "Equipment Maintenance", values: [fmtM(revY3 * 0.02), "Operations", "Expense", "Jun-28", "", "", fmtM(revY2 * 0.02), fmtM(revY3 * 0.02)] },
-    { label: "General & Administrative (G&A)", values: [fmtM(revY3 * 0.03), "Operations", "Expense", "Jun-28", "", "", fmtM(revY2 * 0.03), fmtM(revY3 * 0.03)] },
-    { label: "Net Operating Cash Flow", total: true, values: [fmtM(ocfY3), "", "", "", "", "", fmtM(ocfY3 * 0.85), fmtM(ocfY3)] },
-    { label: "REVERSION & EXIT CASH FLOW", section: true, sectionId: "reversion-cash-flow", values: [] },
-    { label: "Net Sale Proceeds", values: ["", "Exit", "Income", "Month 72", "", "", "", ""] },
-    { label: "Reversion Cash Flow", total: true, values: ["", "", "", "", "", "", "", ""] },
-  ];
-
-  const closeActiveSection = (endRow: number) => {
-    if (!activeSection) return;
-    sectionRanges.push({
-      sectionId: activeSection,
-      startRow: activeSectionStartRow,
-      endRow: endRow,
-      startCol: 0,
-      endCol: 8,
-    });
-    activeSection = null;
-  };
-
-  let r = 4;
-  for (const row of rows) {
-    if (row.section) {
-      closeActiveSection(r - 1);
-      put(cells, r, 0, row.label, "sectionHeader", { colspan: 9, sectionId: row.sectionId, readOnly: true });
-      if (row.sectionId) {
-        activeSection = row.sectionId;
-        activeSectionStartRow = r;
-      }
-      r += 1;
-      continue;
-    }
-    put(cells, r, 0, row.label, row.total ? "total" : "text", { readOnly: true });
-    row.values.forEach((value, colIndex) => {
-      put(cells, r, colIndex + 1, value, row.total ? "total" : "number");
-    });
-    r += 1;
-  }
-  closeActiveSection(r - 1);
+  const endRow = appendCategorySectionsToGrid(cells, sectionRanges, derived.categorySections, 3, colCount);
+  const rowCount = Math.max(42, endRow + 4);
 
   return { sheetKey: "annualCf", rowCount, colCount, colWidths, cells, sectionRanges };
 }

@@ -366,7 +366,6 @@ async function buildWorkbookResponse({
 
   const rows: DataSourceRow[] = [];
   const workbookCells: Record<string, Record<string, DataSourceWorkbookCellState>> = {};
-
   for (const filingRow of filings ?? []) {
     const analysis = filingRow.analysis as FullAnalysis;
     if (!analysis) continue;
