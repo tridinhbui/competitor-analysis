@@ -11,6 +11,16 @@ import type {
 } from "@/types/dataSourceWorkbook";
 import type { ChatThreadSummary } from "@/types/chatThread";
 import { AnalysisCalculationsExplainer } from "@/components/data-source/AnalysisCalculationsExplainer";
+import { FinancialModelSheetView } from "@/components/data-source/FinancialModelSheetView";
+import {
+  appendFinancialModelSheets,
+  buildFinancialModelContext,
+  isFinancialModelSheetKey,
+} from "@/lib/dataSourceFinancialModel";
+import {
+  financialGridStorageKey,
+  type FinancialShortcutTarget,
+} from "@/lib/financialModelGrid";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import {
@@ -55,7 +65,15 @@ import {
 } from "@/lib/dataSourceWorkbook";
 
 type WorkflowOrigin = "analyze" | "competitor";
-type WorkbookSectionKey = "summary" | "segment" | "income" | "balance" | "cashflow" | "analysis";
+type WorkbookSectionKey =
+  | "underwriting"
+  | "annualCf"
+  | "summary"
+  | "segment"
+  | "income"
+  | "balance"
+  | "cashflow"
+  | "analysis";
 type SortDirection = "asc" | "desc";
 
 interface SortState {
@@ -96,6 +114,8 @@ interface WorkbookSectionConfig {
   accentClass: string;
   exportFields: string[];
   focusField?: string;
+  /** Financial model template (Underwriting / Annual CF) — not the quarterly data grid */
+  isFinancialTemplate?: boolean;
 }
 
 interface CachedWorkbookPayload {
@@ -121,13 +141,13 @@ interface CachedWorkbookSnapshot {
 }
 
 const ROW_NUMBER_COLUMN_KEY = "__row__";
-const COLUMN_WIDTHS_STORAGE_KEY = "data-source-column-widths-v1";
+const COLUMN_WIDTHS_STORAGE_KEY = "data-source-column-widths-v2";
 const EDIT_WARNING_STORAGE_KEY = "data-source-edit-warning-acknowledged-v1";
 const CELL_MERGES_STORAGE_KEY = "data-source-cell-merges-v1";
 const WORKBOOK_SNAPSHOT_STORAGE_KEY = "data-source-last-workbook-snapshot-v1";
-const MIN_COLUMN_WIDTH = 60;
+const MIN_COLUMN_WIDTH = 48;
 const MAX_COLUMN_WIDTH = 640;
-const DEFAULT_METRIC_COLUMN_WIDTH = 130;
+const DEFAULT_METRIC_COLUMN_WIDTH = 102;
 const MIN_WORKBOOK_VISIBLE_ROWS = 10;
 const WORKBOOK_FONT_FAMILY = "\"Aptos\", \"Calibri\", \"Segoe UI\", sans-serif";
 const EXCEL_SELECTION_BORDER = "#217346";
@@ -139,14 +159,34 @@ const FORMULA_REFERENCE_COLORS = [
   { border: "rgba(244, 63, 94, 0.95)", fill: "rgba(244, 63, 94, 0.12)" },
 ] as const;
 const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
-  [ROW_NUMBER_COLUMN_KEY]: 56,
-  ticker: 90,
-  companyName: 220,
-  quarterLabel: 140,
-  periodEnd: 110,
+  [ROW_NUMBER_COLUMN_KEY]: 44,
+  ticker: 74,
+  companyName: 170,
+  quarterLabel: 112,
+  periodEnd: 92,
 };
 const BASE_WORKBOOK_FIELDS = ["quarterLabel", "periodEnd"] as const;
-const WORKBOOK_SECTIONS: readonly WorkbookSectionConfig[] = [
+const FINANCIAL_WORKBOOK_SECTIONS: readonly WorkbookSectionConfig[] = [
+  {
+    key: "underwriting",
+    title: "Underwriting",
+    description:
+      "Development model summary, project parameters, uses of funds, and key return metrics (English financial template).",
+    accentClass: "border-blue-300 bg-blue-50 text-blue-800",
+    exportFields: [],
+    isFinancialTemplate: true,
+  },
+  {
+    key: "annualCf",
+    title: "Annual CF",
+    description:
+      "Annual development, operating cash flow, and operating expense forecast by project year (English financial template).",
+    accentClass: "border-indigo-300 bg-indigo-50 text-indigo-800",
+    exportFields: [],
+    isFinancialTemplate: true,
+  },
+] as const;
+const DATA_WORKBOOK_SECTIONS: readonly WorkbookSectionConfig[] = [
   {
     key: "summary",
     title: "Executive Summary",
@@ -258,6 +298,10 @@ const WORKBOOK_SECTIONS: readonly WorkbookSectionConfig[] = [
     focusField: "ercAdjustment",
   },
 ] as const;
+const WORKBOOK_SECTIONS: readonly WorkbookSectionConfig[] = [
+  ...FINANCIAL_WORKBOOK_SECTIONS,
+  ...DATA_WORKBOOK_SECTIONS,
+];
 const WORKBOOK_COLUMN_INDEX_BY_FIELD = new Map(
   WORKBOOK_COLUMNS.map((column, index) => [column.field, index]),
 );
@@ -912,7 +956,8 @@ export default function DataSourcePage() {
   const [saving, setSaving] = useState(false);
   const [navigatorLoading, setNavigatorLoading] = useState(true);
   const [creatingThreadTicker, setCreatingThreadTicker] = useState<string | null>(null);
-  const [activeSheet, setActiveSheet] = useState<WorkbookSectionKey>("summary");
+  const [activeSheet, setActiveSheet] = useState<WorkbookSectionKey>("underwriting");
+  const [financialScrollTarget, setFinancialScrollTarget] = useState<string | null>(null);
   const [sortByWorkflow, setSortByWorkflow] = useState<Record<WorkflowOrigin, SortState | null>>({
     analyze: null,
     competitor: null,
@@ -1138,7 +1183,7 @@ export default function DataSourcePage() {
     if (options?.activeSheetOverride) {
       setActiveSheet(options.activeSheetOverride);
     } else if (!options?.preserveActiveSheet) {
-      setActiveSheet("summary");
+      setActiveSheet("underwriting");
     }
     initialWorkbookCellsRef.current = serializeWorkbookRowCellStates(payload.workbookCells);
     workbookSignatureRef.current = buildWorkbookSignature(payload);
@@ -1253,7 +1298,7 @@ export default function DataSourcePage() {
         selectionKey: getWorkbookSelectionKey(payload.selectedCompanyTicker, payload.selectedThreadId),
         cachedAt: new Date().toISOString(),
         viewState: {
-          activeSheet: resetWorkbookUi ? "summary" : activeSheet,
+          activeSheet: resetWorkbookUi ? "underwriting" : activeSheet,
         },
         payload,
       });
@@ -1357,6 +1402,19 @@ export default function DataSourcePage() {
     return computedRows.filter((row) => row.ticker.toUpperCase() === selectedCompanyTicker);
   }, [computedRows, selectedCompanyTicker]);
 
+  const isFinancialTemplateSheet = Boolean(activeSheetConfig.isFinancialTemplate);
+  const financialModelContext = useMemo(
+    () => buildFinancialModelContext(selectedCompany, currentWorkbookRows),
+    [selectedCompany, currentWorkbookRows],
+  );
+
+  const handleFinancialShortcut = useCallback((target: FinancialShortcutTarget) => {
+    if (target.sheet !== activeSheet) {
+      setActiveSheet(target.sheet);
+    }
+    setFinancialScrollTarget(target.sectionId);
+  }, [activeSheet]);
+
   const sheetRowNumbers = useMemo(
     () => Object.fromEntries(currentWorkbookRows.map((row, index) => [row.id, index + 1])),
     [currentWorkbookRows],
@@ -1376,8 +1434,8 @@ export default function DataSourcePage() {
   const selectedRow = normalizedSelection ? visibleRows[normalizedSelection.endRow] : null;
   const selectedColumn = normalizedSelection ? visibleColumns[normalizedSelection.endCol] : null;
   const selectedField = selectedColumn?.field ?? null;
-  const selectedRowNumber = selectedRow && normalizedSelection
-    ? (sheetRowNumbers[selectedRow.id] ?? normalizedSelection.endRow + 1)
+  const selectedRowNumber = normalizedSelection
+    ? (selectedRow ? (sheetRowNumbers[selectedRow.id] ?? normalizedSelection.endRow + 1) : normalizedSelection.endRow + 1)
     : null;
   const selectedCellState = selectedRow && selectedField
     ? getWorkbookStateForCell(workbookCells, selectedRow.id, selectedField)
@@ -1596,7 +1654,7 @@ export default function DataSourcePage() {
   ]);
 
   useEffect(() => {
-    if (visibleRows.length === 0 || visibleColumns.length === 0) {
+    if (workbookDisplayRowCount === 0 || visibleColumns.length === 0) {
       setSelection(null);
       setEditingCell(null);
       return;
@@ -1620,7 +1678,7 @@ export default function DataSourcePage() {
 
     const normalized = normalizeSelection(selection);
     const rowOutOfRange =
-      normalized.endRow >= visibleRows.length || normalized.startRow >= visibleRows.length;
+      normalized.endRow >= workbookDisplayRowCount || normalized.startRow >= workbookDisplayRowCount;
     const colOutOfRange =
       normalized.endCol > maxColIndex || normalized.startCol > maxColIndex;
 
@@ -1632,7 +1690,7 @@ export default function DataSourcePage() {
         endCol: Math.min(normalized.endCol, maxColIndex),
       });
     }
-  }, [activeSheet, selection, visibleColumns, visibleRows]);
+  }, [activeSheet, selection, visibleColumns, workbookDisplayRowCount]);
 
   useEffect(() => {
     syncFormulaDraftFromSelection();
@@ -2229,8 +2287,8 @@ export default function DataSourcePage() {
   }, [clearSelectionContent, copySelection]);
 
   const moveSelection = useCallback((nextRow: number, nextCol: number, extend = false) => {
-    if (visibleRows.length === 0 || visibleColumns.length === 0) return;
-    const boundedRow = Math.max(0, Math.min(visibleRows.length - 1, nextRow));
+    if (workbookDisplayRowCount === 0 || visibleColumns.length === 0) return;
+    const boundedRow = Math.max(0, Math.min(workbookDisplayRowCount - 1, nextRow));
     const boundedCol = Math.max(0, Math.min(visibleColumns.length - 1, nextCol));
 
     setSelection((prev) => {
@@ -2245,7 +2303,7 @@ export default function DataSourcePage() {
         endCol: boundedCol,
       };
     });
-  }, [visibleColumns.length, visibleRows.length]);
+  }, [visibleColumns.length, workbookDisplayRowCount]);
 
   const startInlineEdit = useCallback((seedText?: string) => {
     if (!selection) return;
@@ -2292,7 +2350,7 @@ export default function DataSourcePage() {
     const normalized = normalizeSelection(selection);
     const row = visibleRows[normalized.endRow];
     const column = visibleColumns[normalized.endCol];
-    if (!row || !column) return;
+    if (!column) return;
 
     if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
@@ -2335,6 +2393,7 @@ export default function DataSourcePage() {
       !withMeta &&
       event.key.length === 1 &&
       !event.altKey &&
+      row &&
       EDITABLE_WORKBOOK_FIELDS.has(column.field) &&
       row.periodEnd !== "TTM"
     ) {
@@ -2433,8 +2492,10 @@ export default function DataSourcePage() {
 
   const handleExportExcel = () => {
     const workbook = XLSX.utils.book_new();
+    appendFinancialModelSheets(workbook, financialModelContext);
 
     for (const sheet of WORKBOOK_SECTIONS) {
+      if (sheet.isFinancialTemplate) continue;
       const sectionColumns = getWorkbookColumnsForSection(sheet);
       const rows = currentWorkbookRows;
       const aoa = [
@@ -2602,7 +2663,7 @@ export default function DataSourcePage() {
             <p className="text-xs text-slate-500">
               {!threadSchemaReady && selectedCompany
                 ? `${selectedCompany.ticker} company workbook loaded in compatibility mode until the workbook-thread migration is applied.`
-                : `${baseRows.length} records - Excel-like workbook with formulas, formatting, keyboard navigation, copy/paste, and persisted manual overrides.`}
+                : `${baseRows.length} records - Financial model tabs (Underwriting, Annual CF) plus quarterly data sheets with formulas, formatting, and persisted overrides.`}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -2780,7 +2841,9 @@ export default function DataSourcePage() {
                   <div>
                     <div className="flex items-center gap-2">
                       <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${activeSheetConfig.accentClass}`}>
-                        {currentWorkbookRows.length} row(s)
+                        {isFinancialTemplateSheet
+                          ? "Financial model template"
+                          : `${currentWorkbookRows.length} row(s)`}
                       </span>
                       <span
                         className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
@@ -2808,32 +2871,45 @@ export default function DataSourcePage() {
                     <p className="mt-1 text-xs text-slate-500">{activeSheetConfig.description}</p>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => toggleEditMode(activeWorkflow)}
-                      className={`inline-flex items-center gap-1 rounded-md border px-3 py-2 text-xs font-semibold transition ${
-                        editingEnabled[activeWorkflow]
-                          ? "border-[#217346]/35 bg-[#217346]/10 text-[#217346]"
-                          : "border-[#d0d7de] bg-white text-slate-700 hover:bg-[#f7f7f7]"
-                      }`}
-                    >
-                      {editingEnabled[activeWorkflow] ? "Lock sheet" : "Edit data"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!ensureEditingEnabled(activeWorkflow)) return;
-                        clearSelectionContent();
-                      }}
-                      className="inline-flex items-center gap-1 rounded-md border border-[#d0d7de] bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-[#f7f7f7]"
-                    >
-                      <Eraser className="h-3 w-3" />
-                      Clear selected
-                    </button>
-                  </div>
+                  {!isFinancialTemplateSheet ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleEditMode(activeWorkflow)}
+                        className={`inline-flex items-center gap-1 rounded-md border px-3 py-2 text-xs font-semibold transition ${
+                          editingEnabled[activeWorkflow]
+                            ? "border-[#217346]/35 bg-[#217346]/10 text-[#217346]"
+                            : "border-[#d0d7de] bg-white text-slate-700 hover:bg-[#f7f7f7]"
+                        }`}
+                      >
+                        {editingEnabled[activeWorkflow] ? "Lock sheet" : "Edit data"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!ensureEditingEnabled(activeWorkflow)) return;
+                          clearSelectionContent();
+                        }}
+                        className="inline-flex items-center gap-1 rounded-md border border-[#d0d7de] bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-[#f7f7f7]"
+                      >
+                        <Eraser className="h-3 w-3" />
+                        Clear selected
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
 
+                {isFinancialTemplateSheet && isFinancialModelSheetKey(activeSheet) ? (
+                  <FinancialModelSheetView
+                    variant={activeSheet}
+                    context={financialModelContext}
+                    storageKey={financialGridStorageKey(selectedCompanyTicker, activeSheet)}
+                    scrollToSectionId={financialScrollTarget}
+                    onScrolledToSection={() => setFinancialScrollTarget(null)}
+                    onShortcut={handleFinancialShortcut}
+                  />
+                ) : (
+                  <>
                 <div className="mb-4 rounded-xl border border-[#d6dbe1] bg-[#f3f3f3] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]">
                   <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
                     <div className="flex flex-wrap items-center gap-2">
@@ -3003,8 +3079,8 @@ export default function DataSourcePage() {
 
                   <div className="mt-3 grid gap-2 xl:grid-cols-[96px_36px_36px_minmax(0,1fr)]">
                       <div className="flex h-9 items-center rounded-md border border-[#cfd6dd] bg-white px-3 text-xs font-semibold text-slate-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
-                      {normalizedSelection && selectedRow && selectedColumn
-                        ? `${columnIndexToLetter(WORKBOOK_COLUMN_INDEX_BY_FIELD.get(selectedColumn.field) ?? normalizedSelection.endCol)}${sheetRowNumbers[selectedRow.id] ?? normalizedSelection.endRow + 1}`
+                      {normalizedSelection && selectedColumn && selectedRowNumber
+                        ? `${columnIndexToLetter(WORKBOOK_COLUMN_INDEX_BY_FIELD.get(selectedColumn.field) ?? normalizedSelection.endCol)}${selectedRowNumber}`
                         : "No cell"}
                     </div>
                     <button
@@ -3064,8 +3140,8 @@ export default function DataSourcePage() {
                   className="max-h-[62vh] overflow-auto border border-[#d6dbe1] bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] outline-none focus:ring-2 focus:ring-[#217346]/20"
                 >
                   <table
-                    className="border-separate border-spacing-0 text-xs"
-                    style={{ tableLayout: "fixed", width: totalTableWidth }}
+                    className="border-separate border-spacing-0 text-[11px]"
+                    style={{ tableLayout: "fixed", width: "100%", minWidth: totalTableWidth }}
                   >
                     <colgroup>
                       <col style={{ width: getColumnWidth(ROW_NUMBER_COLUMN_KEY) }} />
@@ -3075,15 +3151,28 @@ export default function DataSourcePage() {
                     </colgroup>
                     <thead className="sticky top-0 z-20">
                       <tr className="bg-[#f3f3f3] text-[#59636f]">
-                        <th className="sticky left-0 z-30 border-b border-r border-[#d6dbe1] bg-[#f3f3f3] px-3 py-2 text-center font-semibold">
+                        <th className="sticky left-0 z-30 border-b border-r border-[#d6dbe1] bg-[#f3f3f3] px-2 py-1.5 text-center font-semibold">
                           #
                         </th>
-                        {visibleColumns.map((column) => {
+                        {visibleColumns.map((column, colIndex) => {
                           const globalIndex = WORKBOOK_COLUMN_INDEX_BY_FIELD.get(column.field) ?? 0;
                           return (
                             <th
                               key={`${column.field}-letter`}
-                              className="border-b border-r border-[#d6dbe1] bg-[#f3f3f3] px-3 py-2 text-center font-semibold"
+                              onMouseDown={(event) => {
+                                if (event.button === 2) return;
+                                event.preventDefault();
+                                focusWorkbook();
+                                setContextMenu(null);
+                                setEditingCell(null);
+                                setSelection({
+                                  startRow: 0,
+                                  endRow: Math.max(workbookDisplayRowCount - 1, 0),
+                                  startCol: colIndex,
+                                  endCol: colIndex,
+                                });
+                              }}
+                              className="cursor-pointer select-none border-b border-r border-[#d6dbe1] bg-[#f3f3f3] px-2 py-1.5 text-center font-semibold hover:bg-[#e9edf1]"
                             >
                               {columnIndexToLetter(globalIndex)}
                             </th>
@@ -3091,7 +3180,7 @@ export default function DataSourcePage() {
                         })}
                       </tr>
                       <tr className="bg-[#fafafa] text-slate-700">
-                        <th className="sticky left-0 z-30 border-b border-r border-[#d6dbe1] bg-[#f8f8f8] px-3 py-2 text-center font-semibold text-slate-500">
+                        <th className="sticky left-0 z-30 border-b border-r border-[#d6dbe1] bg-[#f8f8f8] px-2 py-1.5 text-center font-semibold text-slate-500">
                           Row
                         </th>
                         {visibleColumns.map((column) => {
@@ -3106,7 +3195,7 @@ export default function DataSourcePage() {
                           return (
                             <th
                               key={column.field}
-                              className={`relative border-b border-r border-[#d6dbe1] bg-[#fafafa] px-3 py-2 font-semibold ${
+                              className={`relative border-b border-r border-[#d6dbe1] bg-[#fafafa] px-2 py-1.5 font-semibold ${
                                 column.align === "right"
                                   ? "text-right"
                                   : column.align === "center"
@@ -3140,7 +3229,22 @@ export default function DataSourcePage() {
                         const canonicalRowNumber = sheetRowNumbers[row.id] ?? rowIndex + 1;
                         return (
                           <tr key={row.id} className="bg-white">
-                            <td className="sticky left-0 z-10 border-b border-r border-[#dfe4ea] bg-[#f8f8f8] px-3 py-2 text-center font-semibold text-slate-500">
+                            <td
+                              onMouseDown={(event) => {
+                                if (event.button === 2) return;
+                                event.preventDefault();
+                                focusWorkbook();
+                                setContextMenu(null);
+                                setEditingCell(null);
+                                setSelection({
+                                  startRow: rowIndex,
+                                  endRow: rowIndex,
+                                  startCol: 0,
+                                  endCol: Math.max(visibleColumns.length - 1, 0),
+                                });
+                              }}
+                              className="sticky left-0 z-10 cursor-pointer select-none border-b border-r border-[#dfe4ea] bg-[#f8f8f8] px-2 py-1.5 text-center font-semibold text-slate-500 hover:bg-[#eef2f5]"
+                            >
                               {canonicalRowNumber}
                             </td>
                             {visibleColumns.map((column, colIndex) => {
@@ -3201,10 +3305,10 @@ export default function DataSourcePage() {
                                       startInlineEdit();
                                     }
                                   }}
-                                  className="border-b border-r border-[#dfe4ea] bg-white px-0 py-0"
+                                  className="cursor-pointer border-b border-r border-[#dfe4ea] bg-white px-0 py-0"
                                 >
                                   <div
-                                    className={`relative min-h-[32px] px-2.5 py-1.5 ${
+                                    className={`relative min-h-[28px] px-2 py-1 ${
                                       column.align === "right"
                                         ? "text-right"
                                         : column.align === "center"
@@ -3282,33 +3386,90 @@ export default function DataSourcePage() {
                         );
                       })}
                       {Array.from({ length: placeholderRowCount }, (_, placeholderOffset) => {
-                        const rowNumber = visibleRows.length + placeholderOffset + 1;
+                        const rowIndex = visibleRows.length + placeholderOffset;
+                        const rowNumber = rowIndex + 1;
                         return (
                           <tr
                             key={`placeholder-row-${activeSheet}-${rowNumber}`}
                             className="bg-white"
                           >
-                            <td className="sticky left-0 z-10 border-b border-r border-[#dfe4ea] bg-[#f8f8f8] px-3 py-2 text-center font-semibold text-slate-300">
+                            <td
+                              onMouseDown={(event) => {
+                                if (event.button === 2) return;
+                                event.preventDefault();
+                                focusWorkbook();
+                                setContextMenu(null);
+                                setEditingCell(null);
+                                setSelection({
+                                  startRow: rowIndex,
+                                  endRow: rowIndex,
+                                  startCol: 0,
+                                  endCol: Math.max(visibleColumns.length - 1, 0),
+                                });
+                              }}
+                              className="sticky left-0 z-10 cursor-pointer select-none border-b border-r border-[#dfe4ea] bg-[#f8f8f8] px-2 py-1.5 text-center font-semibold text-slate-300 hover:bg-[#eef2f5]"
+                            >
                               {rowNumber}
                             </td>
-                            {visibleColumns.map((column) => (
+                            {visibleColumns.map((column, colIndex) => {
+                              const isSelected = isCellInSelection(selection, rowIndex, colIndex);
+                              const isActiveCell =
+                                normalizedSelection?.endRow === rowIndex && normalizedSelection?.endCol === colIndex;
+
+                              return (
                               <td
                                 key={`placeholder-row-${activeSheet}-${rowNumber}-${column.field}`}
-                                className="border-b border-r border-[#dfe4ea] bg-white px-0 py-0"
+                                onMouseDown={(event) => {
+                                  if (event.button === 2) return;
+                                  event.preventDefault();
+                                  focusWorkbook();
+                                  setContextMenu(null);
+                                  setEditingCell(null);
+                                  setSelection({
+                                    startRow: rowIndex,
+                                    endRow: rowIndex,
+                                    startCol: colIndex,
+                                    endCol: colIndex,
+                                  });
+                                }}
+                                onContextMenu={(event) => {
+                                  event.preventDefault();
+                                  focusWorkbook();
+                                  setContextMenu(null);
+                                  setEditingCell(null);
+                                  setSelection({
+                                    startRow: rowIndex,
+                                    endRow: rowIndex,
+                                    startCol: colIndex,
+                                    endCol: colIndex,
+                                  });
+                                }}
+                                className="cursor-pointer border-b border-r border-[#dfe4ea] bg-white px-0 py-0"
                               >
                                 <div
-                                  className={`min-h-[32px] px-2.5 py-1.5 text-slate-300 ${
+                                  className={`relative min-h-[28px] px-2 py-1 text-slate-300 ${
                                     column.align === "right"
                                       ? "text-right"
                                       : column.align === "center"
                                         ? "text-center"
                                         : "text-left"
                                   }`}
+                                  style={{
+                                    backgroundColor: isSelected ? EXCEL_SELECTION_FILL : undefined,
+                                    boxShadow: isActiveCell ? `inset 0 0 0 2px ${EXCEL_SELECTION_BORDER}` : undefined,
+                                  }}
                                 >
                                   <span className="block select-none">&nbsp;</span>
+                                  {isActiveCell && (
+                                    <span
+                                      className="pointer-events-none absolute bottom-0 right-0 h-1.5 w-1.5 translate-x-1/2 translate-y-1/2 rounded-[1px]"
+                                      style={{ backgroundColor: EXCEL_SELECTION_BORDER }}
+                                    />
+                                  )}
                                 </div>
                               </td>
-                            ))}
+                            );
+                            })}
                           </tr>
                         );
                       })}
@@ -3412,6 +3573,8 @@ export default function DataSourcePage() {
                     </button>
                   </div>
                 ) : null}
+                  </>
+                )}
                 </>
               </div>
 

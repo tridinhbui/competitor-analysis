@@ -19,6 +19,11 @@ import {
 import { applyDividendsDeclaredNoteFallback } from "@/lib/dividendsNoteHeuristic";
 import { debugLog, warnLog } from "@/lib/debugLogger";
 import {
+  buildFinancialsPartial,
+  encodePdfAnalyzeSse,
+  type PdfAnalyzeStreamEvent,
+} from "@/lib/pdfAiPartial";
+import {
   classifySegmentType,
   extractSegmentsHeuristic as extractSegmentsHeuristicShared,
   parseSegmentNumberToken,
@@ -1257,7 +1262,13 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: { text?: string; fileName?: string; pages?: number; chars?: number };
+  let body: {
+    text?: string;
+    fileName?: string;
+    pages?: number;
+    chars?: number;
+    stream?: boolean;
+  };
   try {
     body = await request.json();
   } catch {
@@ -1269,6 +1280,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "NO_VALID_FILING_TEXT" }, { status: 400 });
   }
 
+  const wantStream = body.stream === true;
   const model = process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini";
 
   // Split text into sections (├óΓÇ░┬Ñ500 chars, financial keywords passed guard)
@@ -1288,22 +1300,55 @@ export async function POST(request: Request) {
           ? filingText.slice(Math.floor(filingText.length * 0.5))
           : filingText.slice(0, 60_000);
 
-  try {
-    // Run parallel AI: 4 extraction + non-recurring + cover identity (company / 10-K vs 10-Q)
+  const runExtraction = async (emitStream?: (evt: PdfAnalyzeStreamEvent) => void) => {
+    const bsPromise = callOpenAI(
+      apiKey,
+      model,
+      BS_PROMPT,
+      `Extract balance sheet data:\n\n${bsInput}`,
+      tokensFor(bsInput)
+    );
+    const isCfPromise = callOpenAI(
+      apiKey,
+      model,
+      IS_CF_PROMPT,
+      `Extract income statement and cash flow data:\n\n${isCfInput}`,
+      tokensFor(isCfInput)
+    );
+    const qualPromise = callOpenAI(
+      apiKey,
+      model,
+      QUALITATIVE_PROMPT,
+      `Extract qualitative insights:\n\n${qualInput}`,
+      tokensFor(qualInput)
+    );
+    const segPromise = callOpenAI(
+      apiKey,
+      model,
+      SEGMENT_PROMPT,
+      `Extract segment data:\n\n${segInput}`,
+      tokensFor(segInput, 1500, 4000)
+    );
+    const nonRecurringPromise = extractNonRecurringItems(filingText, apiKey, model);
+    const identityPromise = detectFilingIdentity(apiKey, model, filingText, body.fileName);
+
+    if (emitStream) {
+      void Promise.all([bsPromise, isCfPromise]).then(([bsCall, isCfCall]) => {
+        const partial = buildFinancialsPartial(bsCall, isCfCall, filingText, body);
+        if (partial) {
+          emitStream({ event: "partial", stage: "financials", analysis: partial });
+        }
+      });
+    }
+
     const [bsCall, isCfCall, qualCall, segCall, nonRecurringItems, identityDetection] =
       await Promise.all([
-        callOpenAI(apiKey, model, BS_PROMPT, `Extract balance sheet data:\n\n${bsInput}`, tokensFor(bsInput)),
-        callOpenAI(
-          apiKey,
-          model,
-          IS_CF_PROMPT,
-          `Extract income statement and cash flow data:\n\n${isCfInput}`,
-          tokensFor(isCfInput)
-        ),
-        callOpenAI(apiKey, model, QUALITATIVE_PROMPT, `Extract qualitative insights:\n\n${qualInput}`, tokensFor(qualInput)),
-        callOpenAI(apiKey, model, SEGMENT_PROMPT, `Extract segment data:\n\n${segInput}`, tokensFor(segInput, 1500, 4000)),
-        extractNonRecurringItems(filingText, apiKey, model),
-        detectFilingIdentity(apiKey, model, filingText, body.fileName),
+        bsPromise,
+        isCfPromise,
+        qualPromise,
+        segPromise,
+        nonRecurringPromise,
+        identityPromise,
       ]);
 
     const aiErrors = [bsCall, isCfCall, qualCall, segCall]
@@ -1811,11 +1856,16 @@ export async function POST(request: Request) {
 
       warnLog("[analyze-pdf] Degraded extraction mode:", reasons);
 
-      return NextResponse.json({
+      const degradedPayload = {
         analysis: degradedAnalysis,
-        degraded: true,
+        degraded: true as const,
         warning: `AI extraction coverage low (${reasons.join("; ")}). Returned partial analysis instead of failing request.`,
-      });
+      };
+      if (emitStream) {
+        emitStream({ event: "result", ...degradedPayload });
+        return degradedPayload;
+      }
+      return degradedPayload;
     }
 
     // Assemble full analysis
@@ -1850,7 +1900,54 @@ export async function POST(request: Request) {
       segInput
     );
 
-    return NextResponse.json({ analysis });
+    const successPayload = { analysis, degraded: false as const, warning: undefined as string | undefined };
+    if (emitStream) {
+      emitStream({ event: "result", analysis });
+      return successPayload;
+    }
+    return successPayload;
+  };
+
+  if (wantStream) {
+    const stream = new ReadableStream({
+      async start(controller) {
+        const send = (evt: PdfAnalyzeStreamEvent) => {
+          controller.enqueue(encodePdfAnalyzeSse(evt));
+        };
+        try {
+          await runExtraction(send);
+        } catch (e) {
+          send({
+            event: "error",
+            message: e instanceof Error ? e.message : "OpenAI call failed",
+          });
+        } finally {
+          controller.close();
+        }
+      },
+    });
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+      },
+    });
+  }
+
+  try {
+    const payload = await runExtraction();
+    if ("error" in payload) {
+      return NextResponse.json(payload, { status: 502 });
+    }
+    if (payload.degraded) {
+      return NextResponse.json({
+        analysis: payload.analysis,
+        degraded: true,
+        warning: payload.warning,
+      });
+    }
+    return NextResponse.json({ analysis: payload.analysis });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "OpenAI call failed" },
