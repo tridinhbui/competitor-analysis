@@ -55,6 +55,8 @@ export interface FinancialGridModel {
   colWidths: number[];
   cells: Map<string, FinancialGridCell>;
   sectionRanges: FinancialSectionRange[];
+  /** Annual CF uses side-by-side section bands (scroll horizontally). */
+  preferHorizontalScroll?: boolean;
 }
 
 const STORAGE_PREFIX = "data-source-financial-grid-v1";
@@ -113,6 +115,99 @@ function maxCategoryColumnCount(sections: FilingCategorySection[]): number {
   return Math.max(3, ...sections.map((s) => s.columnHeaders.length));
 }
 
+function sectionPanelWidth(section: FilingCategorySection): number {
+  return Math.max(1, section.columnHeaders.length);
+}
+
+/** Place category tables side-by-side (2 per row) to limit vertical scroll. */
+function appendCategorySectionsHorizontalBands(
+  cells: Map<string, FinancialGridCell>,
+  sectionRanges: FinancialSectionRange[],
+  sections: FilingCategorySection[],
+  startRow: number,
+  panelsPerRow = 2,
+  gapBetweenPanels = 0,
+): { endRow: number; colCount: number } {
+  let r = startRow;
+  let maxColCount = 0;
+
+  for (let bandIndex = 0; bandIndex < sections.length; bandIndex += panelsPerRow) {
+    const panels = sections.slice(bandIndex, bandIndex + panelsPerRow);
+    const bandStartRow = r;
+    const bandColCount = panels.reduce(
+      (sum, panel, index) =>
+        sum + sectionPanelWidth(panel) + (index < panels.length - 1 ? gapBetweenPanels : 0),
+      0,
+    );
+    maxColCount = Math.max(maxColCount, bandColCount);
+
+    const bandMeta: Array<{
+      sectionId?: FinancialShortcutId;
+      startCol: number;
+      endCol: number;
+    }> = [];
+
+    let c = 0;
+    panels.forEach((panel, index) => {
+      const w = sectionPanelWidth(panel);
+      put(cells, r, c, panel.title, "sectionHeader", {
+        colspan: w,
+        sectionId: panel.sectionId as FinancialShortcutId | undefined,
+        readOnly: true,
+      });
+      bandMeta.push({
+        sectionId: panel.sectionId as FinancialShortcutId | undefined,
+        startCol: c,
+        endCol: c + w - 1,
+      });
+      c += w;
+      if (index < panels.length - 1) c += gapBetweenPanels;
+    });
+    r += 1;
+
+    c = 0;
+    panels.forEach((panel, index) => {
+      const w = sectionPanelWidth(panel);
+      panel.columnHeaders.forEach((header, colIndex) => {
+        put(cells, r, c + colIndex, header, "tableHeader", { readOnly: true });
+      });
+      c += w;
+      if (index < panels.length - 1) c += gapBetweenPanels;
+    });
+    r += 1;
+
+    const maxDataRows = Math.max(1, ...panels.map((panel) => panel.rows.length));
+    for (let rowIndex = 0; rowIndex < maxDataRows; rowIndex += 1) {
+      c = 0;
+      panels.forEach((panel, index) => {
+        const w = sectionPanelWidth(panel);
+        const metricRow = panel.rows[rowIndex];
+        if (metricRow) {
+          filingMetricRowToCells(metricRow).forEach((cell, colIndex) => {
+            put(cells, r, c + colIndex, cell, colIndex === 0 ? "text" : "number");
+          });
+        }
+        c += w;
+        if (index < panels.length - 1) c += gapBetweenPanels;
+      });
+      r += 1;
+    }
+
+    for (const meta of bandMeta) {
+      if (!meta.sectionId) continue;
+      sectionRanges.push({
+        sectionId: meta.sectionId,
+        startRow: bandStartRow,
+        endRow: r - 1,
+        startCol: meta.startCol,
+        endCol: meta.endCol,
+      });
+    }
+  }
+
+  return { endRow: r, colCount: maxColCount };
+}
+
 function appendCategorySectionsToGrid(
   cells: Map<string, FinancialGridCell>,
   sectionRanges: FinancialSectionRange[],
@@ -166,97 +261,234 @@ export function buildFinancialGrid(sheetKey: FinancialModelSheetKey, ctx: Financ
   return sheetKey === "underwriting" ? buildUnderwritingGrid(ctx) : buildAnnualCfGrid(ctx);
 }
 
-function buildUnderwritingGrid(ctx: FinancialModelContext): FinancialGridModel {
-  const cells = new Map<string, FinancialGridCell>();
-  const { derived } = ctx;
-  const colCount = Math.max(10, maxCategoryColumnCount(derived.categorySections));
-  const colWidths = Array.from({ length: colCount }, (_, i) =>
-    i === 0 ? 220 : i === 1 ? 56 : 96,
-  );
-  const sectionRanges: FinancialSectionRange[] = [];
+function splitUnderwritingTopColumns(colCount: number): {
+  paramsStart: number;
+  paramsW: number;
+  shortcutsStart: number;
+  shortcutsW: number;
+  metricsStart: number;
+  metricsW: number;
+} {
+  let paramsW = Math.max(3, Math.floor(colCount * 0.3));
+  let shortcutsW = Math.max(3, Math.floor(colCount * 0.34));
+  let metricsW = colCount - paramsW - shortcutsW;
+  if (metricsW < 2) {
+    metricsW = 2;
+    shortcutsW = Math.max(3, Math.floor((colCount - paramsW - metricsW) / 2));
+    metricsW = colCount - paramsW - shortcutsW;
+  }
+  const paramsStart = 0;
+  const shortcutsStart = paramsStart + paramsW;
+  const metricsStart = shortcutsStart + shortcutsW;
+  return { paramsStart, paramsW, shortcutsStart, shortcutsW, metricsStart, metricsW };
+}
+
+function appendUnderwritingTopBand(
+  cells: Map<string, FinancialGridCell>,
+  sectionRanges: FinancialSectionRange[],
+  ctx: FinancialModelContext,
+  derived: FinancialModelContext["derived"],
+  colCount: number,
+  startRow: number,
+): number {
+  const { paramsStart, paramsW, shortcutsStart, shortcutsW, metricsStart, metricsW } =
+    splitUnderwritingTopColumns(colCount);
 
   const yieldOnCost =
     ctx.operatingIncomeM != null && ctx.totalAssetsM != null && ctx.totalAssetsM > 0
       ? `${((ctx.operatingIncomeM / ctx.totalAssetsM) * 100).toFixed(2)}%`
       : "";
 
-  const headerSpan = Math.min(colCount, 8);
-  put(cells, 0, 0, "FILING FINANCIAL EXTRACT — UNDERWRITING", "navyTitle", { colspan: headerSpan, readOnly: true });
-  put(cells, 1, 0, `${ctx.companyName.toUpperCase()} — ${ctx.ticker}`, "navyTitle", { colspan: headerSpan, readOnly: true });
-  put(cells, 2, 0, ctx.subtitle, "navySub", { colspan: headerSpan, readOnly: true });
-  put(cells, 3, 0, derived.sourceLabel, "navySub", { colspan: headerSpan, readOnly: true });
-
-  put(cells, 5, 0, "Project Parameters", "sectionHeader", { colspan: 3, sectionId: "investment-description" });
-  put(cells, 5, 3, "Shortcuts to Sections", "sectionHeader", { colspan: 3, readOnly: true });
-  put(cells, 5, 6, "Key Metrics", "sectionHeader", { colspan: 2, sectionId: "returns" });
-  sectionRanges.push({ sectionId: "investment-description", startRow: 5, endRow: 12, startCol: 0, endCol: 2 });
-  sectionRanges.push({ sectionId: "returns", startRow: 5, endRow: 12, startCol: 6, endCol: 7 });
-
-  derived.projectParams.forEach(({ label, value }, index) => {
-    const r = 6 + index;
-    const wraps = label === "Categories in model" && value.includes("\n");
-    put(cells, r, 0, label, "metricLabel", { readOnly: true });
-    put(cells, r, 1, value, "text", { colspan: 2, wrapText: wraps });
-  });
-
-  FINANCIAL_SHORTCUTS.forEach((shortcut, index) => {
-    const r = 6 + index;
-    put(cells, r, 3, shortcut.label, "shortcutBtn", {
-      colspan: 3,
-      readOnly: true,
-      shortcutTarget: shortcut.target,
-    });
-  });
-
-  const metrics: Array<[string, string]> = [
+  const keyMetrics: Array<[string, string]> = [
     ["Equity Multiple", derived.equityMultipleDisplay || ""],
-    ["Yield on Cost (excl. escalation)", yieldOnCost],
+    ["Yield on Cost", yieldOnCost],
     ["Market Cap Rate", derived.marketCapRateDisplay || ""],
     [
-      "Development Spread",
+      "Dev. Spread",
       yieldOnCost && derived.marketCapRateDisplay
         ? `${(parseFloat(yieldOnCost) - parseFloat(derived.marketCapRateDisplay)).toFixed(2)}%`
         : "",
     ],
-    [`Latest Revenue (${ctx.latestQuarterLabel})`, ctx.revenueM != null ? `$${fmtM(ctx.revenueM)}M` : ""],
-    [`Latest CapEx (TTM / 4Q)`, ctx.capexM != null ? `$${fmtM(Math.abs(ctx.capexM))}M` : ""],
-    ["Latest EBITDA", ctx.ebitdaM != null ? `$${fmtM(ctx.ebitdaM)}M` : ""],
+    [`Revenue (${ctx.latestQuarterLabel})`, ctx.revenueM != null ? `$${fmtM(ctx.revenueM)}M` : ""],
+    [`CapEx`, ctx.capexM != null ? `$${fmtM(Math.abs(ctx.capexM))}M` : ""],
+    ["EBITDA", ctx.ebitdaM != null ? `$${fmtM(ctx.ebitdaM)}M` : ""],
   ];
-  metrics.forEach(([label, value], index) => {
-    const r = 6 + index;
-    put(cells, r, 6, label, "metricLabel", { readOnly: true });
-    put(cells, r, 7, value, "number");
+
+  const bandStart = startRow;
+  put(cells, bandStart, paramsStart, "Project parameters", "sectionHeader", {
+    colspan: paramsW,
+    sectionId: "investment-description",
+    readOnly: true,
+  });
+  put(cells, bandStart, shortcutsStart, "Shortcuts to sections", "sectionHeader", {
+    colspan: shortcutsW,
+    readOnly: true,
+  });
+  put(cells, bandStart, metricsStart, "Key metrics", "sectionHeader", {
+    colspan: metricsW,
+    sectionId: "returns",
+    readOnly: true,
   });
 
-  const endRow = appendCategorySectionsToGrid(
+  const maxRows = Math.max(
+    derived.projectParams.length,
+    FINANCIAL_SHORTCUTS.length,
+    keyMetrics.length,
+  );
+
+  for (let index = 0; index < maxRows; index += 1) {
+    const r = bandStart + 1 + index;
+
+    const param = derived.projectParams[index];
+    if (param) {
+      const wraps = param.label === "Categories in model" && param.value.includes("\n");
+      put(cells, r, paramsStart, param.label, "metricLabel", { readOnly: true });
+      put(cells, r, paramsStart + 1, param.value, "text", {
+        colspan: Math.max(1, paramsW - 1),
+        wrapText: wraps,
+      });
+    }
+
+    const shortcut = FINANCIAL_SHORTCUTS[index];
+    if (shortcut) {
+      put(cells, r, shortcutsStart, shortcut.label, "shortcutBtn", {
+        colspan: shortcutsW,
+        readOnly: true,
+        shortcutTarget: shortcut.target,
+      });
+    }
+
+    const metric = keyMetrics[index];
+    if (metric) {
+      const [label, value] = metric;
+      if (metricsW >= 2) {
+        put(cells, r, metricsStart, label, "metricLabel", { readOnly: true });
+        put(cells, r, metricsStart + 1, value, "number", { colspan: metricsW - 1 });
+      } else {
+        put(cells, r, metricsStart, `${label}: ${value}`, "number", { colspan: metricsW });
+      }
+    }
+  }
+
+  const bandEnd = bandStart + maxRows;
+  sectionRanges.push({
+    sectionId: "investment-description",
+    startRow: bandStart,
+    endRow: bandEnd,
+    startCol: paramsStart,
+    endCol: paramsStart + paramsW - 1,
+  });
+  sectionRanges.push({
+    sectionId: "returns",
+    startRow: bandStart,
+    endRow: bandEnd,
+    startCol: metricsStart,
+    endCol: metricsStart + metricsW - 1,
+  });
+
+  return bandEnd + 1;
+}
+
+function buildUnderwritingGrid(ctx: FinancialModelContext): FinancialGridModel {
+  const cells = new Map<string, FinancialGridCell>();
+  const { derived } = ctx;
+  const topColCount = (() => {
+    const { paramsW, shortcutsW, metricsW } = splitUnderwritingTopColumns(10);
+    return paramsW + shortcutsW + metricsW;
+  })();
+  const dataColCount = maxCategoryColumnCount(derived.categorySections);
+  const colCount = Math.max(topColCount, dataColCount, 10);
+  const colWidths = Array.from({ length: colCount }, (_, i) =>
+    i === 0 ? 168 : i < 3 ? 88 : 96,
+  );
+  const sectionRanges: FinancialSectionRange[] = [];
+  const fullSpan = colCount;
+
+  put(cells, 0, 0, "FILING FINANCIAL EXTRACT — UNDERWRITING", "navyTitle", { colspan: fullSpan, readOnly: true });
+  put(cells, 1, 0, `${ctx.companyName.toUpperCase()} — ${ctx.ticker}`, "navyTitle", { colspan: fullSpan, readOnly: true });
+  put(cells, 2, 0, derived.sourceLabel, "navySub", { colspan: fullSpan, readOnly: true, wrapText: true });
+
+  const dataStartRow = appendUnderwritingTopBand(cells, sectionRanges, ctx, derived, colCount, 4);
+
+  const { endRow, colCount: bandColCount } = appendCategorySectionsHorizontalBands(
     cells,
     sectionRanges,
     derived.categorySections,
-    14,
-    colCount,
+    dataStartRow,
+    2,
   );
-  const rowCount = Math.max(48, endRow + 4);
+  const resolvedColCount = Math.max(colCount, bandColCount);
+  const rowCount = Math.max(28, endRow + 2);
 
-  return { sheetKey: "underwriting", rowCount, colCount, colWidths, cells, sectionRanges };
+  put(cells, 0, 0, "FILING FINANCIAL EXTRACT — UNDERWRITING", "navyTitle", {
+    colspan: resolvedColCount,
+    readOnly: true,
+  });
+  put(cells, 1, 0, `${ctx.companyName.toUpperCase()} — ${ctx.ticker}`, "navyTitle", {
+    colspan: resolvedColCount,
+    readOnly: true,
+  });
+  put(cells, 2, 0, derived.sourceLabel, "navySub", { colspan: resolvedColCount, readOnly: true, wrapText: true });
+
+  return {
+    sheetKey: "underwriting",
+    rowCount,
+    colCount: resolvedColCount,
+    colWidths: Array.from({ length: resolvedColCount }, (_, i) =>
+      i === 0 ? 168 : i < 3 ? 88 : 96,
+    ),
+    cells,
+    sectionRanges,
+    preferHorizontalScroll: true,
+  };
 }
 
 function buildAnnualCfGrid(ctx: FinancialModelContext): FinancialGridModel {
   const cells = new Map<string, FinancialGridCell>();
   const { derived } = ctx;
-  const colCount = Math.max(10, maxCategoryColumnCount(derived.categorySections));
-  const colWidths = Array.from({ length: colCount }, (_, i) => (i === 0 ? 240 : i === 1 ? 56 : 96));
   const sectionRanges: FinancialSectionRange[] = [];
 
-  put(cells, 0, 0, `${ctx.companyName.toUpperCase()} — FILING METRICS BY PERIOD`, "navyTitle", {
-    colspan: colCount,
+  const shortcutTargets = FINANCIAL_SHORTCUTS.filter((s) => s.target.sheet === "annualCf");
+  const shortcutGap = 1;
+  let shortcutCol = 0;
+  for (const shortcut of shortcutTargets) {
+    put(cells, 2, shortcutCol, shortcut.label, "shortcutBtn", {
+      colspan: 2,
+      readOnly: true,
+      shortcutTarget: shortcut.target,
+    });
+    shortcutCol += 2 + shortcutGap;
+  }
+
+  const { endRow, colCount } = appendCategorySectionsHorizontalBands(
+    cells,
+    sectionRanges,
+    derived.categorySections,
+    3,
+    2,
+    1,
+  );
+  const resolvedColCount = Math.max(12, colCount);
+  const colWidths = Array.from({ length: resolvedColCount }, (_, i) =>
+    i === 0 ? 200 : 92,
+  );
+  const rowCount = Math.max(18, endRow + 1);
+
+  put(cells, 0, 0, `${ctx.companyName.toUpperCase()} — ANNUAL CASH FLOW`, "navyTitle", {
+    colspan: resolvedColCount,
     readOnly: true,
   });
-  put(cells, 1, 0, derived.sourceLabel, "navySub", { colspan: colCount, readOnly: true });
+  put(cells, 1, 0, derived.sourceLabel, "navySub", { colspan: resolvedColCount, readOnly: true });
 
-  const endRow = appendCategorySectionsToGrid(cells, sectionRanges, derived.categorySections, 3, colCount);
-  const rowCount = Math.max(42, endRow + 4);
-
-  return { sheetKey: "annualCf", rowCount, colCount, colWidths, cells, sectionRanges };
+  return {
+    sheetKey: "annualCf",
+    rowCount,
+    colCount: resolvedColCount,
+    colWidths,
+    cells,
+    sectionRanges,
+    preferHorizontalScroll: true,
+  };
 }
 
 export function columnIndexToLetter(index: number): string {

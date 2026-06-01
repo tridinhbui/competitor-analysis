@@ -124,6 +124,76 @@ export function buildFinancialModelContext(
   };
 }
 
+function writeCategorySectionsHorizontal(
+  ws: XLSX.WorkSheet,
+  startRow: number,
+  sections: FilingCategorySection[],
+  styles: {
+    headerStyle: XLSX.CellObject["s"];
+    bodyStyle: XLSX.CellObject["s"];
+    numStyle: XLSX.CellObject["s"];
+    sectionStyle: XLSX.CellObject["s"];
+  },
+  panelsPerRow = 2,
+  gapBetweenPanels = 0,
+): { endRow: number; colCount: number } {
+  let r = startRow;
+  let maxColCount = 0;
+  const { headerStyle, bodyStyle, numStyle, sectionStyle } = styles;
+
+  const panelWidth = (section: FilingCategorySection) => Math.max(1, section.columnHeaders.length);
+
+  for (let bandIndex = 0; bandIndex < sections.length; bandIndex += panelsPerRow) {
+    const panels = sections.slice(bandIndex, bandIndex + panelsPerRow);
+    const bandColCount = panels.reduce(
+      (sum, panel, index) =>
+        sum + panelWidth(panel) + (index < panels.length - 1 ? gapBetweenPanels : 0),
+      0,
+    );
+    maxColCount = Math.max(maxColCount, bandColCount);
+
+    let c = 0;
+    panels.forEach((panel, index) => {
+      const w = panelWidth(panel);
+      setCell(ws, r, c, panel.title, sectionStyle);
+      merge(ws, r, c, r, c + w - 1);
+      c += w;
+      if (index < panels.length - 1) c += gapBetweenPanels;
+    });
+    r += 1;
+
+    c = 0;
+    panels.forEach((panel, index) => {
+      const w = panelWidth(panel);
+      panel.columnHeaders.forEach((header, colIndex) => {
+        setCell(ws, r, c + colIndex, header, headerStyle);
+      });
+      c += w;
+      if (index < panels.length - 1) c += gapBetweenPanels;
+    });
+    r += 1;
+
+    const maxDataRows = Math.max(1, ...panels.map((panel) => panel.rows.length));
+    for (let rowIndex = 0; rowIndex < maxDataRows; rowIndex += 1) {
+      c = 0;
+      panels.forEach((panel, index) => {
+        const w = panelWidth(panel);
+        const metricRow = panel.rows[rowIndex];
+        if (metricRow) {
+          filingMetricRowToCells(metricRow).forEach((cell, colIndex) => {
+            setCell(ws, r, c + colIndex, cell, colIndex === 0 ? bodyStyle : numStyle);
+          });
+        }
+        c += w;
+        if (index < panels.length - 1) c += gapBetweenPanels;
+      });
+      r += 1;
+    }
+  }
+
+  return { endRow: r, colCount: maxColCount };
+}
+
 function writeCategorySections(
   ws: XLSX.WorkSheet,
   startRow: number,
@@ -168,43 +238,60 @@ function getRowNumber(row: DataSourceRow, field: keyof DataSourceRow): number | 
 
 export function buildUnderwritingWorksheet(ctx: FinancialModelContext): XLSX.WorkSheet {
   const ws: XLSX.WorkSheet = {};
+  const { derived } = ctx;
   const titleStyle = styleCell(NAVY, { bold: true, color: WHITE, sz: 14 });
   const subtitleStyle = styleCell(NAVY, { bold: true, color: WHITE, sz: 11 });
-  const labelStyle = styleCell(LIGHT_BLUE, { bold: true, color: NAVY_DARK });
+  const navySubStyle = styleCell(NAVY, { color: WHITE, sz: 10 }, { wrapText: true, vertical: "top" });
   const headerStyle = styleCell(BLUE_HEADER, { bold: true, color: WHITE });
   const sectionStyle = styleCell(BLUE_HEADER, { bold: true, color: WHITE, sz: 11 });
   const bodyStyle = styleCell(WHITE, undefined, { horizontal: "left" }, true);
   const numStyle = styleCell(WHITE, undefined, { horizontal: "right" }, true);
   const metricLabelStyle = styleCell(undefined, { bold: true, color: NAVY_DARK });
+  const shortcutStyle = styleCell("3B82F6", { bold: true, color: WHITE }, { horizontal: "center" });
+  const wrapBodyStyle = styleCell(WHITE, { sz: 9 }, { horizontal: "left", vertical: "top", wrapText: true }, true);
+
+  const dataColCount = Math.max(
+    3,
+    ...derived.categorySections.map((section) => section.columnHeaders.length),
+  );
+  const colCount = Math.max(10, dataColCount);
+  let paramsW = Math.max(3, Math.floor(colCount * 0.3));
+  let shortcutsW = Math.max(3, Math.floor(colCount * 0.34));
+  let metricsW = colCount - paramsW - shortcutsW;
+  if (metricsW < 2) {
+    metricsW = 2;
+    shortcutsW = Math.max(3, Math.floor((colCount - paramsW - metricsW) / 2));
+    metricsW = colCount - paramsW - shortcutsW;
+  }
+  const paramsStart = 0;
+  const shortcutsStart = paramsStart + paramsW;
+  const metricsStart = shortcutsStart + shortcutsW;
 
   setCell(ws, 0, 0, "FILING FINANCIAL EXTRACT — UNDERWRITING", titleStyle);
-  merge(ws, 0, 0, 0, 7);
+  merge(ws, 0, 0, 0, colCount - 1);
   setCell(ws, 1, 0, `${ctx.companyName.toUpperCase()} — ${ctx.ticker}`, subtitleStyle);
-  merge(ws, 1, 0, 1, 7);
-  setCell(ws, 2, 0, ctx.subtitle, styleCell(NAVY, { color: WHITE, sz: 10 }));
-  merge(ws, 2, 0, 2, 7);
-  setCell(ws, 3, 0, ctx.derived.sourceLabel, styleCell(NAVY, { color: WHITE, sz: 9 }));
-  merge(ws, 3, 0, 3, 7);
+  merge(ws, 1, 0, 1, colCount - 1);
+  setCell(ws, 2, 0, derived.sourceLabel, navySubStyle);
+  merge(ws, 2, 0, 2, colCount - 1);
 
-  const { derived } = ctx;
-  let r = 5;
-  setCell(ws, r, 0, "Project Parameters", sectionStyle);
-  merge(ws, r, 0, r, 2);
-  r += 1;
-  const wrapBodyStyle = styleCell(WHITE, { sz: 9 }, { horizontal: "left", vertical: "top", wrapText: true }, true);
-  for (const { label, value } of derived.projectParams) {
-    setCell(ws, r, 0, label, metricLabelStyle);
-    setCell(ws, r, 1, value, label === "Categories in model" ? wrapBodyStyle : bodyStyle);
-    merge(ws, r, 1, r, 2);
-    if (label === "Categories in model" && value.includes("\n")) {
-      if (!ws["!rows"]) ws["!rows"] = [];
-      ws["!rows"][r] = { hpt: Math.max(48, value.split("\n").length * 14) };
-    }
-    r += 1;
-  }
-
-  setCell(ws, 5, 3, "Shortcuts to Sections", sectionStyle);
-  merge(ws, 5, 3, 5, 5);
+  const yieldOnCost =
+    ctx.operatingIncomeM != null && ctx.totalAssetsM != null && ctx.totalAssetsM > 0
+      ? `${((ctx.operatingIncomeM / ctx.totalAssetsM) * 100).toFixed(2)}%`
+      : "—";
+  const keyMetrics: Array<[string, string]> = [
+    ["Equity Multiple", derived.equityMultipleDisplay || "—"],
+    ["Yield on Cost", yieldOnCost],
+    ["Market Cap Rate", derived.marketCapRateDisplay || "—"],
+    [
+      "Dev. Spread",
+      yieldOnCost && derived.marketCapRateDisplay
+        ? `${(parseFloat(yieldOnCost) - parseFloat(derived.marketCapRateDisplay)).toFixed(2)}%`
+        : "—",
+    ],
+    [`Revenue (${ctx.latestQuarterLabel})`, ctx.revenueM != null ? `$${fmtM(ctx.revenueM)}M` : "—"],
+    [`CapEx`, ctx.capexM != null ? `$${fmtM(Math.abs(ctx.capexM))}M` : "—"],
+    ["EBITDA", ctx.ebitdaM != null ? `$${fmtM(ctx.ebitdaM)}M` : "—"],
+  ];
   const shortcuts = [
     "Investment Description",
     "Investment Cash Flow",
@@ -212,46 +299,68 @@ export function buildUnderwritingWorksheet(ctx: FinancialModelContext): XLSX.Wor
     "Reversion Cash Flow",
     "Returns",
   ];
-  shortcuts.forEach((label, index) => {
-    setCell(ws, 6 + index, 3, label, styleCell("3B82F6", { bold: true, color: WHITE }, { horizontal: "center" }));
-    merge(ws, 6 + index, 3, 6 + index, 5);
-  });
 
-  setCell(ws, 5, 6, "Key Metrics", sectionStyle);
-  merge(ws, 5, 6, 5, 7);
-  const yieldOnCost =
-    ctx.operatingIncomeM != null && ctx.totalAssetsM != null && ctx.totalAssetsM > 0
-      ? `${((ctx.operatingIncomeM / ctx.totalAssetsM) * 100).toFixed(2)}%`
-      : "—";
-  const metrics: Array<[string, string]> = [
-    ["Equity Multiple", derived.equityMultipleDisplay || "—"],
-    ["Yield on Cost (excl. escalation)", yieldOnCost],
-    ["Market Cap Rate", derived.marketCapRateDisplay || "—"],
-    [
-      "Development Spread",
-      yieldOnCost && derived.marketCapRateDisplay
-        ? `${(parseFloat(yieldOnCost) - parseFloat(derived.marketCapRateDisplay)).toFixed(2)}%`
-        : "—",
-    ],
-    [`Latest Revenue (${ctx.latestQuarterLabel})`, ctx.revenueM != null ? `$${fmtM(ctx.revenueM)}M` : "—"],
-    [`Latest CapEx (TTM / 4Q, $M)`, ctx.capexM != null ? `$${fmtM(Math.abs(ctx.capexM))}M` : "—"],
-    ["Latest EBITDA", ctx.ebitdaM != null ? `$${fmtM(ctx.ebitdaM)}M` : "—"],
-  ];
-  metrics.forEach(([label, value], index) => {
-    setCell(ws, 6 + index, 6, label, metricLabelStyle);
-    setCell(ws, 6 + index, 7, value, numStyle);
-  });
+  let r = 4;
+  setCell(ws, r, paramsStart, "Project parameters", sectionStyle);
+  merge(ws, r, paramsStart, r, paramsStart + paramsW - 1);
+  setCell(ws, r, shortcutsStart, "Shortcuts to sections", sectionStyle);
+  merge(ws, r, shortcutsStart, r, shortcutsStart + shortcutsW - 1);
+  setCell(ws, r, metricsStart, "Key metrics", sectionStyle);
+  merge(ws, r, metricsStart, r, metricsStart + metricsW - 1);
+  r += 1;
 
-  writeCategorySections(ws, 14, derived.categorySections, {
+  const maxBandRows = Math.max(derived.projectParams.length, shortcuts.length, keyMetrics.length);
+  for (let index = 0; index < maxBandRows; index += 1) {
+    const param = derived.projectParams[index];
+    if (param) {
+      setCell(ws, r, paramsStart, param.label, metricLabelStyle);
+      setCell(
+        ws,
+        r,
+        paramsStart + 1,
+        param.value,
+        param.label === "Categories in model" ? wrapBodyStyle : bodyStyle,
+      );
+      if (paramsW > 2) merge(ws, r, paramsStart + 1, r, paramsStart + paramsW - 1);
+    }
+    const shortcut = shortcuts[index];
+    if (shortcut) {
+      setCell(ws, r, shortcutsStart, shortcut, shortcutStyle);
+      merge(ws, r, shortcutsStart, r, shortcutsStart + shortcutsW - 1);
+    }
+    const metric = keyMetrics[index];
+    if (metric) {
+      const [label, value] = metric;
+      if (metricsW >= 2) {
+        setCell(ws, r, metricsStart, label, metricLabelStyle);
+        setCell(ws, r, metricsStart + 1, value, numStyle);
+        if (metricsW > 2) merge(ws, r, metricsStart + 1, r, metricsStart + metricsW - 1);
+      } else {
+        setCell(ws, r, metricsStart, `${label}: ${value}`, numStyle);
+      }
+    }
+    r += 1;
+  }
+
+  const { endRow, colCount: bandCols } = writeCategorySectionsHorizontal(ws, r, derived.categorySections, {
     headerStyle,
     bodyStyle,
     numStyle,
     sectionStyle,
   });
+  const maxCols = Math.max(colCount, bandCols);
 
-  const maxCols = Math.max(3, ...derived.categorySections.map((s) => s.columnHeaders.length));
-  ws["!cols"] = Array.from({ length: maxCols }, (_, i) => ({ wch: i === 0 ? 38 : i === 1 ? 8 : 14 }));
-  ws["!rows"] = [{ hpt: 22 }, { hpt: 18 }, { hpt: 16 }, { hpt: 14 }];
+  setCell(ws, 0, 0, "FILING FINANCIAL EXTRACT — UNDERWRITING", titleStyle);
+  merge(ws, 0, 0, 0, maxCols - 1);
+  setCell(ws, 1, 0, `${ctx.companyName.toUpperCase()} — ${ctx.ticker}`, subtitleStyle);
+  merge(ws, 1, 0, 1, maxCols - 1);
+  setCell(ws, 2, 0, derived.sourceLabel, navySubStyle);
+  merge(ws, 2, 0, 2, maxCols - 1);
+
+  ws["!cols"] = Array.from({ length: maxCols }, (_, i) => ({ wch: i === 0 ? 34 : 12 }));
+  ws["!rows"] = Array.from({ length: endRow + 1 }, (_, i) => ({
+    hpt: i <= 2 ? 20 : 15,
+  }));
 
   return ws;
 }
@@ -263,21 +372,31 @@ export function buildAnnualCfWorksheet(ctx: FinancialModelContext): XLSX.WorkShe
   const sectionStyle = styleCell(BLUE_HEADER, { bold: true, color: WHITE, sz: 10 });
   const bodyStyle = styleCell(WHITE, undefined, { horizontal: "left" }, true);
   const numStyle = styleCell(WHITE, undefined, { horizontal: "right" }, true);
-  const maxCols = Math.max(3, ...ctx.derived.categorySections.map((s) => s.columnHeaders.length));
 
-  setCell(ws, 0, 0, `${ctx.companyName.toUpperCase()} — FILING METRICS BY PERIOD`, titleStyle);
+  const { endRow, colCount } = writeCategorySectionsHorizontal(
+    ws,
+    3,
+    ctx.derived.categorySections,
+    {
+      headerStyle,
+      bodyStyle,
+      numStyle,
+      sectionStyle,
+    },
+    2,
+    1,
+  );
+  const maxCols = Math.max(12, colCount);
+
+  setCell(ws, 0, 0, `${ctx.companyName.toUpperCase()} — ANNUAL CASH FLOW`, titleStyle);
   merge(ws, 0, 0, 0, maxCols - 1);
   setCell(ws, 1, 0, ctx.derived.sourceLabel, styleCell(NAVY, { color: WHITE, sz: 9 }));
   merge(ws, 1, 0, 1, maxCols - 1);
 
-  writeCategorySections(ws, 3, ctx.derived.categorySections, {
-    headerStyle,
-    bodyStyle,
-    numStyle,
-    sectionStyle,
-  });
-
-  ws["!cols"] = Array.from({ length: maxCols }, (_, i) => ({ wch: i === 0 ? 34 : i === 1 ? 8 : 14 }));
+  ws["!cols"] = Array.from({ length: maxCols }, (_, i) => ({ wch: i === 0 ? 34 : 12 }));
+  ws["!rows"] = Array.from({ length: endRow + 1 }, (_, i) => ({
+    hpt: i <= 1 ? 20 : 15,
+  }));
   return ws;
 }
 

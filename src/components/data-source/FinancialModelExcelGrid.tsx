@@ -232,9 +232,20 @@ export function FinancialModelExcelGrid({
         ref={gridRef}
         tabIndex={0}
         onKeyDown={handleGridKeyDown}
-        className="max-h-[58vh] overflow-auto outline-none focus:ring-2 focus:ring-inset focus:ring-[#217346]/15"
+        className={cn(
+          "outline-none focus:ring-2 focus:ring-inset focus:ring-[#217346]/15",
+          model.preferHorizontalScroll
+            ? "max-h-[48vh] overflow-x-auto overflow-y-auto"
+            : "max-h-[58vh] overflow-auto",
+        )}
       >
-        <table className="border-separate border-spacing-0 text-[11px]" style={{ fontFamily: '"Aptos", "Calibri", sans-serif' }}>
+        <table
+          className={cn(
+            "border-separate border-spacing-0",
+            model.preferHorizontalScroll ? "min-w-max text-[10px]" : "text-[11px]",
+          )}
+          style={{ fontFamily: '"Aptos", "Calibri", sans-serif' }}
+        >
           <thead className="sticky top-0 z-20">
             <tr className="bg-[#f3f3f3]">
               <th className="sticky left-0 z-30 w-10 border-b border-r border-[#d6dbe1] bg-[#f3f3f3] px-1 py-1 text-center text-[10px] font-semibold text-slate-500" />
@@ -262,7 +273,12 @@ export function FinancialModelExcelGrid({
                   }
                 }}
               >
-                <th className="sticky left-0 z-10 border-b border-r border-[#d6dbe1] bg-[#f3f3f3] px-1 py-0.5 text-center text-[10px] font-normal text-slate-500">
+                <th
+                  className={cn(
+                    "sticky left-0 z-10 border-b border-r border-[#d6dbe1] bg-[#f3f3f3] px-1 text-center text-[10px] font-normal text-slate-500",
+                    model.preferHorizontalScroll ? "py-0" : "py-0.5",
+                  )}
+                >
                   {r + 1}
                 </th>
                 {Array.from({ length: model.colCount }, (_, c) => {
@@ -348,10 +364,13 @@ export function FinancialModelExcelGrid({
                       ) : (
                         <span
                           className={cn(
-                            "block px-1.5 py-1",
+                            "block px-1.5",
+                            model.preferHorizontalScroll ? "py-0.5" : "py-1",
                             meta?.wrapText || display.includes("\n")
                               ? "whitespace-pre-wrap break-words text-[10px] leading-snug"
-                              : "truncate",
+                              : model.preferHorizontalScroll
+                                ? "whitespace-nowrap"
+                                : "truncate",
                           )}
                         >
                           {display}
