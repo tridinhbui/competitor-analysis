@@ -73,7 +73,7 @@ export function AppShellChrome() {
       <nav className="sticky top-0 z-40 border-b border-border/90 bg-white/90 px-4 py-2.5 text-xs font-semibold backdrop-blur-md sm:px-6">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <Link href={brandHref} className="inline-flex items-center transition hover:opacity-90" aria-label="Smithfield Strategy home">
+            <Link href={brandHref} className="inline-flex items-center transition hover:opacity-90" aria-label="Strategy Hub home">
               <FinbudProLogo variant="nav" />
             </Link>
             {showAppNav && (

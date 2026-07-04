@@ -381,7 +381,7 @@ export function MacroInsightsPanel() {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && doSearch()}
-                  placeholder="e.g. Smithfield pork earnings, hog prices outlook 2025, Tyson Foods guidance..."
+                  placeholder="e.g. pork earnings, hog prices outlook 2025, Tyson Foods guidance..."
                   className="h-9 flex-1 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-900 outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
                 />
                 <button

@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { cn } from "@/lib/utils";
 
 type Variant = "nav" | "modal";
@@ -21,22 +20,12 @@ export function FinbudProLogo({
   return (
     <span
       className={cn(
-        "relative inline-block shrink-0",
-        isNav
-          ? "h-8 w-[148px] sm:h-9 sm:w-[172px]"
-          : "mx-auto h-14 w-[200px]",
+        "inline-flex shrink-0 items-center justify-center rounded-full border border-border/70 bg-white px-3 text-center font-sans font-semibold tracking-[0.16em] text-foreground shadow-sm",
+        isNav ? "h-8 min-w-[132px] text-[11px] sm:h-9 sm:min-w-[148px]" : "mx-auto h-14 min-w-[176px] text-xs",
         className
       )}
     >
-      <Image
-        src="/smithfield-corporate-logo.png"
-        alt="Smithfield"
-        title="Smithfield"
-        fill
-        className={cn("object-contain", isNav ? "object-left" : "object-center")}
-        sizes={isNav ? "(max-width: 640px) 148px, 172px" : "200px"}
-        priority={priority ?? isNav}
-      />
+      <span className="truncate">Strategy Hub</span>
     </span>
   );
 }

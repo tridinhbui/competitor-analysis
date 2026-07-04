@@ -1656,7 +1656,7 @@ export function ComparisonReportContent({
             yAxisDomain={releaseTrendScale.domain}
           />
 
-          <Card title="Presentation Commentary" sub="Market reaction, read-through, and Smithfield relevance">
+          <Card title="Presentation Commentary" sub="Market reaction, read-through, and company relevance">
             {competitorReleaseLoading && !competitorRelease ? (
               <p className="text-sm text-slate-500">Building commentary from live stock context...</p>
             ) : competitorRelease?.commentary.length ? (
@@ -2003,5 +2003,4 @@ export function ComparisonReportContent({
     </div>
   );
 }
-
 

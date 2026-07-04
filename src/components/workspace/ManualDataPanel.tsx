@@ -727,7 +727,7 @@ function SegmentMappingForm({
           <TextInput value={peerTicker} onChange={(v) => setPeerTicker(v.toUpperCase())} placeholder="HRL" />
         </FormField>
         <FormField label="Subject Segment">
-          <TextInput value={subjectSegment} onChange={setSubjectSegment} placeholder="Smithfield Packaged Meats" />
+          <TextInput value={subjectSegment} onChange={setSubjectSegment} placeholder="Packaged Meats" />
         </FormField>
         <FormField label="Peer Segment">
           <TextInput value={peerSegment} onChange={setPeerSegment} placeholder="Retail + Foodservice" />

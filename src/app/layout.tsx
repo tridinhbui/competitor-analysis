@@ -21,8 +21,8 @@ const merriweather = Merriweather({
 });
 
 export const metadata: Metadata = {
-  title: "Smithfield Strategy Hub",
-  description: "Corporate food category insights, planning, and reporting workspace",
+  title: "Strategy Hub",
+  description: "Corporate analysis, planning, and reporting workspace",
 };
 
 export default function RootLayout({
