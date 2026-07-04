@@ -24,6 +24,12 @@ function isItemActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
+function readMetaString(meta: unknown, key: string): string | null {
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return null;
+  const value = (meta as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : null;
+}
+
 export function AppShellChrome() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -33,16 +39,19 @@ export function AppShellChrome() {
   const userMenuRef = useRef<HTMLDivElement>(null);
   const { user, signOut, loading: authLoading } = useAuth();
   const { profile, needsOnboarding } = useProfile();
+  const userMeta = user?.user_metadata;
 
   const displayName =
+    readMetaString(userMeta, "full_name") ||
+    readMetaString(userMeta, "name") ||
     profile?.full_name?.trim() ||
-    (typeof user?.user_metadata?.full_name === "string" ? user.user_metadata.full_name : null) ||
     user?.email?.split("@")[0] ||
     "User";
   const avatarUrl =
+    readMetaString(userMeta, "avatar_url") ||
+    readMetaString(userMeta, "picture") ||
     profile?.avatar_url ||
-    (typeof user?.user_metadata?.avatar_url === "string" ? user.user_metadata.avatar_url : null) ||
-    (typeof user?.user_metadata?.picture === "string" ? user.user_metadata.picture : null);
+    null;
   const showAppNav = Boolean(user) && !authLoading;
   const brandHref = showAppNav ? "/analyze" : "/";
   const pricingHref = "/#pricing";
