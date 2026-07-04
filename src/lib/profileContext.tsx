@@ -47,6 +47,25 @@ function coerceMeta(u: Record<string, unknown> | undefined, key: string): string
   return typeof v === "string" ? v : null;
 }
 
+function buildProfileSeed(user: {
+  id: string;
+  email?: string | null;
+  user_metadata?: Record<string, unknown> | null;
+  app_metadata?: Record<string, unknown> | null;
+}) {
+  const meta = user.user_metadata ?? undefined;
+  const appMeta = user.app_metadata ?? undefined;
+
+  return {
+    id: user.id,
+    email: user.email,
+    full_name: coerceMeta(meta, "full_name") ?? coerceMeta(meta, "name"),
+    avatar_url: coerceMeta(meta, "avatar_url") ?? coerceMeta(meta, "picture"),
+    provider: (typeof appMeta?.provider === "string" ? appMeta.provider : null) ?? "email",
+    updated_at: new Date().toISOString(),
+  };
+}
+
 function normalizeProfile(data: Record<string, unknown>): UserProfile {
   return {
     id: String(data.id ?? ""),
@@ -82,49 +101,26 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    const { data } = await supabase
+    const seed = buildProfileSeed(user);
+
+    const { data: synced, error: syncError } = await supabase
       .from("profiles")
+      .upsert(seed, { onConflict: "id" })
       .select("*")
-      .eq("id", user.id)
       .maybeSingle();
 
-    const meta = user.user_metadata as Record<string, unknown> | undefined;
-    const appMeta = user.app_metadata as Record<string, unknown> | undefined;
-    const seed = {
-      id: user.id,
-      email: user.email ?? null,
-      full_name: coerceMeta(meta, "full_name") ?? coerceMeta(meta, "name"),
-      avatar_url: coerceMeta(meta, "avatar_url") ?? coerceMeta(meta, "picture"),
-      provider: (typeof appMeta?.provider === "string" ? appMeta.provider : null) ?? "email",
-      updated_at: new Date().toISOString(),
-    };
-
-    if (data) {
-      const shouldSyncBasic =
-        data.email !== seed.email ||
-        data.full_name !== seed.full_name ||
-        data.avatar_url !== seed.avatar_url ||
-        data.provider !== seed.provider;
-
-      if (shouldSyncBasic) {
-        const { data: synced } = await supabase
-          .from("profiles")
-          .upsert({ ...data, ...seed }, { onConflict: "id" })
-          .select("*")
-          .maybeSingle();
-        setProfile(synced ? normalizeProfile(synced) : normalizeProfile(data));
-      } else {
-        setProfile(normalizeProfile(data));
-      }
-    } else {
-      // No profile row yet — auto-create from OAuth/email metadata
-      const { data: created } = await supabase
+    if (syncError) {
+      const { data } = await supabase
         .from("profiles")
-        .upsert(seed, { onConflict: "id" })
         .select("*")
+        .eq("id", user.id)
         .maybeSingle();
-      setProfile(created ? normalizeProfile(created) : null);
+      setProfile(data ? normalizeProfile(data) : null);
+      setLoading(false);
+      return;
     }
+
+    setProfile(synced ? normalizeProfile(synced) : null);
     setLoading(false);
   }, [user]);
 
@@ -136,16 +132,12 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     async (updates: Partial<Omit<UserProfile, "id" | "created_at" | "updated_at">>) => {
       if (!user) return "Not authenticated";
 
-      const meta = user.user_metadata as Record<string, unknown> | undefined;
-      const appMeta = user.app_metadata as Record<string, unknown> | undefined;
-
-      const base = {
+      const base = buildProfileSeed({
         id: user.id,
         email: user.email ?? null,
-        full_name: coerceMeta(meta, "full_name") ?? coerceMeta(meta, "name"),
-        avatar_url: coerceMeta(meta, "avatar_url") ?? coerceMeta(meta, "picture"),
-        provider: (typeof appMeta?.provider === "string" ? appMeta.provider : null) ?? "email",
-      };
+        user_metadata: user.user_metadata as Record<string, unknown> | null | undefined,
+        app_metadata: user.app_metadata as Record<string, unknown> | null | undefined,
+      });
 
       const payload = {
         ...base,
