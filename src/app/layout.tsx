@@ -21,7 +21,7 @@ const merriweather = Merriweather({
 });
 
 export const metadata: Metadata = {
-  title: "Strategy Hub",
+  title: "Competitor Analysis",
   description: "Corporate analysis, planning, and reporting workspace",
 };
 

@@ -25,7 +25,7 @@ export function FinbudProLogo({
         className
       )}
     >
-      <span className="truncate">Strategy Hub</span>
+      <span className="truncate">Competitor Analysis</span>
     </span>
   );
 }
