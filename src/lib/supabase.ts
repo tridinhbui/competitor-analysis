@@ -1,8 +1,15 @@
 import { createClient, isAuthApiError } from "@supabase/supabase-js";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const supabaseProjectRef = new URL(supabaseUrl).hostname.split(".")[0];
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || null;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() || null;
+
+function createMissingSupabaseClient(): never {
+  throw new Error(
+    "Supabase environment variables are missing. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY."
+  );
+}
+
+const supabaseProjectRef = supabaseUrl ? new URL(supabaseUrl).hostname.split(".")[0] : "supabase";
 
 export const SUPABASE_AUTH_STORAGE_KEY = `sb-${supabaseProjectRef}-auth-token`;
 
@@ -41,9 +48,19 @@ export function recoverSupabaseSession(error: unknown): boolean {
   return true;
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: {
-    detectSessionInUrl: false,
-    flowType: "pkce",
-  },
-});
+export const supabase =
+  supabaseUrl && supabaseAnonKey
+    ? createClient(supabaseUrl, supabaseAnonKey, {
+        auth: {
+          detectSessionInUrl: false,
+          flowType: "pkce",
+        },
+      })
+    : new Proxy(
+        {},
+        {
+          get() {
+            return createMissingSupabaseClient;
+          },
+        }
+      ) as ReturnType<typeof createClient>;

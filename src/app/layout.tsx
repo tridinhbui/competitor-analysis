@@ -1,24 +1,9 @@
 import type { Metadata } from "next";
-import { Merriweather, Montserrat } from "next/font/google";
 import { AppShellChrome } from "@/components/layout/AppShellChrome";
 import { TokenTrackerFab } from "@/components/layout/TokenTrackerFab";
 import { AuthProvider } from "@/lib/authContext";
 import { ProfileProvider } from "@/lib/profileContext";
 import "./globals.css";
-
-const montserrat = Montserrat({
-  subsets: ["latin"],
-  weight: ["600", "700", "800", "900"],
-  variable: "--font-heading",
-  display: "swap",
-});
-
-const merriweather = Merriweather({
-  subsets: ["latin"],
-  weight: ["400", "700"],
-  variable: "--font-body",
-  display: "swap",
-});
 
 export const metadata: Metadata = {
   title: "Competitor Analysis",
@@ -33,7 +18,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`light ${montserrat.variable} ${merriweather.variable}`}
+      className="light"
       style={{ colorScheme: "light" }}
       suppressHydrationWarning
     >
