@@ -64,7 +64,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (active) {
         setLoading(false);
       } else {
-        unsubscribe();
+        unsubscribe?.();
       }
     }
 
