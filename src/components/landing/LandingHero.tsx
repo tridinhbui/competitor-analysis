@@ -19,7 +19,7 @@ export function LandingHero({ onTryDemo }: LandingHeroProps) {
           className="inline-flex items-center gap-2 rounded-full border border-border bg-white px-3 py-1 text-[11px] font-semibold text-muted-foreground shadow-subtle backdrop-blur-sm"
         >
           <Sparkles className="h-3.5 w-3.5 text-primary" aria-hidden />
-          Investor relations | Competitive analysis | Strategic FP&amp;A
+          IR | Peer analysis | FP&amp;A
         </motion.div>
         <motion.h1
           initial={{ opacity: 0, y: 10 }}
@@ -27,8 +27,8 @@ export function LandingHero({ onTryDemo }: LandingHeroProps) {
           transition={{ delay: 0.05, duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
           className="mt-5 text-balance font-black tracking-tight text-foreground lg:leading-[1.02]"
         >
-          The CEO and CFO workspace for <span className="brand-keyword">earnings prep</span>, investor dialogue, and
-          peer strategy
+          One workspace for <span className="brand-keyword">earnings prep</span>, peer checks, and board-ready
+          updates
         </motion.h1>
         <motion.p
           initial={{ opacity: 0, y: 10 }}
@@ -36,8 +36,7 @@ export function LandingHero({ onTryDemo }: LandingHeroProps) {
           transition={{ delay: 0.1, duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
           className="mx-auto mt-5 max-w-xl text-pretty text-base leading-relaxed text-muted-foreground lg:mx-0"
         >
-          Turn 10-Qs, earnings materials, and competitor filings into one executive-ready workflow for Wall Street
-          analyst prep, investor relations, financial planning and analysis, and strategic finance decision-making.
+          Turn filings, scripts, and peer data into one short workflow for analysis, Q&amp;A, and exports.
         </motion.p>
         <motion.div
           initial={{ opacity: 0, y: 10 }}
@@ -49,7 +48,7 @@ export function LandingHero({ onTryDemo }: LandingHeroProps) {
             href="/analyze"
             className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-[#cc521d] px-7 text-sm font-semibold text-white shadow-elevation transition hover:bg-[#b7491a] focus-visible:ring-4 focus-visible:ring-[#cc521d]/25 focus-visible:outline-none"
           >
-            Open IR workspace
+            Open app
             <ArrowRight className="h-4 w-4" aria-hidden />
           </Link>
           <button
@@ -58,7 +57,7 @@ export function LandingHero({ onTryDemo }: LandingHeroProps) {
             className="inline-flex h-12 items-center justify-center gap-2 rounded-full border border-[#e7c7b7] bg-white px-7 text-sm font-semibold text-foreground shadow-subtle transition hover:border-[#cc521d]/35 hover:bg-[#fff6f1] focus-visible:ring-4 focus-visible:ring-[#cc521d]/15"
           >
             <Play className="h-4 w-4 text-primary" aria-hidden />
-            Watch analyst-prep demo
+            Watch demo
           </button>
         </motion.div>
         <motion.div
@@ -69,11 +68,11 @@ export function LandingHero({ onTryDemo }: LandingHeroProps) {
         >
           <span className="inline-flex items-center gap-1 rounded-full border border-border bg-white px-2.5 py-1">
             <ShieldCheck className="h-3 w-3 text-primary" aria-hidden />
-            CEO/CFO ready
+            Exec ready
           </span>
           <span className="inline-flex items-center gap-1 rounded-full border border-border bg-white px-2.5 py-1">
             <Database className="h-3 w-3 text-primary" aria-hidden />
-            Wall Street Q&amp;A prep
+            Q&amp;A prep
           </span>
         </motion.div>
       </div>
@@ -87,34 +86,34 @@ export function LandingHero({ onTryDemo }: LandingHeroProps) {
         <div className="pointer-events-none absolute -right-12 -top-14 h-44 w-44 rounded-full bg-primary/10 blur-2xl" />
         <div className="pointer-events-none absolute -left-10 bottom-6 h-36 w-36 rounded-full bg-[#f0e7e0] blur-xl" />
 
-        <p className="mb-3 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">IR command center</p>
+        <p className="mb-3 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Workspace preview</p>
         <div className="rounded-2xl border border-border bg-secondary/60 p-3">
           <div className="flex items-center justify-between rounded-xl border border-border bg-white px-3 py-2">
-            <span className="text-xs font-semibold text-muted-foreground">Current focus</span>
+            <span className="text-xs font-semibold text-muted-foreground">Focus</span>
             <motion.span
               initial={{ opacity: 0.4 }}
               animate={{ opacity: [0.4, 1, 0.4] }}
               transition={{ duration: 1.4, repeat: Infinity }}
               className="text-sm font-bold text-foreground"
             >
-              Q2 earnings prep
+              Q2 prep
             </motion.span>
           </div>
           <div className="mt-3 grid grid-cols-2 gap-2">
             <div className="rounded-xl border border-border bg-white p-2.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Peer margin gap</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Margin gap</p>
               <p className="mt-1 text-base font-bold text-foreground">-180 bps</p>
             </div>
             <div className="rounded-xl border border-border bg-white p-2.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Guidance bridge</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Guidance</p>
               <p className="mt-1 text-base font-bold text-primary">Ready</p>
             </div>
             <div className="rounded-xl border border-border bg-white p-2.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Analyst flashpoints</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Open Qs</p>
               <p className="mt-1 text-base font-bold text-foreground">4 open</p>
             </div>
             <div className="rounded-xl border border-border bg-white p-2.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Leverage watch</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Leverage</p>
               <p className="mt-1 text-base font-bold text-primary">2.4x</p>
             </div>
           </div>
@@ -133,14 +132,14 @@ export function LandingHero({ onTryDemo }: LandingHeroProps) {
           transition={{ duration: 5.2, repeat: Infinity, ease: "easeInOut" }}
           className="floating-food absolute right-5 top-16 rounded-2xl border border-border bg-white px-4 py-2 text-xs font-semibold text-foreground"
         >
-          Analyst Q&amp;A
+          Q&amp;A
         </motion.div>
         <motion.div
           animate={{ y: [0, -10, 0] }}
           transition={{ duration: 5.8, repeat: Infinity, ease: "easeInOut", delay: 0.5 }}
           className="floating-food absolute bottom-14 left-6 rounded-2xl border border-border bg-white px-4 py-2 text-xs font-semibold text-foreground"
         >
-          Guidance bridge
+          Guidance
         </motion.div>
         <motion.div
           animate={{ y: [0, -6, 0] }}

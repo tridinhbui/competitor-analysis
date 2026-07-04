@@ -75,12 +75,12 @@ export function AuthModal({ onClose }: AuthModalProps) {
         </div>
 
         <h2 className="pr-8 text-lg font-semibold tracking-tight text-slate-900">
-          {mode === "signin" ? "Sign in to Strategy Hub" : "Create one"}
+          {mode === "signin" ? "Sign in" : "Create account"}
         </h2>
         <p className="mt-1.5 text-sm text-slate-500">
           {mode === "signin"
-            ? "Your history is tied to your account."
-            : "Analyses you run will be saved to your account."}
+            ? "Your history stays with your account."
+            : "Your analyses will be saved."}
         </p>
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-3.5">
@@ -112,7 +112,7 @@ export function AuthModal({ onClose }: AuthModalProps) {
                 />
               </svg>
             )}
-            {loading ? "Connecting to Google..." : "Continue with Google"}
+            {loading ? "Connecting..." : "Continue with Google"}
           </button>
 
           <div className="relative py-0.5 text-center">
@@ -159,7 +159,7 @@ export function AuthModal({ onClose }: AuthModalProps) {
             className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary text-sm font-semibold text-white shadow-sm transition hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-            {loading ? "Please wait..." : mode === "signin" ? "Sign in" : "Create one"}
+            {loading ? "Please wait..." : mode === "signin" ? "Sign in" : "Create account"}
           </button>
         </form>
 

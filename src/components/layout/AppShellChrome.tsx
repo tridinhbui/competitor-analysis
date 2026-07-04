@@ -12,11 +12,12 @@ import { FinbudProLogo } from "@/components/branding/FinbudProLogo";
 
 const NAV_ITEMS = [
   { href: "/analyze", label: "Analyze" },
-  { href: "/data-source", label: "Data" },
-  { href: "/workspace", label: "Workspace" },
+  { href: "/history", label: "History" },
 ] as const;
 
 const MORE_NAV_ITEMS = [
+  { href: "/data-source", label: "Data" },
+  { href: "/workspace", label: "Workspace" },
   { href: "/competitor-dashboard", label: "Competitor Dashboard" },
   { href: "/earnings-analysis", label: "Earnings Scripts" },
   { href: "/excel-analyze", label: "Excel Analysis" },
@@ -87,7 +88,7 @@ export function AppShellChrome() {
       <nav className="sticky top-0 z-40 border-b border-border/90 bg-white/90 px-4 py-2.5 text-xs font-semibold backdrop-blur-md sm:px-6">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <Link href={brandHref} className="inline-flex items-center transition hover:opacity-90" aria-label="Strategy Hub home">
+            <Link href={brandHref} className="inline-flex items-center transition hover:opacity-90" aria-label="Competitor Analysis home">
               <FinbudProLogo variant="nav" />
             </Link>
             {showAppNav && (
@@ -240,7 +241,7 @@ export function AppShellChrome() {
         {mobileOpen && (
           <div className="mt-2 rounded-xl border border-border bg-white p-2 shadow-elevation md:hidden">
             <div className="grid gap-1">
-            {showAppNav &&
+              {showAppNav &&
                 [...NAV_ITEMS, ...MORE_NAV_ITEMS].map((item) => {
                   const active = isItemActive(pathname, item.href);
                   return (

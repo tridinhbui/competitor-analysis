@@ -7,20 +7,20 @@ import { Search, Sparkles, FileOutput } from "lucide-react";
 const steps = [
   {
     id: "01",
-    title: "Load the quarter",
-    body: "Start from a ticker, a 10-Q PDF, or the filing set the CFO office is already working from.",
+    title: "Add a company",
+    body: "Start from a ticker, a PDF, or an existing filing set.",
     icon: Search,
   },
   {
     id: "02",
-    title: "Build the management-ready model",
-    body: "The platform extracts statement lines, computes finance metrics, and organizes them into one workbook.",
+    title: "Run the model",
+    body: "We extract lines, calculate metrics, and build the workbook.",
     icon: Sparkles,
   },
   {
     id: "03",
-    title: "Prepare the external narrative",
-    body: "Review peer gaps, pressure-test guidance, answer analyst questions, and export executive-ready materials.",
+    title: "Share the output",
+    body: "Review gaps, answer questions, and export the final pack.",
     icon: FileOutput,
   },
 ] as const;
@@ -32,7 +32,7 @@ export function HowItWorksSection() {
         <div className="mb-8 text-center">
           <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-primary">How it works</p>
           <h2 id="how-it-works-heading" className="mt-3 text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
-            Three steps. No earnings-week scramble.
+            Three steps. No scramble.
           </h2>
         </div>
         <div className="grid gap-4 md:grid-cols-3">
@@ -59,7 +59,7 @@ export function HowItWorksSection() {
             href="/analyze"
             className="inline-flex rounded-full border border-[#e7c7b7] bg-white px-5 py-2 text-xs font-semibold text-[#8c3a15] shadow-subtle transition hover:border-[#cc521d]/35 hover:bg-[#fff6f1]"
           >
-            Open investor workspace
+            Open app
           </Link>
         </div>
       </div>

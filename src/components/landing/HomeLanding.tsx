@@ -1,16 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ShieldCheck } from "lucide-react";
 import { MarketStrip } from "./MarketStrip";
 import { LandingHero } from "./LandingHero";
 import { DemoDropZone, type DemoRunState } from "./DemoDropZone";
 import { FeatureGrid } from "./FeatureGrid";
-import { ProblemSolutionSection } from "./ProblemSolutionSection";
-import { ProjectIntroCards } from "./ProjectIntroCards";
 import { HowItWorksSection } from "./HowItWorksSection";
-import { PricingSection } from "./PricingSection";
-import { PaymentSection } from "./PaymentSection";
 import { DisclaimerSection } from "./DisclaimerSection";
 import { EXTRACTION_STEPS } from "./ExtractionTimeline";
 
@@ -113,28 +108,11 @@ export function HomeLanding() {
       </section>
 
       <section className="mt-6 border-t border-border/80 pt-6 sm:mt-8 sm:pt-8">
-        <ProblemSolutionSection />
-        <ProjectIntroCards />
         <FeatureGrid />
       </section>
 
       <section className="mt-2 border-t border-border/80 pt-6 sm:mt-4 sm:pt-8">
         <HowItWorksSection />
-        <PricingSection />
-        <PaymentSection />
-
-        <div className="mx-auto max-w-2xl px-4 py-12">
-          <div className="flex items-start gap-3 rounded-2xl border border-border bg-white/90 p-4 text-xs text-muted-foreground shadow-subtle">
-            <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden />
-            <div>
-              <p className="font-semibold text-foreground">Built for executive finance teams</p>
-              <p className="mt-1 leading-relaxed">
-                Designed for CEO, CFO, investor relations, and strategic finance teams that need one shared source of
-                truth before earnings calls, analyst meetings, board reviews, and planning cycles.
-              </p>
-            </div>
-          </div>
-        </div>
         <DisclaimerSection />
       </section>
     </div>
