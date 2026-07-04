@@ -112,7 +112,7 @@ export function AuthModal({ onClose }: AuthModalProps) {
                 />
               </svg>
             )}
-            Continue with Google
+            {loading ? "Connecting to Google..." : "Continue with Google"}
           </button>
 
           <div className="relative py-0.5 text-center">
@@ -159,7 +159,7 @@ export function AuthModal({ onClose }: AuthModalProps) {
             className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary text-sm font-semibold text-white shadow-sm transition hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-            {mode === "signin" ? "Sign in" : "Create one"}
+            {loading ? "Please wait..." : mode === "signin" ? "Sign in" : "Create one"}
           </button>
         </form>
 

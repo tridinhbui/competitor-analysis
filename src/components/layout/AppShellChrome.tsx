@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, X, LogIn, LogOut, User, Settings, ChevronDown, CreditCard } from "lucide-react";
+import { Menu, X, LogIn, LogOut, User, Settings, ChevronDown, CreditCard, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/authContext";
 import { useProfile } from "@/lib/profileContext";
@@ -11,12 +11,15 @@ import { AuthModal } from "@/components/auth/AuthModal";
 import { FinbudProLogo } from "@/components/branding/FinbudProLogo";
 
 const NAV_ITEMS = [
-  { href: "/analyze", label: "Quick Analyze" },
-  { href: "/data-source", label: "Data Source" },
-  { href: "/workspace", label: "Competitor Analysis" },
+  { href: "/analyze", label: "Analyze" },
+  { href: "/data-source", label: "Data" },
+  { href: "/workspace", label: "Workspace" },
+] as const;
+
+const MORE_NAV_ITEMS = [
   { href: "/competitor-dashboard", label: "Competitor Dashboard" },
-  { href: "/earnings-analysis", label: "Earnings Script Analyze" },
-  { href: "/excel-analyze", label: "Excel Analyze" },
+  { href: "/earnings-analysis", label: "Earnings Scripts" },
+  { href: "/excel-analyze", label: "Excel Analysis" },
 ] as const;
 
 function isItemActive(pathname: string, href: string): boolean {
@@ -35,6 +38,7 @@ export function AppShellChrome() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [currentHash, setCurrentHash] = useState("");
   const userMenuRef = useRef<HTMLDivElement>(null);
   const { user, signOut, loading: authLoading } = useAuth();
@@ -62,6 +66,7 @@ export function AppShellChrome() {
     function handleClickOutside(e: MouseEvent) {
       if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
         setUserMenuOpen(false);
+        setMoreMenuOpen(false);
       }
     }
     if (userMenuOpen) {
@@ -104,6 +109,42 @@ export function AppShellChrome() {
                       </Link>
                     );
                   })}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setMoreMenuOpen((v) => !v)}
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-full px-2.5 py-1 transition",
+                        MORE_NAV_ITEMS.some((item) => isItemActive(pathname, item.href))
+                          ? "bg-primary/10 text-primary"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      More
+                      <ChevronDown className={cn("h-3 w-3 transition-transform", moreMenuOpen && "rotate-180")} />
+                    </button>
+                    {moreMenuOpen && (
+                      <div className="absolute left-0 top-full z-50 mt-2 w-48 rounded-xl border border-border bg-white py-1 shadow-lg">
+                        {MORE_NAV_ITEMS.map((item) => {
+                          const active = isItemActive(pathname, item.href);
+                          return (
+                            <Link
+                              key={item.href}
+                              href={item.href}
+                              onClick={() => setMoreMenuOpen(false)}
+                              className={cn(
+                                "flex items-center justify-between px-3 py-2 text-xs font-medium transition hover:bg-secondary",
+                                active ? "bg-primary/10 text-primary" : "text-foreground"
+                              )}
+                            >
+                              <span>{item.label}</span>
+                              <ChevronRight className="h-3 w-3 text-muted-foreground" />
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </>
             )}
@@ -199,8 +240,8 @@ export function AppShellChrome() {
         {mobileOpen && (
           <div className="mt-2 rounded-xl border border-border bg-white p-2 shadow-elevation md:hidden">
             <div className="grid gap-1">
-              {showAppNav &&
-                NAV_ITEMS.map((item) => {
+            {showAppNav &&
+                [...NAV_ITEMS, ...MORE_NAV_ITEMS].map((item) => {
                   const active = isItemActive(pathname, item.href);
                   return (
                     <Link
