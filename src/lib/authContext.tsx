@@ -39,22 +39,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let unsubscribe: (() => void) | null = null;
 
     async function initializeAuth() {
-      const { data, error } = await supabase.auth.getSession();
+      try {
+        const { data, error } = await supabase.auth.getSession();
 
-      if (!active) return;
+        if (!active) return;
 
-      if (error) {
-        recoverSupabaseSession(error);
+        if (error) {
+          recoverSupabaseSession(error);
+          applySession(null);
+        } else {
+          applySession(data.session);
+        }
+
+        const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+          applySession(nextSession);
+        });
+
+        unsubscribe = () => listener.subscription.unsubscribe();
+      } catch {
+        if (!active) return;
         applySession(null);
-      } else {
-        applySession(data.session);
       }
-
-      const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-        applySession(nextSession);
-      });
-
-      unsubscribe = () => listener.subscription.unsubscribe();
 
       if (active) {
         setLoading(false);
