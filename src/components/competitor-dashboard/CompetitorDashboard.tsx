@@ -336,7 +336,7 @@ export function CompetitorDashboard() {
         <div>
           <h1 className="flex items-center gap-2 text-xl font-bold text-slate-900 sm:text-2xl">
             <Radar className="h-5 w-5 text-primary" />
-            Competitor Dashboard
+            Earnings Calendar
           </h1>
           <p className="mt-0.5 text-xs text-slate-500">
             Track top customer earnings dates, queue AlphaSense summaries, and

@@ -932,7 +932,7 @@ function ToolbarButton({
   );
 }
 
-export default function DataSourcePage() {
+export default function DataSourcePage({ embedded = false }: { embedded?: boolean } = {}) {
   const router = useRouter();
   const workbookRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -1137,6 +1137,7 @@ export default function DataSourcePage() {
   );
 
   const updateSelectionUrl = useCallback((companyTicker: string, threadId?: string | null) => {
+    if (embedded) return;
     const params = new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
     params.set("company", companyTicker);
     if (threadId) {
@@ -1145,7 +1146,7 @@ export default function DataSourcePage() {
       params.delete("thread");
     }
     router.replace(`/data-source?${params.toString()}`, { scroll: false });
-  }, [router]);
+  }, [embedded, router]);
 
   const applyNavigatorPayload = useCallback((
     payload: CachedWorkbookPayload,
@@ -1286,7 +1287,7 @@ export default function DataSourcePage() {
 
       if (includeNavigator) {
         if (nextNavigatorSignature !== navigatorSignatureRef.current) {
-          applyNavigatorPayload(payload, { syncUrl: true });
+          applyNavigatorPayload(payload, { syncUrl: !embedded });
         }
       }
 
@@ -1320,6 +1321,7 @@ export default function DataSourcePage() {
     applyWorkbookContentPayload,
     applyNavigatorPayload,
     applyWorkbookPayload,
+    embedded,
     baseRows.length,
     companyOptions.length,
     selectedCompanyTicker,
@@ -1340,7 +1342,7 @@ export default function DataSourcePage() {
     }
 
     applyNavigatorPayload(snapshot.payload, {
-      syncUrl: !requestedCompanyTicker && !requestedThreadId,
+      syncUrl: !embedded && !requestedCompanyTicker && !requestedThreadId,
     });
     applyWorkbookPayload(snapshot.payload, {
       activeSheetOverride: snapshot.viewState.activeSheet,
@@ -1348,7 +1350,7 @@ export default function DataSourcePage() {
     setLoading(false);
     setNavigatorLoading(false);
     setRevalidating(false);
-  }, [applyNavigatorPayload, applyWorkbookPayload]);
+  }, [applyNavigatorPayload, applyWorkbookPayload, embedded]);
 
   const threadsByCompany = useMemo(() => {
     const grouped = new Map<string, ChatThreadSummary[]>();
@@ -2671,7 +2673,7 @@ export default function DataSourcePage() {
 
   return (
     <RequireAuth>
-      <div className="mx-auto max-w-[99vw] px-4 py-6">
+      <div className={embedded ? "w-full px-0 py-0" : "mx-auto max-w-[99vw] px-4 py-6"}>
         {editConfirm && (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
@@ -2723,10 +2725,12 @@ export default function DataSourcePage() {
           </div>
         )}
 
-        <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+        <div className={`mb-4 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between ${embedded ? "pt-2" : ""}`}>
           <div>
-            <h1 className="text-lg font-bold text-slate-900">Centralized Data Source Workbook</h1>
-            <p className="text-xs text-slate-500">
+            <h1 className={`${embedded ? "text-xl" : "text-lg"} font-bold text-slate-900`}>
+              Centralized Data Source Workbook
+            </h1>
+            <p className={`text-xs text-slate-500 ${embedded ? "max-w-3xl" : ""}`}>
               {!threadSchemaReady && selectedCompany
                 ? `${selectedCompany.ticker} company workbook loaded in compatibility mode until the workbook-thread migration is applied.`
                 : `${baseRows.length} records - Financial model tabs (Underwriting, Annual CF) plus quarterly data sheets with formulas, formatting, and persisted overrides.`}
@@ -2901,9 +2905,9 @@ export default function DataSourcePage() {
                     </div>
                   </div>
                 )}
-              <div className="border-b border-[#d6dbe1] bg-[#fbfbfb] p-4">
+              <div className="sticky top-0 z-30 border-b border-[#d6dbe1] bg-white/95 p-5 backdrop-blur">
                 <>
-                <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                <div className="mb-5 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                   <div>
                     <div className="flex items-center gap-2">
                       <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${activeSheetConfig.accentClass}`}>
@@ -2929,12 +2933,12 @@ export default function DataSourcePage() {
                         {editLog.length} saved edit{editLog.length === 1 ? "" : "s"}
                       </span>
                     </div>
-                    <h2 className="mt-3 text-base font-semibold text-slate-900">
+                    <h2 className="mt-3 text-lg font-semibold tracking-tight text-slate-900">
                       {selectedCompany
                         ? `${selectedCompany.companyName} (${selectedCompany.ticker})`
                         : activeSheetConfig.title}
                     </h2>
-                    <p className="mt-1 text-xs text-slate-500">{activeSheetConfig.description}</p>
+                    <p className="mt-1 max-w-4xl text-sm leading-6 text-slate-500">{activeSheetConfig.description}</p>
                   </div>
 
                   {!isFinancialTemplateSheet ? (
@@ -2942,7 +2946,7 @@ export default function DataSourcePage() {
                       <button
                         type="button"
                         onClick={() => toggleEditMode(activeWorkflow)}
-                        className={`inline-flex items-center gap-1 rounded-md border px-3 py-2 text-xs font-semibold transition ${
+                        className={`inline-flex items-center gap-1 rounded-lg border px-3.5 py-2 text-xs font-semibold transition ${
                           editingEnabled[activeWorkflow]
                             ? "border-[#217346]/35 bg-[#217346]/10 text-[#217346]"
                             : "border-[#d0d7de] bg-white text-slate-700 hover:bg-[#f7f7f7]"
@@ -2956,7 +2960,7 @@ export default function DataSourcePage() {
                           if (!ensureEditingEnabled(activeWorkflow)) return;
                           clearSelectionContent();
                         }}
-                        className="inline-flex items-center gap-1 rounded-md border border-[#d0d7de] bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-[#f7f7f7]"
+                        className="inline-flex items-center gap-1 rounded-lg border border-[#d0d7de] bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 transition hover:bg-[#f7f7f7]"
                       >
                         <Eraser className="h-3 w-3" />
                         Clear selected
@@ -2976,8 +2980,8 @@ export default function DataSourcePage() {
                   />
                 ) : (
                   <>
-                <div className="mb-4 rounded-xl border border-[#d6dbe1] bg-[#f3f3f3] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]">
-                  <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+                <div className="mb-5 rounded-2xl border border-[#d6dbe1] bg-[#f3f3f3] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]">
+                  <div className="flex flex-col gap-4 xl:flex-row xl:items-center">
                     <div className="flex flex-wrap items-center gap-2">
                       <ToolbarButton title="Undo" disabled={undoStack.length === 0} onClick={handleUndo}>
                         <Undo2 className="h-4 w-4" />
@@ -3068,7 +3072,7 @@ export default function DataSourcePage() {
                         title={selectionHasMerge ? "Unmerge selection" : "Merge selected cells"}
                         disabled={!canMergeSelection && !selectionHasMerge}
                         onClick={() => (selectionHasMerge ? unmergeSelection() : mergeSelection())}
-                        className="inline-flex h-9 items-center gap-1 rounded-md border border-[#d0d7de] bg-white px-2.5 text-xs font-semibold text-slate-600 transition hover:bg-[#f7f7f7] disabled:cursor-not-allowed disabled:opacity-50"
+                        className="inline-flex h-10 items-center gap-1 rounded-lg border border-[#d0d7de] bg-white px-3 text-xs font-semibold text-slate-600 transition hover:bg-[#f7f7f7] disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {selectionHasMerge ? "Unmerge" : "Merge"}
                       </button>
@@ -3080,7 +3084,7 @@ export default function DataSourcePage() {
                         <select
                           value={selectedStyle?.fontFamily ?? "Calibri"}
                           onChange={(event) => applyStylePatch({ fontFamily: event.target.value })}
-                          className="h-9 rounded-md border border-[#d0d7de] bg-white px-2 text-xs outline-none focus:ring-1 focus:ring-[#217346]/30"
+                        className="h-10 rounded-lg border border-[#d0d7de] bg-white px-2 text-xs outline-none focus:ring-1 focus:ring-[#217346]/30"
                           style={{ fontFamily: selectedStyle?.fontFamily ?? "Calibri" }}
                         >
                           {["Arial", "Calibri", "Times New Roman", "Courier New", "Georgia", "Verdana"].map((family) => (
@@ -3095,7 +3099,7 @@ export default function DataSourcePage() {
                         <select
                           value={selectedStyle?.fontSize ?? 12}
                           onChange={(event) => applyStylePatch({ fontSize: Number(event.target.value) })}
-                          className="h-9 rounded-md border border-[#d0d7de] bg-white px-2 text-xs outline-none focus:ring-1 focus:ring-[#217346]/30"
+                          className="h-10 rounded-lg border border-[#d0d7de] bg-white px-2 text-xs outline-none focus:ring-1 focus:ring-[#217346]/30"
                         >
                           {[8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48].map((size) => (
                             <option key={size} value={size}>
@@ -3113,7 +3117,7 @@ export default function DataSourcePage() {
                               numberFormat: event.target.value as "auto" | DataSourceWorkbookNumberFormat,
                             })
                           }
-                          className="h-9 rounded-md border border-[#d0d7de] bg-white px-2 text-xs outline-none focus:ring-1 focus:ring-[#217346]/30"
+                          className="h-10 rounded-lg border border-[#d0d7de] bg-white px-2 text-xs outline-none focus:ring-1 focus:ring-[#217346]/30"
                         >
                           {NUMBER_FORMAT_OPTIONS.map((option) => (
                             <option key={option.value} value={option.value}>
@@ -3128,7 +3132,7 @@ export default function DataSourcePage() {
                           type="color"
                           value={selectedStyle?.textColor ?? "#0f172a"}
                           onChange={(event) => applyStylePatch({ textColor: event.target.value })}
-                          className="h-9 w-9 cursor-pointer rounded-md border border-[#d0d7de] bg-white p-1"
+                          className="h-10 w-10 cursor-pointer rounded-lg border border-[#d0d7de] bg-white p-1"
                         />
                       </label>
                       <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
@@ -3137,14 +3141,14 @@ export default function DataSourcePage() {
                           type="color"
                           value={selectedStyle?.fillColor ?? "#ffffff"}
                           onChange={(event) => applyStylePatch({ fillColor: event.target.value })}
-                          className="h-9 w-9 cursor-pointer rounded-md border border-[#d0d7de] bg-white p-1"
+                          className="h-10 w-10 cursor-pointer rounded-lg border border-[#d0d7de] bg-white p-1"
                         />
                       </label>
                     </div>
                   </div>
 
-                  <div className="mt-3 grid gap-2 xl:grid-cols-[96px_36px_36px_minmax(0,1fr)]">
-                      <div className="flex h-9 items-center rounded-md border border-[#cfd6dd] bg-white px-3 text-xs font-semibold text-slate-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
+                  <div className="mt-4 grid gap-2 xl:grid-cols-[96px_36px_36px_minmax(0,1fr)]">
+                      <div className="flex h-10 items-center rounded-lg border border-[#cfd6dd] bg-white px-3 text-xs font-semibold text-slate-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
                       {normalizedSelection && selectedColumn && selectedRowNumber
                         ? `${columnIndexToLetter(WORKBOOK_COLUMN_INDEX_BY_FIELD.get(selectedColumn.field) ?? normalizedSelection.endCol)}${selectedRowNumber}`
                         : "No cell"}
@@ -3153,7 +3157,7 @@ export default function DataSourcePage() {
                       type="button"
                       onClick={syncFormulaDraftFromSelection}
                       disabled={!selectedRow || !selectedField}
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-[#cfd6dd] bg-white text-slate-500 transition hover:bg-[#f7f7f7] disabled:cursor-not-allowed disabled:opacity-40"
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#cfd6dd] bg-white text-slate-500 transition hover:bg-[#f7f7f7] disabled:cursor-not-allowed disabled:opacity-40"
                       title="Revert formula bar to selected cell value"
                     >
                       <X className="h-3.5 w-3.5" />
@@ -3165,7 +3169,7 @@ export default function DataSourcePage() {
                         void commitCellInput(selectedRow, selectedField, formulaDraft);
                       }}
                       disabled={!selectedRow || !selectedField || !canEditSelectedCell}
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-[#cfd6dd] bg-white text-[#217346] transition hover:bg-[#eef7f1] disabled:cursor-not-allowed disabled:text-slate-300"
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#cfd6dd] bg-white text-[#217346] transition hover:bg-[#eef7f1] disabled:cursor-not-allowed disabled:text-slate-300"
                       title="Apply formula bar value to selected cell"
                     >
                       <span className="text-[10px] font-bold leading-none">OK</span>
@@ -3185,11 +3189,11 @@ export default function DataSourcePage() {
                           }
                         }}
                         disabled={!selectedRow || !selectedField || !canEditSelectedCell}
-                        className="min-w-0 flex-1 bg-transparent px-3 text-sm text-slate-700 outline-none disabled:cursor-not-allowed disabled:text-slate-400"
-                        placeholder="Type a number or formula, e.g. =E2*1.1"
-                      />
-                    </div>
+                      className="min-w-0 flex-1 bg-transparent px-3 text-sm text-slate-700 outline-none disabled:cursor-not-allowed disabled:text-slate-400"
+                      placeholder="Type a number or formula, e.g. =E2*1.1"
+                    />
                   </div>
+                </div>
                   {selectedCellError && (
                     <p className="mt-2 text-xs font-medium text-red-600">{selectedCellError}</p>
                   )}
@@ -3203,10 +3207,10 @@ export default function DataSourcePage() {
                     event.preventDefault();
                     applyPastedText(event.clipboardData.getData("text/plain"));
                   }}
-                  className="max-h-[62vh] overflow-auto border border-[#d6dbe1] bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] outline-none focus:ring-2 focus:ring-[#217346]/20"
+                  className="max-h-[66vh] overflow-auto border border-[#d6dbe1] bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] outline-none focus:ring-2 focus:ring-[#217346]/20"
                 >
                   <table
-                    className="border-separate border-spacing-0 text-[11px]"
+                    className="border-separate border-spacing-0 text-[12px]"
                     style={{ tableLayout: "fixed", width: "100%", minWidth: totalTableWidth }}
                   >
                     <colgroup>
@@ -3217,7 +3221,7 @@ export default function DataSourcePage() {
                     </colgroup>
                     <thead className="sticky top-0 z-20">
                       <tr className="bg-[#f3f3f3] text-[#59636f]">
-                        <th className="sticky left-0 z-30 border-b border-r border-[#d6dbe1] bg-[#f3f3f3] px-2 py-1.5 text-center font-semibold">
+                        <th className="sticky left-0 z-30 border-b border-r border-[#d6dbe1] bg-[#f3f3f3] px-3 py-2 text-center font-semibold">
                           #
                         </th>
                         {visibleColumns.map((column, colIndex) => {
@@ -3238,7 +3242,7 @@ export default function DataSourcePage() {
                                   endCol: colIndex,
                                 });
                               }}
-                              className="cursor-pointer select-none border-b border-r border-[#d6dbe1] bg-[#f3f3f3] px-2 py-1.5 text-center font-semibold hover:bg-[#e9edf1]"
+                              className="cursor-pointer select-none border-b border-r border-[#d6dbe1] bg-[#f3f3f3] px-3 py-2 text-center font-semibold hover:bg-[#e9edf1]"
                             >
                               {columnIndexToLetter(globalIndex)}
                             </th>
@@ -3246,7 +3250,7 @@ export default function DataSourcePage() {
                         })}
                       </tr>
                       <tr className="bg-[#fafafa] text-slate-700">
-                        <th className="sticky left-0 z-30 border-b border-r border-[#d6dbe1] bg-[#f8f8f8] px-2 py-1.5 text-center font-semibold text-slate-500">
+                        <th className="sticky left-0 z-30 border-b border-r border-[#d6dbe1] bg-[#f8f8f8] px-3 py-2 text-center font-semibold text-slate-500">
                           Row
                         </th>
                         {visibleColumns.map((column) => {
@@ -3261,7 +3265,7 @@ export default function DataSourcePage() {
                           return (
                             <th
                               key={column.field}
-                              className={`relative border-b border-r border-[#d6dbe1] bg-[#fafafa] px-2 py-1.5 font-semibold ${
+                              className={`relative border-b border-r border-[#d6dbe1] bg-[#fafafa] px-3 py-2 font-semibold ${
                                 column.align === "right"
                                   ? "text-right"
                                   : column.align === "center"
@@ -3309,7 +3313,7 @@ export default function DataSourcePage() {
                                   endCol: Math.max(visibleColumns.length - 1, 0),
                                 });
                               }}
-                              className="sticky left-0 z-10 cursor-pointer select-none border-b border-r border-[#dfe4ea] bg-[#f8f8f8] px-2 py-1.5 text-center font-semibold text-slate-500 hover:bg-[#eef2f5]"
+                              className="sticky left-0 z-10 cursor-pointer select-none border-b border-r border-[#dfe4ea] bg-[#f8f8f8] px-3 py-2 text-center font-semibold text-slate-500 hover:bg-[#eef2f5]"
                             >
                               {canonicalRowNumber}
                             </td>
@@ -3371,10 +3375,10 @@ export default function DataSourcePage() {
                                       startInlineEdit();
                                     }
                                   }}
-                                  className="cursor-pointer border-b border-r border-[#dfe4ea] bg-white px-0 py-0"
-                                >
+                                className="cursor-pointer border-b border-r border-[#dfe4ea] bg-white px-0 py-0"
+                              >
                                   <div
-                                    className={`relative min-h-[28px] px-2 py-1 ${
+                                    className={`relative min-h-[32px] px-3 py-1.5 ${
                                       column.align === "right"
                                         ? "text-right"
                                         : column.align === "center"
@@ -3473,7 +3477,7 @@ export default function DataSourcePage() {
                                   endCol: Math.max(visibleColumns.length - 1, 0),
                                 });
                               }}
-                              className="sticky left-0 z-10 cursor-pointer select-none border-b border-r border-[#dfe4ea] bg-[#f8f8f8] px-2 py-1.5 text-center font-semibold text-slate-300 hover:bg-[#eef2f5]"
+                              className="sticky left-0 z-10 cursor-pointer select-none border-b border-r border-[#dfe4ea] bg-[#f8f8f8] px-3 py-2 text-center font-semibold text-slate-300 hover:bg-[#eef2f5]"
                             >
                               {rowNumber}
                             </td>
@@ -3513,7 +3517,7 @@ export default function DataSourcePage() {
                                 className="cursor-pointer border-b border-r border-[#dfe4ea] bg-white px-0 py-0"
                               >
                                 <div
-                                  className={`relative min-h-[28px] px-2 py-1 text-slate-300 ${
+                                  className={`relative min-h-[32px] px-3 py-1.5 text-slate-300 ${
                                     column.align === "right"
                                       ? "text-right"
                                       : column.align === "center"
@@ -3694,7 +3698,7 @@ export default function DataSourcePage() {
       </div>
     )}
 
-        <div className="mt-4 space-y-4">
+        <div className={embedded ? "mt-6 space-y-4" : "mt-4 space-y-4"}>
           <AnalysisCalculationsExplainer />
         </div>
       </div>

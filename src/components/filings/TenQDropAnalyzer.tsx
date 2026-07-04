@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import type { FullAnalysis, StepEvent } from "@/types/analysis";
 import { AgentWorkflow } from "./AgentWorkflow";
@@ -106,6 +107,8 @@ async function clearCachedPdfFile(): Promise<void> {
 }
 
 export function TenQDropAnalyzer() {
+  const searchParams = useSearchParams();
+  const restoreHistoryId = searchParams.get("historyId");
   const [phase, setPhase] = useState<Phase>("idle");
   const [events, setEvents] = useState<StepEvent[]>([]);
   const [result, setResult] = useState<FullAnalysis | null>(null);
@@ -126,6 +129,48 @@ export function TenQDropAnalyzer() {
   const aiEnabled = true;
 
   useEffect(() => {
+    if (!restoreHistoryId) return;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        setPhase("analyzing");
+        const res = await fetchWithAuth(`/api/history/${restoreHistoryId}`);
+        if (cancelled) return;
+        if (!res.ok) {
+          setError("Unable to restore this history entry.");
+          setPhase("error");
+          return;
+        }
+
+        const data = (await res.json()) as { analysis?: FullAnalysis; events?: StepEvent[] | null; title?: string };
+        if (!data.analysis) {
+          setError("This history entry has no saved analysis.");
+          setPhase("error");
+          return;
+        }
+
+        setResult(data.analysis);
+        setEvents(Array.isArray(data.events) ? data.events.filter(isStepEventPayload) : []);
+        setError("");
+        setPersistNotice({ kind: "ok", text: "Restored from History. You can continue in Analyze." });
+        setPdfFile(null);
+        setShowPdf(false);
+        setPhase("done");
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Unable to restore this history entry.");
+        setPhase("error");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [restoreHistoryId]);
+
+  useEffect(() => {
+    if (restoreHistoryId) return;
     if (typeof window === "undefined") return;
     void (async () => {
       try {

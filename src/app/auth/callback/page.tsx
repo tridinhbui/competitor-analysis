@@ -4,14 +4,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-
-function getSafeNextPath(rawNext: string | null) {
-  if (!rawNext || !rawNext.startsWith("/") || rawNext.startsWith("//")) {
-    return "/analyze";
-  }
-
-  return rawNext.startsWith("/auth/callback") ? "/analyze" : rawNext;
-}
+import { GOOGLE_OAUTH_NEXT_KEY, getSafeNextPath } from "@/lib/authRedirect";
 
 function AuthCallbackCard({ error, onBackHome }: { error: string | null; onBackHome?: () => void }) {
   return (
@@ -86,7 +79,15 @@ function AuthCallbackContent() {
         }
       }
 
-      router.replace(nextPath);
+      const storedNext =
+        typeof window !== "undefined"
+          ? window.sessionStorage.getItem(GOOGLE_OAUTH_NEXT_KEY)
+          : null;
+      if (storedNext) {
+        window.sessionStorage.removeItem(GOOGLE_OAUTH_NEXT_KEY);
+      }
+
+      router.replace(getSafeNextPath(storedNext ?? nextPath));
       router.refresh();
     }
 

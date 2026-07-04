@@ -1,11 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ShieldCheck } from "lucide-react";
+import { motion } from "framer-motion";
 import { MarketStrip } from "./MarketStrip";
 import { LandingHero } from "./LandingHero";
 import { DemoDropZone, type DemoRunState } from "./DemoDropZone";
 import { FeatureGrid } from "./FeatureGrid";
+import { ProblemSolutionSection } from "./ProblemSolutionSection";
+import { ProjectIntroCards } from "./ProjectIntroCards";
+import { ImpactMetricsSection } from "./ImpactMetricsSection";
+import { WhyNowSection } from "./WhyNowSection";
 import { HowItWorksSection } from "./HowItWorksSection";
+import { PricingSection } from "./PricingSection";
+import { PaymentSection } from "./PaymentSection";
 import { DisclaimerSection } from "./DisclaimerSection";
 import { EXTRACTION_STEPS } from "./ExtractionTimeline";
 
@@ -86,7 +94,20 @@ export function HomeLanding() {
   );
 
   return (
-    <div className="flex min-h-dvh flex-col">
+    <div className="relative flex min-h-dvh flex-col overflow-hidden">
+      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[36rem] bg-[radial-gradient(circle_at_top,rgba(204,82,29,0.14),transparent_56%),linear-gradient(180deg,rgba(255,248,244,0.95),rgba(255,255,255,0.92))]" />
+      <motion.div
+        aria-hidden
+        className="pointer-events-none absolute left-[-12rem] top-24 -z-10 h-72 w-72 rounded-full bg-[#ffd9c8]/40 blur-3xl"
+        animate={{ x: [0, 28, 0], y: [0, -18, 0] }}
+        transition={{ duration: 16, repeat: Infinity, ease: "easeInOut" }}
+      />
+      <motion.div
+        aria-hidden
+        className="pointer-events-none absolute right-[-10rem] top-80 -z-10 h-80 w-80 rounded-full bg-primary/10 blur-3xl"
+        animate={{ x: [0, -24, 0], y: [0, 14, 0] }}
+        transition={{ duration: 18, repeat: Infinity, ease: "easeInOut", delay: 0.8 }}
+      />
       <section>
         <MarketStrip />
         <LandingHero onTryDemo={scrollToDemoAndRun} />
@@ -108,11 +129,30 @@ export function HomeLanding() {
       </section>
 
       <section className="mt-6 border-t border-border/80 pt-6 sm:mt-8 sm:pt-8">
+        <ProblemSolutionSection />
+        <ProjectIntroCards />
         <FeatureGrid />
+        <ImpactMetricsSection />
       </section>
 
       <section className="mt-2 border-t border-border/80 pt-6 sm:mt-4 sm:pt-8">
+        <WhyNowSection />
         <HowItWorksSection />
+        <PricingSection />
+        <PaymentSection />
+
+        <div className="mx-auto max-w-2xl px-4 py-12">
+          <div className="flex items-start gap-3 rounded-2xl border border-border bg-white/90 p-4 text-xs text-muted-foreground shadow-subtle">
+            <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden />
+            <div>
+              <p className="font-semibold text-foreground">Built for executive finance teams</p>
+              <p className="mt-1 leading-relaxed">
+                Designed for CEO, CFO, investor relations, FP&amp;A, and strategy teams that need one shared source of
+                truth before earnings calls, analyst meetings, board reviews, and planning cycles.
+              </p>
+            </div>
+          </div>
+        </div>
         <DisclaimerSection />
       </section>
     </div>

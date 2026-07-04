@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { X, Loader2, Mail, Lock } from "lucide-react";
 import { FinbudProLogo } from "@/components/branding/FinbudProLogo";
 import { useAuth } from "@/lib/authContext";
@@ -13,6 +14,7 @@ interface AuthModalProps {
 type Mode = "signin" | "signup";
 
 export function AuthModal({ onClose }: AuthModalProps) {
+  const router = useRouter();
   const { signIn, signInWithGoogle, signUp } = useAuth();
   const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
@@ -41,6 +43,7 @@ export function AuthModal({ onClose }: AuthModalProps) {
       setMode("signin");
     } else {
       onClose();
+      router.replace("/analyze?tab=extract");
     }
   };
 

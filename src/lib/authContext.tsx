@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { recoverSupabaseSession, supabase } from "./supabase";
+import { getAppOrigin, GOOGLE_OAUTH_NEXT_KEY } from "./authRedirect";
 
 interface AuthContextValue {
   user: User | null;
@@ -82,10 +83,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signInWithGoogle = useCallback(async () => {
-    const redirectTo = new URL("/auth/callback", window.location.origin);
-    const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    const redirectTo = new URL("/auth/callback", getAppOrigin());
+    const nextPath = "/analyze?tab=extract";
 
-    redirectTo.searchParams.set("next", currentPath || "/analyze");
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem(GOOGLE_OAUTH_NEXT_KEY, nextPath);
+    }
 
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",

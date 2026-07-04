@@ -18,15 +18,15 @@ export function ProblemSolutionSection() {
       >
         <p className="inline-flex items-center gap-1 rounded-full bg-accent px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-accent-foreground">
           <FileSearch className="h-3 w-3" aria-hidden />
-          Problem
+          Challenge
         </p>
         <h2 id="problem-solution-heading" className="mt-3 text-xl font-bold text-foreground sm:text-2xl">
-          Too many files slow the quarter down
+          Enterprise finance teams lose speed when the quarter is trapped across too many tools
         </h2>
         <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
-          <li>- Teams rebuild the same quarter from PDFs, decks, and Excel tabs.</li>
-          <li>- Peer checks and tie-outs are manual.</li>
-          <li>- Guidance and leverage are harder to defend.</li>
+          <li>- IR teams are asked to explain the quarter with stale decks, fragmented notes, and manual updates.</li>
+          <li>- FP&amp;A and strategy teams waste time reconciling the same metrics across PDFs, models, and peer sets.</li>
+          <li>- CFO, finance, and investor-facing leaders lose time on tie-outs instead of decisions, messaging, and scenarios.</li>
         </ul>
       </motion.article>
 
@@ -39,23 +39,24 @@ export function ProblemSolutionSection() {
       >
         <p className="inline-flex items-center gap-1 rounded-full bg-primary/12 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-primary">
           <ScanSearch className="h-3 w-3" aria-hidden />
-          Fix
+          Solution
         </p>
         <h3 className="mt-3 text-xl font-bold text-foreground sm:text-2xl">
-          One workspace from filing extraction to board-ready output
+          One workspace that turns filings into a decision-ready operating layer
         </h3>
         <div className="mt-4 grid gap-2 text-sm text-muted-foreground">
           <p className="inline-flex items-start gap-2">
             <BarChart3 className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
-            Keep filing data, metrics, and peers in one workbook.
+            Link filing data, calculations, and peer benchmarks so finance, IR, and strategy stay on the same numbers.
           </p>
           <p className="inline-flex items-start gap-2">
             <MessageSquareText className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
-            Write talking points, follow-ups, and scenarios from the same numbers.
+            Generate board-ready talking points, investor follow-ups, and scenario framing from a single source of
+            truth.
           </p>
           <p className="inline-flex items-start gap-2">
             <FileSpreadsheet className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
-            Export decks and review packs without rebuilding them by hand.
+            Export analyst bridges, peer packs, and CFO review materials without rebuilding them by hand.
           </p>
         </div>
       </motion.article>

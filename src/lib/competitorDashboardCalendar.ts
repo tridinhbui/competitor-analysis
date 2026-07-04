@@ -69,20 +69,20 @@ function buildEventLines(
     "",
     `Notes: ${account.notes}`,
     "",
-    "Source: Competitor Dashboard (estimated dates require IR confirmation).",
+    "Source: Earnings Calendar (estimated dates require IR confirmation).",
   ].join("\n");
 
   return [
     "BEGIN:VEVENT",
     foldLine(
-      `UID:${account.id}-${account.nextReleaseDate}@competitor-dashboard.finbudpro`,
+      `UID:${account.id}-${account.nextReleaseDate}@earnings-calendar.finbudpro`,
     ),
     `DTSTAMP:${stamp}`,
     `DTSTART;VALUE=DATE:${start}`,
     `DTEND;VALUE=DATE:${end}`,
     foldLine(`SUMMARY:${escapeText(summary)}`),
     foldLine(`DESCRIPTION:${escapeText(description)}`),
-    "CATEGORIES:Earnings,Competitor Dashboard",
+    "CATEGORIES:Earnings,Earnings Calendar",
     "TRANSP:TRANSPARENT",
     "END:VEVENT",
   ];
@@ -94,7 +94,7 @@ export function buildEarningsIcs(
   const stamp = utcStamp(new Date());
   const lines: string[] = [
     "BEGIN:VCALENDAR",
-    "PRODID:-//FinBudPro//Competitor Dashboard//EN",
+    "PRODID:-//FinBudPro//Earnings Calendar//EN",
     "VERSION:2.0",
     "METHOD:PUBLISH",
     "CALSCALE:GREGORIAN",

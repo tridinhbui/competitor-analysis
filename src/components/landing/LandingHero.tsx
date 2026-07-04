@@ -9,46 +9,62 @@ interface LandingHeroProps {
 }
 
 export function LandingHero({ onTryDemo }: LandingHeroProps) {
+  const container = {
+    hidden: {},
+    show: {
+      transition: {
+        staggerChildren: 0.09,
+        delayChildren: 0.06,
+      },
+    },
+  } as const;
+
+  const item = {
+    hidden: { opacity: 0, y: 14 },
+    show: { opacity: 1, y: 0 },
+  } as const;
+
   return (
     <section className="mx-auto grid w-full max-w-6xl gap-10 px-4 pt-10 sm:pt-14 lg:grid-cols-[1.12fr_0.88fr] lg:items-center">
-      <div className="text-center lg:text-left">
+      <motion.div
+        variants={container}
+        initial="hidden"
+        animate="show"
+        className="text-center lg:text-left"
+      >
         <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+          variants={item}
+          transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
           className="inline-flex items-center gap-2 rounded-full border border-border bg-white px-3 py-1 text-[11px] font-semibold text-muted-foreground shadow-subtle backdrop-blur-sm"
         >
           <Sparkles className="h-3.5 w-3.5 text-primary" aria-hidden />
-          IR | Peer analysis | FP&amp;A
+          Enterprise finance operating layer
         </motion.div>
         <motion.h1
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.05, duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+          variants={item}
+          transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
           className="mt-5 text-balance font-black tracking-tight text-foreground lg:leading-[1.02]"
         >
-          One workspace for <span className="brand-keyword">earnings prep</span>, peer checks, and board-ready
-          updates
+          One system for <span className="brand-keyword">earnings prep</span>, investor messaging, and peer strategy
         </motion.h1>
         <motion.p
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1, duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+          variants={item}
+          transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
           className="mx-auto mt-5 max-w-xl text-pretty text-base leading-relaxed text-muted-foreground lg:mx-0"
         >
-          Turn filings, scripts, and peer data into one short workflow for analysis, Q&amp;A, and exports.
+          Turn 10-Qs, scripts, and peer data into one operating layer for CFO, IR, FP&amp;A, and strategy teams that
+          need a shared source of truth before the call.
         </motion.p>
         <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.15, duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+          variants={item}
+          transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
           className="mt-8 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center lg:justify-start"
         >
           <Link
             href="/analyze"
             className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-[#cc521d] px-7 text-sm font-semibold text-white shadow-elevation transition hover:bg-[#b7491a] focus-visible:ring-4 focus-visible:ring-[#cc521d]/25 focus-visible:outline-none"
           >
-            Open app
+            Open the workspace
             <ArrowRight className="h-4 w-4" aria-hidden />
           </Link>
           <button
@@ -57,46 +73,53 @@ export function LandingHero({ onTryDemo }: LandingHeroProps) {
             className="inline-flex h-12 items-center justify-center gap-2 rounded-full border border-[#e7c7b7] bg-white px-7 text-sm font-semibold text-foreground shadow-subtle transition hover:border-[#cc521d]/35 hover:bg-[#fff6f1] focus-visible:ring-4 focus-visible:ring-[#cc521d]/15"
           >
             <Play className="h-4 w-4 text-primary" aria-hidden />
-            Watch demo
+            Watch workflow demo
           </button>
         </motion.div>
         <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2, duration: 0.5 }}
+          variants={item}
+          transition={{ duration: 0.5 }}
           className="mt-5 flex flex-wrap items-center justify-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground lg:justify-start"
         >
           <span className="inline-flex items-center gap-1 rounded-full border border-border bg-white px-2.5 py-1">
             <ShieldCheck className="h-3 w-3 text-primary" aria-hidden />
-            Exec ready
+            Shared source of truth
           </span>
           <span className="inline-flex items-center gap-1 rounded-full border border-border bg-white px-2.5 py-1">
             <Database className="h-3 w-3 text-primary" aria-hidden />
-            Q&amp;A prep
+            Board-ready output
           </span>
         </motion.div>
-      </div>
+      </motion.div>
 
       <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.12, duration: 0.6 }}
-        className="relative min-h-[370px] overflow-hidden rounded-3xl border border-border bg-white p-5 shadow-float"
+        initial={{ opacity: 0, y: 18, rotateX: 3 }}
+        animate={{ opacity: 1, y: 0, rotateX: 0 }}
+        transition={{ delay: 0.1, duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+        className="relative min-h-[370px] overflow-hidden rounded-3xl border border-border bg-white p-5 shadow-float [transform-style:preserve-3d]"
       >
-        <div className="pointer-events-none absolute -right-12 -top-14 h-44 w-44 rounded-full bg-primary/10 blur-2xl" />
-        <div className="pointer-events-none absolute -left-10 bottom-6 h-36 w-36 rounded-full bg-[#f0e7e0] blur-xl" />
+        <motion.div
+          animate={{ x: [0, 8, 0], y: [0, -6, 0] }}
+          transition={{ duration: 10, repeat: Infinity, ease: "easeInOut" }}
+          className="pointer-events-none absolute -right-12 -top-14 h-44 w-44 rounded-full bg-primary/10 blur-2xl"
+        />
+        <motion.div
+          animate={{ x: [0, -10, 0], y: [0, 8, 0] }}
+          transition={{ duration: 12, repeat: Infinity, ease: "easeInOut", delay: 0.5 }}
+          className="pointer-events-none absolute -left-10 bottom-6 h-36 w-36 rounded-full bg-[#f0e7e0] blur-xl"
+        />
 
-        <p className="mb-3 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Workspace preview</p>
+        <p className="mb-3 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Operating snapshot</p>
         <div className="rounded-2xl border border-border bg-secondary/60 p-3">
           <div className="flex items-center justify-between rounded-xl border border-border bg-white px-3 py-2">
-            <span className="text-xs font-semibold text-muted-foreground">Focus</span>
+            <span className="text-xs font-semibold text-muted-foreground">Quarter view</span>
             <motion.span
               initial={{ opacity: 0.4 }}
               animate={{ opacity: [0.4, 1, 0.4] }}
               transition={{ duration: 1.4, repeat: Infinity }}
               className="text-sm font-bold text-foreground"
             >
-              Q2 prep
+              Q2 closeout
             </motion.span>
           </div>
           <div className="mt-3 grid grid-cols-2 gap-2">
@@ -109,8 +132,8 @@ export function LandingHero({ onTryDemo }: LandingHeroProps) {
               <p className="mt-1 text-base font-bold text-primary">Ready</p>
             </div>
             <div className="rounded-xl border border-border bg-white p-2.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Open Qs</p>
-              <p className="mt-1 text-base font-bold text-foreground">4 open</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Open questions</p>
+              <p className="mt-1 text-base font-bold text-foreground">4 live</p>
             </div>
             <div className="rounded-xl border border-border bg-white p-2.5">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Leverage</p>
@@ -128,21 +151,21 @@ export function LandingHero({ onTryDemo }: LandingHeroProps) {
         </div>
 
         <motion.div
-          animate={{ y: [0, -8, 0] }}
+          animate={{ y: [0, -8, 0], rotate: [0, 0.6, 0] }}
           transition={{ duration: 5.2, repeat: Infinity, ease: "easeInOut" }}
           className="floating-food absolute right-5 top-16 rounded-2xl border border-border bg-white px-4 py-2 text-xs font-semibold text-foreground"
         >
-          Q&amp;A
+          Q&A
         </motion.div>
         <motion.div
-          animate={{ y: [0, -10, 0] }}
+          animate={{ y: [0, -10, 0], rotate: [0, -0.5, 0] }}
           transition={{ duration: 5.8, repeat: Infinity, ease: "easeInOut", delay: 0.5 }}
           className="floating-food absolute bottom-14 left-6 rounded-2xl border border-border bg-white px-4 py-2 text-xs font-semibold text-foreground"
         >
           Guidance
         </motion.div>
         <motion.div
-          animate={{ y: [0, -6, 0] }}
+          animate={{ y: [0, -6, 0], rotate: [0, 0.4, 0] }}
           transition={{ duration: 4.9, repeat: Infinity, ease: "easeInOut", delay: 0.25 }}
           className="floating-food absolute bottom-5 right-10 rounded-2xl border border-border bg-white px-4 py-2 text-xs font-semibold text-foreground"
         >
