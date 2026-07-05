@@ -17,6 +17,7 @@ import {
   appendFinancialModelSheets,
   buildFinancialModelContext,
   isFinancialModelSheetKey,
+  type FinancialModelSheetKey,
 } from "@/lib/dataSourceFinancialModel";
 import {
   financialGridStorageKey,
@@ -93,6 +94,9 @@ type WorkflowOrigin = "analyze" | "competitor";
 type WorkbookSectionKey =
   | "underwriting"
   | "annualCf"
+  | "credit"
+  | "quality"
+  | "returns"
   | "summary"
   | "segment"
   | "income"
@@ -274,6 +278,30 @@ const FINANCIAL_WORKBOOK_SECTIONS: readonly WorkbookSectionConfig[] = [
     exportFields: [],
     isFinancialTemplate: true,
   },
+  {
+    key: "credit",
+    title: "Credit",
+    description: "Liquidity, leverage, net debt, and coverage model for lender-style review.",
+    accentClass: "border-slate-300 bg-slate-50 text-slate-800",
+    exportFields: [],
+    isFinancialTemplate: true,
+  },
+  {
+    key: "quality",
+    title: "Quality",
+    description: "Quality-of-earnings model focused on margins, cash conversion, capex, and capital return.",
+    accentClass: "border-teal-300 bg-teal-50 text-teal-800",
+    exportFields: [],
+    isFinancialTemplate: true,
+  },
+  {
+    key: "returns",
+    title: "Returns",
+    description: "ROIC, ROE, ROA, turnover, and operating efficiency model.",
+    accentClass: "border-orange-300 bg-orange-50 text-orange-800",
+    exportFields: [],
+    isFinancialTemplate: true,
+  },
 ] as const;
 const DATA_WORKBOOK_SECTIONS: readonly WorkbookSectionConfig[] = [
   {
@@ -283,6 +311,7 @@ const DATA_WORKBOOK_SECTIONS: readonly WorkbookSectionConfig[] = [
     accentClass: "border-emerald-300 bg-emerald-50 text-emerald-700",
     exportFields: [
       "revenue",
+      "costOfRevenue",
       "grossProfit",
       "operatingIncome",
       "netIncome",
@@ -291,6 +320,10 @@ const DATA_WORKBOOK_SECTIONS: readonly WorkbookSectionConfig[] = [
       "totalAssets",
       "totalLiabilities",
       "totalEquity",
+      "netDebt",
+      "netDebtToEbitda",
+      "fcfConversion",
+      "roic",
     ],
   },
   {
@@ -316,18 +349,22 @@ const DATA_WORKBOOK_SECTIONS: readonly WorkbookSectionConfig[] = [
     accentClass: "border-sky-300 bg-sky-50 text-sky-700",
     exportFields: [
       "revenue",
+      "costOfRevenue",
       "grossProfit",
       "operatingIncome",
       "netIncome",
       "grossMargin",
       "operatingMargin",
       "netMargin",
+      "operatingExpenses",
       "sgaExpense",
+      "rdExpense",
       "depreciation",
       "ebit",
       "ebitda",
       "ebitdaMargin",
       "interestExpense",
+      "incomeTax",
       "epsBasic",
       "epsDiluted",
       "shareBasedComp",
@@ -345,11 +382,28 @@ const DATA_WORKBOOK_SECTIONS: readonly WorkbookSectionConfig[] = [
       "totalLiabilities",
       "totalEquity",
       "totalDebt",
+      "shortTermDebt",
+      "longTermDebt",
+      "netDebt",
       "cashAndEquivalents",
+      "currentAssets",
+      "currentLiabilities",
+      "workingCapital",
+      "inventory",
+      "accountsReceivable",
+      "accountsPayable",
       "debtToEquity",
+      "debtToCapital",
+      "netDebtToEbitda",
+      "interestCoverage",
       "currentRatio",
       "roe",
       "roa",
+      "roic",
+      "assetTurnover",
+      "inventoryTurnover",
+      "receivablesTurnover",
+      "workingCapitalRatio",
     ],
     focusField: "totalAssets",
   },
@@ -363,7 +417,11 @@ const DATA_WORKBOOK_SECTIONS: readonly WorkbookSectionConfig[] = [
       "capex",
       "freeCashFlow",
       "fcfMargin",
+      "fcfConversion",
       "dividendsPaid",
+      "shareRepurchases",
+      "investingCashFlow",
+      "financingCashFlow",
       "cashAndEquivalents",
     ],
     focusField: "operatingCashFlow",
@@ -383,6 +441,11 @@ const DATA_WORKBOOK_SECTIONS: readonly WorkbookSectionConfig[] = [
       "adjustedOpPerHead",
       "adjustedOpPerCwt",
       "sgaAsPercent",
+      "fcfConversion",
+      "roic",
+      "netDebtToEbitda",
+      "interestCoverage",
+      "workingCapitalRatio",
     ],
     focusField: "ercAdjustment",
   },
@@ -414,7 +477,7 @@ function isWorkbookSectionKey(value: string): value is WorkbookSectionKey {
 }
 
 function financialGridToEditableWorkbook(
-  sheetKey: "underwriting" | "annualCf",
+  sheetKey: FinancialModelSheetKey,
   sheetName: string,
   context: ReturnType<typeof buildFinancialModelContext>,
 ): EditableWorkbook {

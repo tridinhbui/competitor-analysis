@@ -17,26 +17,51 @@ export interface DataSourceRow {
   savedAt?: string | null;
   // -- Income / P&L --
   revenue: number | null;
+  costOfRevenue: number | null;
   grossProfit: number | null;
+  operatingExpenses: number | null;
+  rdExpense: number | null;
   operatingIncome: number | null;
   netIncome: number | null;
+  incomeTax: number | null;
   // -- Balance Sheet --
   totalAssets: number | null;
   totalLiabilities: number | null;
   totalEquity: number | null;
   totalDebt: number | null;
+  shortTermDebt: number | null;
+  longTermDebt: number | null;
+  netDebt: number | null;
   cashAndEquivalents: number | null;
+  currentAssets: number | null;
+  currentLiabilities: number | null;
+  workingCapital: number | null;
+  inventory: number | null;
+  accountsReceivable: number | null;
+  accountsPayable: number | null;
   // -- Cash Flow --
   operatingCashFlow: number | null;
   capex: number | null;
   freeCashFlow: number | null;
+  shareRepurchases: number | null;
+  investingCashFlow: number | null;
+  financingCashFlow: number | null;
   // -- Margins --
   grossMargin: number | null;
   operatingMargin: number | null;
   netMargin: number | null;
   // -- Ratios --
   debtToEquity: number | null;
+  debtToCapital: number | null;
+  netDebtToEbitda: number | null;
+  interestCoverage: number | null;
   currentRatio: number | null;
+  roic: number | null;
+  assetTurnover: number | null;
+  inventoryTurnover: number | null;
+  receivablesTurnover: number | null;
+  fcfConversion: number | null;
+  workingCapitalRatio: number | null;
   // -- Other --
   sgaExpense: number | null;
   depreciation: number | null;
@@ -104,22 +129,47 @@ export interface MetricColumn {
 
 export const METRIC_COLUMNS: MetricColumn[] = [
   { key: "revenue", label: "Revenue", format: "currency" },
+  { key: "costOfRevenue", label: "Cost of Revenue", format: "currency" },
   { key: "grossProfit", label: "Gross Profit", format: "currency" },
+  { key: "operatingExpenses", label: "Operating Expenses", format: "currency" },
+  { key: "rdExpense", label: "R&D Expense", format: "currency" },
   { key: "operatingIncome", label: "Operating Income", format: "currency" },
   { key: "netIncome", label: "Net Income", format: "currency" },
+  { key: "incomeTax", label: "Income Tax", format: "currency" },
   { key: "totalAssets", label: "Total Assets", format: "currency" },
   { key: "totalLiabilities", label: "Total Liabilities", format: "currency" },
   { key: "totalEquity", label: "Total Equity", format: "currency" },
   { key: "totalDebt", label: "Total Debt", format: "currency" },
+  { key: "shortTermDebt", label: "Short-Term Debt", format: "currency" },
+  { key: "longTermDebt", label: "Long-Term Debt", format: "currency" },
+  { key: "netDebt", label: "Net Debt", format: "currency" },
   { key: "cashAndEquivalents", label: "Cash & Equiv.", format: "currency" },
+  { key: "currentAssets", label: "Current Assets", format: "currency" },
+  { key: "currentLiabilities", label: "Current Liab.", format: "currency" },
+  { key: "workingCapital", label: "Working Capital", format: "currency" },
+  { key: "inventory", label: "Inventory", format: "currency" },
+  { key: "accountsReceivable", label: "A/R", format: "currency" },
+  { key: "accountsPayable", label: "A/P", format: "currency" },
   { key: "operatingCashFlow", label: "Operating CF", format: "currency" },
   { key: "capex", label: "CapEx", format: "currency" },
   { key: "freeCashFlow", label: "Free Cash Flow", format: "currency" },
+  { key: "shareRepurchases", label: "Buybacks", format: "currency" },
+  { key: "investingCashFlow", label: "Investing CF", format: "currency" },
+  { key: "financingCashFlow", label: "Financing CF", format: "currency" },
   { key: "grossMargin", label: "Gross Margin", format: "percent" },
   { key: "operatingMargin", label: "Operating Margin", format: "percent" },
   { key: "netMargin", label: "Net Margin", format: "percent" },
   { key: "debtToEquity", label: "Debt / Equity", format: "ratio" },
+  { key: "debtToCapital", label: "Debt / Capital", format: "percent" },
+  { key: "netDebtToEbitda", label: "Net Debt / EBITDA", format: "ratio" },
+  { key: "interestCoverage", label: "Interest Coverage", format: "ratio" },
   { key: "currentRatio", label: "Current Ratio", format: "ratio" },
+  { key: "roic", label: "ROIC", format: "percent" },
+  { key: "assetTurnover", label: "Asset Turnover", format: "ratio" },
+  { key: "inventoryTurnover", label: "Inventory Turns", format: "ratio" },
+  { key: "receivablesTurnover", label: "A/R Turns", format: "ratio" },
+  { key: "fcfConversion", label: "FCF Conversion", format: "percent" },
+  { key: "workingCapitalRatio", label: "Working Cap. / Revenue", format: "percent" },
   { key: "sgaExpense", label: "SG&A", format: "currency" },
   { key: "depreciation", label: "Depreciation", format: "currency" },
   { key: "ebit", label: "EBIT", format: "currency" },

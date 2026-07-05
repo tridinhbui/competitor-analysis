@@ -12,10 +12,12 @@ import {
   Eraser,
   Italic,
   Percent,
+  Redo2,
   Rows3,
   Scissors,
   Trash2,
   Underline,
+  Undo2,
 } from "lucide-react";
 import { columnIndexToLetter, normalizeCellStyle } from "@/lib/dataSourceWorkbook";
 import {
@@ -43,6 +45,7 @@ const NUMBER_FORMAT_OPTIONS: Array<{ value: "auto" | DataSourceWorkbookNumberFor
   { value: "integer", label: "Integer" },
   { value: "thousands", label: "Thousands" },
 ];
+const HISTORY_LIMIT = 80;
 
 interface SelectionRange {
   startRow: number;
@@ -102,6 +105,16 @@ function buildGridWithDimensions(
   return ensureSheetSize(sheet, minRows, minCols);
 }
 
+function cloneWorkbook(workbook: EditableWorkbook): EditableWorkbook {
+  return {
+    sheets: workbook.sheets.map((sheet) => ({
+      ...sheet,
+      cells: sheet.cells.map((row) => [...row]),
+    })),
+    styles: { ...workbook.styles },
+  };
+}
+
 function ToolbarButton({
   title,
   active = false,
@@ -152,6 +165,8 @@ export function ExcelWorkbookEditor({
   const [zoomLevel, setZoomLevel] = useState(100);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const [rowHeights, setRowHeights] = useState<Record<string, number>>({});
+  const [undoStack, setUndoStack] = useState<EditableWorkbook[]>([]);
+  const [redoStack, setRedoStack] = useState<EditableWorkbook[]>([]);
 
   const safeSheetIndex = clamp(activeSheetIndex, 0, Math.max(workbook.sheets.length - 1, 0));
   const baseSheet = workbook.sheets[safeSheetIndex];
@@ -244,6 +259,40 @@ export function ExcelWorkbookEditor({
     gridRef.current?.focus();
   }
 
+  function commitWorkbookChange(nextWorkbook: EditableWorkbook, recordUndo = true) {
+    if (recordUndo) {
+      setUndoStack((current) => [...current.slice(-(HISTORY_LIMIT - 1)), cloneWorkbook(workbook)]);
+      setRedoStack([]);
+    }
+    onChange(nextWorkbook);
+  }
+
+  function undoWorkbookChange() {
+    setUndoStack((current) => {
+      const previous = current[current.length - 1];
+      if (!previous) return current;
+      setRedoStack((redo) => [...redo.slice(-(HISTORY_LIMIT - 1)), cloneWorkbook(workbook)]);
+      commitWorkbookChange(cloneWorkbook(previous), false);
+      return current.slice(0, -1);
+    });
+    setEditingCell(null);
+    setContextMenu(null);
+    focusGrid();
+  }
+
+  function redoWorkbookChange() {
+    setRedoStack((current) => {
+      const next = current[current.length - 1];
+      if (!next) return current;
+      setUndoStack((undo) => [...undo.slice(-(HISTORY_LIMIT - 1)), cloneWorkbook(workbook)]);
+      commitWorkbookChange(cloneWorkbook(next), false);
+      return current.slice(0, -1);
+    });
+    setEditingCell(null);
+    setContextMenu(null);
+    focusGrid();
+  }
+
   function updateActiveSheet(
     updater: (sheet: EditableWorkbookSheet) => EditableWorkbookSheet,
     nextStyles = workbook.styles,
@@ -252,7 +301,7 @@ export function ExcelWorkbookEditor({
     const nextSheets = workbook.sheets.map((sheet, sheetIndex) =>
       sheetIndex === safeSheetIndex ? nextSheet : sheet
     );
-    onChange({
+    commitWorkbookChange({
       sheets: nextSheets,
       styles: nextStyles,
     });
@@ -283,6 +332,46 @@ export function ExcelWorkbookEditor({
         ...sheet,
         cells: nextCells,
       };
+    });
+  }
+
+  function selectAllCells() {
+    setSelection({
+      startRow: 0,
+      endRow: Math.max(rowCount - 1, 0),
+      startCol: 0,
+      endCol: Math.max(colCount - 1, 0),
+    });
+    setEditingCell(null);
+    setContextMenu(null);
+    focusGrid();
+  }
+
+  function fillDownSelection() {
+    if (normalizedSelection.endRow <= normalizedSelection.startRow) return;
+    updateActiveSheet((sheet) => {
+      const nextCells = buildGridWithDimensions(sheet).cells.map((cellRow) => [...cellRow]);
+      for (let col = normalizedSelection.startCol; col <= normalizedSelection.endCol; col += 1) {
+        const seed = nextCells[normalizedSelection.startRow]?.[col] ?? "";
+        for (let row = normalizedSelection.startRow + 1; row <= normalizedSelection.endRow; row += 1) {
+          nextCells[row][col] = seed;
+        }
+      }
+      return { ...sheet, cells: nextCells };
+    });
+  }
+
+  function fillRightSelection() {
+    if (normalizedSelection.endCol <= normalizedSelection.startCol) return;
+    updateActiveSheet((sheet) => {
+      const nextCells = buildGridWithDimensions(sheet).cells.map((cellRow) => [...cellRow]);
+      for (let row = normalizedSelection.startRow; row <= normalizedSelection.endRow; row += 1) {
+        const seed = nextCells[row]?.[normalizedSelection.startCol] ?? "";
+        for (let col = normalizedSelection.startCol + 1; col <= normalizedSelection.endCol; col += 1) {
+          nextCells[row][col] = seed;
+        }
+      }
+      return { ...sheet, cells: nextCells };
     });
   }
 
@@ -319,7 +408,7 @@ export function ExcelWorkbookEditor({
       }
     }
 
-    onChange({
+    commitWorkbookChange({
       ...workbook,
       styles: nextStyles,
     });
@@ -579,9 +668,40 @@ export function ExcelWorkbookEditor({
   function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
     if (editingCell) return;
 
+    const modifier = event.ctrlKey || event.metaKey;
+    const key = event.key.toLowerCase();
+
+    if (modifier && key === "z") {
+      event.preventDefault();
+      if (event.shiftKey) {
+        redoWorkbookChange();
+      } else {
+        undoWorkbookChange();
+      }
+      return;
+    }
+
+    if (modifier && key === "y") {
+      event.preventDefault();
+      redoWorkbookChange();
+      return;
+    }
+
+    if (modifier && key === "a") {
+      event.preventDefault();
+      selectAllCells();
+      return;
+    }
+
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c") {
       event.preventDefault();
       void copySelection();
+      return;
+    }
+
+    if (modifier && key === "v") {
+      event.preventDefault();
+      void pasteSelection();
       return;
     }
 
@@ -621,6 +741,48 @@ export function ExcelWorkbookEditor({
       return;
     }
 
+    if (modifier && key === "d") {
+      event.preventDefault();
+      fillDownSelection();
+      return;
+    }
+
+    if (modifier && key === "r") {
+      event.preventDefault();
+      fillRightSelection();
+      return;
+    }
+
+    if (modifier && event.shiftKey && event.key === "$") {
+      event.preventDefault();
+      applyStylePatch({ numberFormat: "currency" });
+      return;
+    }
+
+    if (modifier && event.shiftKey && event.key === "%") {
+      event.preventDefault();
+      applyStylePatch({ numberFormat: "percent" });
+      return;
+    }
+
+    if (modifier && (event.key === "+" || event.key === "=")) {
+      event.preventDefault();
+      setZoomLevel((current) => clamp(current + 10, 50, 200));
+      return;
+    }
+
+    if (modifier && event.key === "-") {
+      event.preventDefault();
+      setZoomLevel((current) => clamp(current - 10, 50, 200));
+      return;
+    }
+
+    if (modifier && event.key === "0") {
+      event.preventDefault();
+      setZoomLevel(100);
+      return;
+    }
+
     if (event.key === "ArrowUp") {
       event.preventDefault();
       moveSelection(-1, 0, event.shiftKey);
@@ -641,6 +803,31 @@ export function ExcelWorkbookEditor({
       moveSelection(0, 1, event.shiftKey);
       return;
     }
+    if (event.key === "Tab") {
+      event.preventDefault();
+      moveSelection(0, event.shiftKey ? -1 : 1, false);
+      return;
+    }
+    if (event.key === "Home") {
+      event.preventDefault();
+      setSelection({
+        startRow: modifier ? 0 : activeCell.row,
+        endRow: modifier ? 0 : activeCell.row,
+        startCol: 0,
+        endCol: 0,
+      });
+      return;
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      setSelection({
+        startRow: modifier ? Math.max(rowCount - 1, 0) : activeCell.row,
+        endRow: modifier ? Math.max(rowCount - 1, 0) : activeCell.row,
+        startCol: Math.max(colCount - 1, 0),
+        endCol: Math.max(colCount - 1, 0),
+      });
+      return;
+    }
     if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
       clearSelectedCells();
@@ -649,6 +836,13 @@ export function ExcelWorkbookEditor({
     if (event.key === "Enter") {
       event.preventDefault();
       beginEdit(activeCell.row, activeCell.col);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setEditingCell(null);
+      setContextMenu(null);
+      focusGrid();
       return;
     }
     if (!event.ctrlKey && !event.metaKey && !event.altKey && event.key.length === 1) {
@@ -687,6 +881,20 @@ export function ExcelWorkbookEditor({
       <div className="border-b border-slate-200 bg-slate-50/70 px-4 py-3">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-wrap items-center gap-2">
+            <ToolbarButton
+              title="Undo (Ctrl/Cmd+Z)"
+              active={undoStack.length > 0}
+              onClick={undoWorkbookChange}
+            >
+              <Undo2 className="h-4 w-4" />
+            </ToolbarButton>
+            <ToolbarButton
+              title="Redo (Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z)"
+              active={redoStack.length > 0}
+              onClick={redoWorkbookChange}
+            >
+              <Redo2 className="h-4 w-4" />
+            </ToolbarButton>
             <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
               Font
               <select
@@ -1172,6 +1380,30 @@ export function ExcelWorkbookEditor({
               <Eraser className="h-4 w-4" />
               Clear contents
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                fillDownSelection();
+                setContextMenu(null);
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+            >
+              <Rows3 className="h-4 w-4" />
+              Fill down
+              <span className="ml-auto text-xs text-slate-400">⌘D</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                fillRightSelection();
+                setContextMenu(null);
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+            >
+              <Rows3 className="h-4 w-4 rotate-90" />
+              Fill right
+              <span className="ml-auto text-xs text-slate-400">⌘R</span>
+            </button>
             <div className="my-1 h-px bg-slate-200" />
             <button
               type="button"
@@ -1211,7 +1443,7 @@ export function ExcelWorkbookEditor({
       </div>
 
       <div className="border-t border-slate-200 bg-slate-50/70 px-4 py-3 text-xs text-slate-500">
-        Right click for quick actions. Keyboard: Arrow keys move, Shift+Arrow extends, Enter edits, Ctrl/Cmd+C copies, Ctrl/Cmd+V pastes.
+        Right click for quick actions. Keyboard: Ctrl/Cmd+Z undo, Ctrl/Cmd+Y redo, Ctrl/Cmd+C/V/X copy-paste-cut, Ctrl/Cmd+A select all, Ctrl/Cmd+D/R fill down/right, Tab moves, Ctrl/Cmd +/- zooms.
       </div>
     </div>
   );

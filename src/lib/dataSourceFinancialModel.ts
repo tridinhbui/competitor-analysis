@@ -7,7 +7,7 @@ import {
 } from "@/lib/financialModelFromFiling";
 import type { DataSourceRow } from "@/types/dataSource";
 
-export type FinancialModelSheetKey = "underwriting" | "annualCf";
+export type FinancialModelSheetKey = "underwriting" | "annualCf" | "credit" | "quality" | "returns";
 
 export interface FinancialModelContext {
   companyName: string;
@@ -22,7 +22,30 @@ export interface FinancialModelContext {
   operatingCashFlowM: number | null;
   freeCashFlowM: number | null;
   totalAssetsM: number | null;
+  totalDebtM: number | null;
+  netDebtM: number | null;
+  cashM: number | null;
+  workingCapitalM: number | null;
   ebitdaM: number | null;
+  interestExpenseM: number | null;
+  dividendsPaidM: number | null;
+  shareRepurchasesM: number | null;
+  grossMarginPct: number | null;
+  operatingMarginPct: number | null;
+  ebitdaMarginPct: number | null;
+  netMarginPct: number | null;
+  debtToCapitalPct: number | null;
+  netDebtToEbitda: number | null;
+  interestCoverage: number | null;
+  currentRatio: number | null;
+  fcfConversionPct: number | null;
+  workingCapitalRatioPct: number | null;
+  roicPct: number | null;
+  roePct: number | null;
+  roaPct: number | null;
+  assetTurnover: number | null;
+  inventoryTurnover: number | null;
+  receivablesTurnover: number | null;
   /** Populated from PDF-derived workbook rows (per company). */
   derived: FilingDerivedFinancialModel;
 }
@@ -119,7 +142,30 @@ export function buildFinancialModelContext(
     operatingCashFlowM: pick("operatingCashFlow"),
     freeCashFlowM: pick("freeCashFlow"),
     totalAssetsM: pick("totalAssets"),
+    totalDebtM: pick("totalDebt"),
+    netDebtM: pick("netDebt"),
+    cashM: pick("cashAndEquivalents"),
+    workingCapitalM: pick("workingCapital"),
     ebitdaM: pick("ebitda"),
+    interestExpenseM: pick("interestExpense"),
+    dividendsPaidM: pick("dividendsPaid"),
+    shareRepurchasesM: pick("shareRepurchases"),
+    grossMarginPct: pick("grossMargin"),
+    operatingMarginPct: pick("operatingMargin"),
+    ebitdaMarginPct: pick("ebitdaMargin"),
+    netMarginPct: pick("netMargin"),
+    debtToCapitalPct: pick("debtToCapital"),
+    netDebtToEbitda: pick("netDebtToEbitda"),
+    interestCoverage: pick("interestCoverage"),
+    currentRatio: pick("currentRatio"),
+    fcfConversionPct: pick("fcfConversion"),
+    workingCapitalRatioPct: pick("workingCapitalRatio"),
+    roicPct: pick("roic"),
+    roePct: pick("roe"),
+    roaPct: pick("roa"),
+    assetTurnover: pick("assetTurnover"),
+    inventoryTurnover: pick("inventoryTurnover"),
+    receivablesTurnover: pick("receivablesTurnover"),
     derived,
   };
 }
@@ -411,5 +457,5 @@ export function appendFinancialModelSheets(
 }
 
 export function isFinancialModelSheetKey(key: string): key is FinancialModelSheetKey {
-  return key === "underwriting" || key === "annualCf";
+  return key === "underwriting" || key === "annualCf" || key === "credit" || key === "quality" || key === "returns";
 }

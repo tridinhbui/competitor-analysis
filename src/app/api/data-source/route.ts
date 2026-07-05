@@ -49,17 +49,33 @@ type WorkbookThreadRow = {
 
 const TRACE_TAGS_BY_FIELD: Record<string, string[]> = {
   revenue: ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"],
+  costOfRevenue: ["CostOfGoodsAndServicesSold", "CostOfRevenue", "CostOfGoodsSold", "CostOfSales"],
   grossProfit: ["GrossProfit"],
+  operatingExpenses: ["OperatingExpenses"],
+  rdExpense: ["ResearchAndDevelopmentExpense"],
   operatingIncome: ["OperatingIncomeLoss"],
   netIncome: ["NetIncomeLoss"],
+  incomeTax: ["IncomeTaxExpenseBenefit", "IncomeTaxExpense"],
   totalAssets: ["Assets"],
   totalLiabilities: ["Liabilities"],
   totalEquity: ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
   totalDebt: ["LongTermDebt", "LongTermDebtCurrent", "ShortTermBorrowings", "Debt"],
+  shortTermDebt: ["DebtCurrent", "LongTermDebtCurrent", "ShortTermBorrowings"],
+  longTermDebt: ["LongTermDebtNoncurrent", "LongTermDebt"],
+  netDebt: ["TotalNetDebtSupplemental", "LongTermDebt", "DebtCurrent", "CashAndCashEquivalentsAtCarryingValue"],
   cashAndEquivalents: ["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"],
+  currentAssets: ["AssetsCurrent"],
+  currentLiabilities: ["LiabilitiesCurrent"],
+  workingCapital: ["AssetsCurrent", "LiabilitiesCurrent"],
+  inventory: ["InventoryNet", "Inventory"],
+  accountsReceivable: ["AccountsReceivableNetCurrent", "AccountsReceivableNet"],
+  accountsPayable: ["AccountsPayableCurrent", "AccountsPayable"],
   operatingCashFlow: ["NetCashProvidedByUsedInOperatingActivities", "NetCashProvidedByOperatingActivities"],
   capex: ["PaymentsToAcquirePropertyPlantAndEquipment", "CapitalExpenditures"],
   freeCashFlow: ["NetCashProvidedByUsedInOperatingActivities", "PaymentsToAcquirePropertyPlantAndEquipment"],
+  shareRepurchases: ["PaymentsForRepurchaseOfCommonStock"],
+  investingCashFlow: ["NetCashProvidedByUsedInInvestingActivities", "NetCashProvidedByInvestingActivities"],
+  financingCashFlow: ["NetCashProvidedByUsedInFinancingActivities", "NetCashProvidedByFinancingActivities"],
   sgaExpense: ["SellingGeneralAndAdministrativeExpense"],
   depreciation: ["DepreciationDepletionAndAmortization", "DepreciationAndAmortization", "Depreciation"],
   ebit: ["OperatingIncomeLoss"],
@@ -75,17 +91,31 @@ const NORMALIZED_CALC_BY_FIELD: Record<string, string> = {
   grossProfit: "Gross profit from filing line; if unavailable, revenue minus cost of revenue.",
   totalDebt: "Short-term debt plus long-term debt, normalized to USD millions.",
   freeCashFlow: "Operating cash flow minus capital expenditures.",
+  shareRepurchases: "Cash used for common share repurchases.",
+  investingCashFlow: "Net cash provided by or used in investing activities.",
+  financingCashFlow: "Net cash provided by or used in financing activities.",
   grossMargin: "Gross profit divided by revenue.",
   operatingMargin: "Operating income divided by revenue.",
   netMargin: "Net income divided by revenue.",
   debtToEquity: "Total debt divided by total equity.",
+  debtToCapital: "Total debt divided by total debt plus equity.",
+  netDebt: "Total debt minus cash and equivalents.",
+  netDebtToEbitda: "Net debt divided by EBITDA.",
+  interestCoverage: "EBITDA or operating income divided by interest expense.",
   currentRatio: "Current assets divided by current liabilities when available from extraction.",
+  workingCapital: "Current assets minus current liabilities.",
+  workingCapitalRatio: "Working capital divided by revenue.",
+  inventoryTurnover: "Cost of revenue divided by inventory.",
+  receivablesTurnover: "Revenue divided by accounts receivable.",
+  assetTurnover: "Revenue divided by total assets.",
   ebit: "Operating income used as EBIT proxy unless a direct EBIT line exists.",
   ebitda: "EBIT plus depreciation and amortization.",
   ebitdaMargin: "EBITDA divided by revenue.",
+  roic: "NOPAT divided by invested capital, using filing-derived ROIC when available.",
   roe: "Net income divided by total equity.",
   roa: "Net income divided by total assets.",
   fcfMargin: "Free cash flow divided by revenue.",
+  fcfConversion: "Free cash flow divided by net income.",
   opPerHead: "Operating income divided by heads processed.",
   opPerCwt: "Operating income divided by hundredweight volume.",
   adjustedOperatingIncome: "Operating income adjusted for non-comparable add-backs and removals.",
@@ -368,6 +398,35 @@ function buildAvailableCompanies(rows: DataSourceRow[]) {
     .sort((a, b) => a.ticker.localeCompare(b.ticker));
 }
 
+function findAnalysisItemValue(
+  analysis: FullAnalysis,
+  ...tags: string[]
+): number | null {
+  const items = [
+    ...(analysis.cfItems ?? []),
+    ...(analysis.balanceSheet?.items ?? []),
+    ...(analysis.debtStructure?.items ?? []),
+  ];
+  for (const tag of tags) {
+    const item = items.find((entry) => entry.tag === tag);
+    if (typeof item?.value === "number" && Number.isFinite(item.value)) {
+      return item.value;
+    }
+  }
+  return null;
+}
+
+function roundRatio(value: number | null, digits = 2): number | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+}
+
+function percent(numerator: number | null, denominator: number | null): number | null {
+  if (numerator == null || denominator == null || denominator === 0) return null;
+  return roundRatio((numerator / denominator) * 100, 1);
+}
+
 async function loadWorkbookThreadsNavigator(req: NextRequest): Promise<{
   threads: ChatThreadSummary[];
   schemaReady: boolean;
@@ -518,6 +577,33 @@ async function buildWorkbookResponse({
     const rawSga = overrides.sgaExpense ?? metrics.sgaExpense;
     const rawRevenue = overrides.revenue ?? metrics.revenue;
     const rawOperatingIncome = overrides.operatingIncome ?? metrics.operatingIncome;
+    const costOfRevenue = overrides.costOfRevenue ?? analysis.incomeStatement?.costOfRevenue ?? metrics.costOfRevenue ?? null;
+    const operatingExpenses = overrides.operatingExpenses ?? analysis.incomeStatement?.operatingExpenses ?? null;
+    const rdExpense = overrides.rdExpense ?? analysis.incomeStatement?.rdExpense ?? null;
+    const incomeTax = overrides.incomeTax ?? analysis.incomeStatement?.incomeTax ?? null;
+    const shortTermDebt = overrides.shortTermDebt ?? analysis.debtStructure?.shortTermDebt ?? null;
+    const longTermDebt = overrides.longTermDebt ?? analysis.debtStructure?.longTermDebt ?? null;
+    const netDebt = overrides.netDebt ?? metrics.netDebt ?? analysis.debtStructure?.netDebt ?? null;
+    const currentAssets = overrides.currentAssets ?? findAnalysisItemValue(analysis, "AssetsCurrent");
+    const currentLiabilities = overrides.currentLiabilities ?? findAnalysisItemValue(analysis, "LiabilitiesCurrent");
+    const workingCapital = overrides.workingCapital ?? analysis.ratios?.workingCapital ?? (
+      currentAssets != null && currentLiabilities != null ? roundRatio(currentAssets - currentLiabilities, 2) : null
+    );
+    const inventory = overrides.inventory ?? findAnalysisItemValue(analysis, "InventoryNet", "Inventory");
+    const accountsReceivable = overrides.accountsReceivable ?? findAnalysisItemValue(analysis, "AccountsReceivableNetCurrent", "AccountsReceivableNet");
+    const accountsPayable = overrides.accountsPayable ?? findAnalysisItemValue(analysis, "AccountsPayableCurrent", "AccountsPayable");
+    const shareRepurchases = overrides.shareRepurchases ?? analysis.cashFlow?.shareRepurchases ?? null;
+    const investingCashFlow = overrides.investingCashFlow ?? analysis.cashFlow?.investingCashFlow ?? null;
+    const financingCashFlow = overrides.financingCashFlow ?? analysis.cashFlow?.financingCashFlow ?? null;
+    const debtToCapital = overrides.debtToCapital ?? analysis.ratios?.debtToCapital ?? null;
+    const netDebtToEbitda = overrides.netDebtToEbitda ?? analysis.ratios?.netDebtToEbitda ?? null;
+    const interestCoverage = overrides.interestCoverage ?? metrics.interestCoverage ?? analysis.ratios?.interestCoverage ?? null;
+    const roic = overrides.roic ?? analysis.ratios?.returnOnInvestedCapital ?? null;
+    const assetTurnover = overrides.assetTurnover ?? analysis.ratios?.assetTurnover ?? null;
+    const inventoryTurnover = overrides.inventoryTurnover ?? analysis.ratios?.inventoryTurnover ?? null;
+    const receivablesTurnover = overrides.receivablesTurnover ?? analysis.ratios?.receivablesTurnover ?? null;
+    const fcfConversion = overrides.fcfConversion ?? analysis.ratios?.fcfConversion ?? percent(metrics.freeCashFlow, metrics.netIncome);
+    const workingCapitalRatio = overrides.workingCapitalRatio ?? analysis.ratios?.workingCapitalRatio ?? percent(workingCapital, rawRevenue);
     const volumeHeads = (overrides.volumeHeads ?? null) as number | null;
     const volumeLbs = (overrides.volumeLbs ?? null) as number | null;
     const volumeCwt = (overrides.volumeCwt ?? (volumeLbs != null ? volumeLbs / 100 : null)) as number | null;
@@ -554,22 +640,47 @@ async function buildWorkbookResponse({
     const workflowOrigin = analysis.meta.workflowOrigin === "competitor" ? "competitor" : "analyze";
     const rowMetricTrace = buildMetricTraceMap(analysis, {
       revenue: rawRevenue,
+      costOfRevenue,
       grossProfit: overrides.grossProfit ?? metrics.grossProfit,
+      operatingExpenses,
+      rdExpense,
       operatingIncome: rawOperatingIncome,
       netIncome: overrides.netIncome ?? metrics.netIncome,
+      incomeTax,
       totalAssets: overrides.totalAssets ?? metrics.totalAssets,
       totalLiabilities: overrides.totalLiabilities ?? metrics.totalLiabilities,
       totalEquity: overrides.totalEquity ?? metrics.totalEquity,
       totalDebt: overrides.totalDebt ?? metrics.totalDebt,
+      shortTermDebt,
+      longTermDebt,
+      netDebt,
       cashAndEquivalents: overrides.cashAndEquivalents ?? metrics.cash,
+      currentAssets,
+      currentLiabilities,
+      workingCapital,
+      inventory,
+      accountsReceivable,
+      accountsPayable,
       operatingCashFlow: overrides.operatingCashFlow ?? metrics.operatingCashFlow,
       capex: overrides.capex ?? metrics.capex,
       freeCashFlow: overrides.freeCashFlow ?? metrics.freeCashFlow,
+      shareRepurchases,
+      investingCashFlow,
+      financingCashFlow,
       grossMargin: overrides.grossMargin ?? metrics.grossMargin,
       operatingMargin: overrides.operatingMargin ?? metrics.operatingMargin,
       netMargin: overrides.netMargin ?? metrics.netMargin,
       debtToEquity: overrides.debtToEquity ?? metrics.debtToEquity,
+      debtToCapital,
+      netDebtToEbitda,
+      interestCoverage,
       currentRatio: overrides.currentRatio ?? metrics.currentRatio,
+      roic,
+      assetTurnover,
+      inventoryTurnover,
+      receivablesTurnover,
+      fcfConversion,
+      workingCapitalRatio,
       sgaExpense: rawSga,
       depreciation: overrides.depreciation ?? depItem?.value ?? null,
       ebit: overrides.ebit ?? ebit,
@@ -608,22 +719,47 @@ async function buildWorkbookResponse({
       quarterLabel: metrics.quarterLabel,
       savedAt: typeof filingRow.saved_at === "string" ? filingRow.saved_at : null,
       revenue: rawRevenue,
+      costOfRevenue,
       grossProfit: overrides.grossProfit ?? metrics.grossProfit,
+      operatingExpenses,
+      rdExpense,
       operatingIncome: rawOperatingIncome,
       netIncome: overrides.netIncome ?? metrics.netIncome,
+      incomeTax,
       totalAssets: overrides.totalAssets ?? metrics.totalAssets,
       totalLiabilities: overrides.totalLiabilities ?? metrics.totalLiabilities,
       totalEquity: overrides.totalEquity ?? metrics.totalEquity,
       totalDebt: overrides.totalDebt ?? metrics.totalDebt,
+      shortTermDebt,
+      longTermDebt,
+      netDebt,
       cashAndEquivalents: overrides.cashAndEquivalents ?? metrics.cash,
+      currentAssets,
+      currentLiabilities,
+      workingCapital,
+      inventory,
+      accountsReceivable,
+      accountsPayable,
       operatingCashFlow: overrides.operatingCashFlow ?? metrics.operatingCashFlow,
       capex: overrides.capex ?? metrics.capex,
       freeCashFlow: overrides.freeCashFlow ?? metrics.freeCashFlow,
+      shareRepurchases,
+      investingCashFlow,
+      financingCashFlow,
       grossMargin: overrides.grossMargin ?? metrics.grossMargin,
       operatingMargin: overrides.operatingMargin ?? metrics.operatingMargin,
       netMargin: overrides.netMargin ?? metrics.netMargin,
       debtToEquity: overrides.debtToEquity ?? metrics.debtToEquity,
+      debtToCapital,
+      netDebtToEbitda,
+      interestCoverage,
       currentRatio: overrides.currentRatio ?? metrics.currentRatio,
+      roic,
+      assetTurnover,
+      inventoryTurnover,
+      receivablesTurnover,
+      fcfConversion,
+      workingCapitalRatio,
       sgaExpense: rawSga,
       depreciation: overrides.depreciation ?? depItem?.value ?? null,
       ebit: overrides.ebit ?? ebit,
@@ -692,16 +828,24 @@ async function buildWorkbookResponse({
     };
 
     const revenue = sumN((row) => row.revenue);
+    const costOfRevenue = sumN((row) => row.costOfRevenue);
     const grossProfit = sumN((row) => row.grossProfit);
+    const operatingExpenses = sumN((row) => row.operatingExpenses);
+    const rdExpense = sumN((row) => row.rdExpense);
     const operatingIncome = sumN((row) => row.operatingIncome);
     const netIncome = sumN((row) => row.netIncome);
+    const incomeTax = sumN((row) => row.incomeTax);
     const ebitda = sumN((row) => row.ebitda);
     const operatingCashFlow = sumN((row) => row.operatingCashFlow);
     const freeCashFlow = sumN((row) => row.freeCashFlow);
     const capex = sumN((row) => row.capex);
+    const shareRepurchases = sumN((row) => row.shareRepurchases);
+    const investingCashFlow = sumN((row) => row.investingCashFlow);
+    const financingCashFlow = sumN((row) => row.financingCashFlow);
     const dividendsPaid = sumN((row) => row.dividendsPaid);
     const sgaExpense = sumN((row) => row.sgaExpense);
     const depreciation = sumN((row) => row.depreciation);
+    const interestExpense = sumN((row) => row.interestExpense);
 
     const pctCalc = (numerator: number | null, denominator: number | null) =>
       numerator != null && denominator != null && denominator > 0
@@ -717,28 +861,55 @@ async function buildWorkbookResponse({
       quarterLabel: `TTM (${last4[0].quarterLabel}-${last4[3].quarterLabel})`,
       savedAt: latest.savedAt ?? null,
       revenue,
+      costOfRevenue,
       grossProfit,
+      operatingExpenses,
+      rdExpense,
       operatingIncome,
       netIncome,
+      incomeTax,
       totalAssets: latest.totalAssets,
       totalLiabilities: latest.totalLiabilities,
       totalEquity: latest.totalEquity,
       totalDebt: latest.totalDebt,
+      shortTermDebt: latest.shortTermDebt,
+      longTermDebt: latest.longTermDebt,
+      netDebt: latest.netDebt,
       cashAndEquivalents: latest.cashAndEquivalents,
+      currentAssets: latest.currentAssets,
+      currentLiabilities: latest.currentLiabilities,
+      workingCapital: latest.workingCapital,
+      inventory: latest.inventory,
+      accountsReceivable: latest.accountsReceivable,
+      accountsPayable: latest.accountsPayable,
       operatingCashFlow,
       capex,
       freeCashFlow,
+      shareRepurchases,
+      investingCashFlow,
+      financingCashFlow,
       grossMargin: pctCalc(grossProfit, revenue),
       operatingMargin: pctCalc(operatingIncome, revenue),
       netMargin: pctCalc(netIncome, revenue),
       debtToEquity: latest.debtToEquity,
+      debtToCapital: latest.debtToCapital,
+      netDebtToEbitda: ebitda != null && ebitda !== 0 && latest.netDebt != null ? roundRatio(latest.netDebt / ebitda, 1) : latest.netDebtToEbitda,
+      interestCoverage: interestExpense != null && interestExpense !== 0
+        ? roundRatio((ebitda ?? operatingIncome) != null ? Math.abs((ebitda ?? operatingIncome) as number / interestExpense) : null, 2)
+        : latest.interestCoverage,
       currentRatio: latest.currentRatio,
+      roic: latest.roic,
+      assetTurnover: latest.totalAssets != null && latest.totalAssets > 0 ? roundRatio((revenue ?? 0) / latest.totalAssets, 2) : latest.assetTurnover,
+      inventoryTurnover: latest.inventory != null && latest.inventory > 0 ? roundRatio((costOfRevenue ?? 0) / latest.inventory, 1) : latest.inventoryTurnover,
+      receivablesTurnover: latest.accountsReceivable != null && latest.accountsReceivable > 0 ? roundRatio((revenue ?? 0) / latest.accountsReceivable, 1) : latest.receivablesTurnover,
+      fcfConversion: pctCalc(freeCashFlow, netIncome),
+      workingCapitalRatio: pctCalc(latest.workingCapital, revenue),
       sgaExpense,
       depreciation,
       ebit: operatingIncome,
       ebitda,
       ebitdaMargin: pctCalc(ebitda, revenue),
-      interestExpense: sumN((row) => row.interestExpense),
+      interestExpense,
       epsBasic: null,
       epsDiluted: null,
       shareBasedComp: sumN((row) => row.shareBasedComp),

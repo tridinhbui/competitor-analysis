@@ -84,6 +84,15 @@ export async function POST(request: Request) {
 
     const companyMap = new Map<string, { name: string; peerType: string }>();
     for (const c of companies ?? []) companyMap.set(c.ticker, { name: c.name, peerType: c.peer_type ?? "diversified-protein" });
+    const findItem = (a: FullAnalysis, ...tags: string[]) => {
+      const items = [...(a.cfItems ?? []), ...(a.balanceSheet?.items ?? []), ...(a.debtStructure?.items ?? [])];
+      for (const tag of tags) {
+        const item = items.find((entry) => entry.tag === tag);
+        if (typeof item?.value === "number" && Number.isFinite(item.value)) return item.value;
+      }
+      return null;
+    };
+    const pct = (n: number | null, d: number | null) => n != null && d != null && d !== 0 ? Math.round((n / d) * 1000) / 10 : null;
 
     // Build DataSourceRow-like objects
     const allRows: DataSourceRow[] = [];
@@ -97,16 +106,43 @@ export async function POST(request: Request) {
       const depItem = cfItems.find(i => ["DepreciationDepletionAndAmortization", "DepreciationAndAmortization", "Depreciation"].includes(i.tag));
       const ebit = m.operatingIncome;
       const ebitda = ebit != null && depItem?.value != null ? ebit + Math.abs(depItem.value) : null;
+      const currentAssets = findItem(a, "AssetsCurrent");
+      const currentLiabilities = findItem(a, "LiabilitiesCurrent");
+      const workingCapital = a.ratios?.workingCapital ?? (currentAssets != null && currentLiabilities != null ? currentAssets - currentLiabilities : null);
+      const inventory = findItem(a, "InventoryNet", "Inventory");
+      const accountsReceivable = findItem(a, "AccountsReceivableNetCurrent", "AccountsReceivableNet");
+      const accountsPayable = findItem(a, "AccountsPayableCurrent", "AccountsPayable");
 
       allRows.push({
         id: f.id, workflowOrigin: a.meta.workflowOrigin === "competitor" ? "competitor" : "analyze", ticker: f.ticker, companyName: company?.name ?? f.ticker,
         periodEnd: f.period_end, quarterLabel: m.quarterLabel,
-        revenue: m.revenue, grossProfit: m.grossProfit, operatingIncome: m.operatingIncome,
-        netIncome: m.netIncome, totalAssets: m.totalAssets, totalLiabilities: m.totalLiabilities,
-        totalEquity: m.totalEquity, totalDebt: m.totalDebt, cashAndEquivalents: m.cash,
+        revenue: m.revenue, costOfRevenue: a.incomeStatement?.costOfRevenue ?? m.costOfRevenue,
+        grossProfit: m.grossProfit, operatingExpenses: a.incomeStatement?.operatingExpenses ?? null,
+        rdExpense: a.incomeStatement?.rdExpense ?? null, operatingIncome: m.operatingIncome,
+        netIncome: m.netIncome, incomeTax: a.incomeStatement?.incomeTax ?? null,
+        totalAssets: m.totalAssets, totalLiabilities: m.totalLiabilities,
+        totalEquity: m.totalEquity, totalDebt: m.totalDebt,
+        shortTermDebt: a.debtStructure?.shortTermDebt ?? null,
+        longTermDebt: a.debtStructure?.longTermDebt ?? null,
+        netDebt: m.netDebt ?? a.debtStructure?.netDebt ?? null,
+        cashAndEquivalents: m.cash,
+        currentAssets, currentLiabilities, workingCapital, inventory, accountsReceivable, accountsPayable,
         operatingCashFlow: m.operatingCashFlow, capex: m.capex, freeCashFlow: m.freeCashFlow,
+        shareRepurchases: a.cashFlow?.shareRepurchases ?? null,
+        investingCashFlow: a.cashFlow?.investingCashFlow ?? null,
+        financingCashFlow: a.cashFlow?.financingCashFlow ?? null,
         grossMargin: m.grossMargin, operatingMargin: m.operatingMargin, netMargin: m.netMargin,
-        debtToEquity: m.debtToEquity, currentRatio: m.currentRatio,
+        debtToEquity: m.debtToEquity,
+        debtToCapital: a.ratios?.debtToCapital ?? null,
+        netDebtToEbitda: a.ratios?.netDebtToEbitda ?? null,
+        interestCoverage: m.interestCoverage ?? a.ratios?.interestCoverage ?? null,
+        currentRatio: m.currentRatio,
+        roic: a.ratios?.returnOnInvestedCapital ?? null,
+        assetTurnover: a.ratios?.assetTurnover ?? null,
+        inventoryTurnover: a.ratios?.inventoryTurnover ?? null,
+        receivablesTurnover: a.ratios?.receivablesTurnover ?? null,
+        fcfConversion: a.ratios?.fcfConversion ?? pct(m.freeCashFlow, m.netIncome),
+        workingCapitalRatio: a.ratios?.workingCapitalRatio ?? pct(workingCapital, m.revenue),
         sgaExpense: m.sgaExpense, depreciation: depItem?.value ?? null,
         ebit, ebitda,
         ebitdaMargin: ebitda != null && m.revenue ? parseFloat(((ebitda / m.revenue) * 100).toFixed(1)) : null,

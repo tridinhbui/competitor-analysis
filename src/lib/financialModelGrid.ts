@@ -111,6 +111,18 @@ export const FINANCIAL_SHORTCUTS: Array<{
   { label: "Returns", target: { sheet: "underwriting", sectionId: "returns" } },
 ];
 
+function fmtCurrency(value: number | null): string {
+  return value != null ? `$${fmtM(value)}M` : "";
+}
+
+function fmtPercent(value: number | null): string {
+  return value != null ? `${value.toFixed(1)}%` : "";
+}
+
+function fmtRatio(value: number | null): string {
+  return value != null ? `${value.toFixed(2)}x` : "";
+}
+
 function maxCategoryColumnCount(sections: FilingCategorySection[]): number {
   return Math.max(3, ...sections.map((s) => s.columnHeaders.length));
 }
@@ -258,7 +270,11 @@ function appendCategorySectionsToGrid(
 }
 
 export function buildFinancialGrid(sheetKey: FinancialModelSheetKey, ctx: FinancialModelContext): FinancialGridModel {
-  return sheetKey === "underwriting" ? buildUnderwritingGrid(ctx) : buildAnnualCfGrid(ctx);
+  if (sheetKey === "underwriting") return buildUnderwritingGrid(ctx);
+  if (sheetKey === "annualCf") return buildAnnualCfGrid(ctx);
+  if (sheetKey === "credit") return buildCreditGrid(ctx);
+  if (sheetKey === "quality") return buildQualityGrid(ctx);
+  return buildReturnsGrid(ctx);
 }
 
 function splitUnderwritingTopColumns(colCount: number): {
@@ -489,6 +505,128 @@ function buildAnnualCfGrid(ctx: FinancialModelContext): FinancialGridModel {
     sectionRanges,
     preferHorizontalScroll: true,
   };
+}
+
+function buildAnalystScheduleGrid(
+  sheetKey: FinancialModelSheetKey,
+  title: string,
+  ctx: FinancialModelContext,
+  sections: Array<{
+    title: string;
+    rows: Array<[string, string, string]>;
+  }>,
+): FinancialGridModel {
+  const cells = new Map<string, FinancialGridCell>();
+  const sectionRanges: FinancialSectionRange[] = [];
+  const colCount = 6;
+  let r = 0;
+
+  put(cells, r, 0, `${ctx.companyName.toUpperCase()} — ${title}`, "navyTitle", {
+    colspan: colCount,
+    readOnly: true,
+  });
+  r += 1;
+  put(cells, r, 0, ctx.subtitle, "navySub", { colspan: colCount, readOnly: true, wrapText: true });
+  r += 2;
+
+  for (const section of sections) {
+    put(cells, r, 0, section.title, "sectionHeader", { colspan: colCount, readOnly: true });
+    r += 1;
+    put(cells, r, 0, "Metric", "tableHeader", { readOnly: true });
+    put(cells, r, 1, "Value", "tableHeader", { readOnly: true });
+    put(cells, r, 2, "Analyst read-through", "tableHeader", { colspan: 4, readOnly: true });
+    r += 1;
+
+    for (const [label, value, readThrough] of section.rows) {
+      put(cells, r, 0, label, "metricLabel", { readOnly: true });
+      put(cells, r, 1, value, "number");
+      put(cells, r, 2, readThrough, "text", { colspan: 4, wrapText: true });
+      r += 1;
+    }
+    r += 1;
+  }
+
+  return {
+    sheetKey,
+    rowCount: Math.max(24, r + 2),
+    colCount,
+    colWidths: [190, 120, 160, 160, 160, 160],
+    cells,
+    sectionRanges,
+    preferHorizontalScroll: false,
+  };
+}
+
+function buildCreditGrid(ctx: FinancialModelContext): FinancialGridModel {
+  return buildAnalystScheduleGrid("credit", "CREDIT & LIQUIDITY MODEL", ctx, [
+    {
+      title: "Liquidity",
+      rows: [
+        ["Cash & equivalents", fmtCurrency(ctx.cashM), "Immediate liquidity buffer before working-capital needs."],
+        ["Current ratio", fmtRatio(ctx.currentRatio), "Short-term asset coverage versus current liabilities."],
+        ["Working capital", fmtCurrency(ctx.workingCapitalM), "Operating liquidity available after current obligations."],
+        ["Working capital / revenue", fmtPercent(ctx.workingCapitalRatioPct), "Scale of working capital relative to sales."],
+      ],
+    },
+    {
+      title: "Leverage",
+      rows: [
+        ["Total debt", fmtCurrency(ctx.totalDebtM), "Gross debt load before cash offsets."],
+        ["Net debt", fmtCurrency(ctx.netDebtM), "Debt after cash; primary balance-sheet risk metric."],
+        ["Debt / capital", fmtPercent(ctx.debtToCapitalPct), "Capital structure leverage mix."],
+        ["Net debt / EBITDA", fmtRatio(ctx.netDebtToEbitda), "Debt paydown burden versus recurring earnings power."],
+        ["Interest coverage", fmtRatio(ctx.interestCoverage), "Ability to cover interest from operating earnings."],
+      ],
+    },
+  ]);
+}
+
+function buildQualityGrid(ctx: FinancialModelContext): FinancialGridModel {
+  return buildAnalystScheduleGrid("quality", "QUALITY OF EARNINGS MODEL", ctx, [
+    {
+      title: "Earnings quality",
+      rows: [
+        ["Revenue", fmtCurrency(ctx.revenueM), "Top-line base for margin and conversion analysis."],
+        ["EBITDA", fmtCurrency(ctx.ebitdaM), "Operating earnings proxy before D&A and capital intensity."],
+        ["EBITDA margin", fmtPercent(ctx.ebitdaMarginPct), "Profitability quality after operating cost structure."],
+        ["Net margin", fmtPercent(ctx.netMarginPct), "Bottom-line capture after interest and tax."],
+      ],
+    },
+    {
+      title: "Cash conversion",
+      rows: [
+        ["Operating cash flow", fmtCurrency(ctx.operatingCashFlowM), "Cash generated by operations."],
+        ["Capital expenditures", fmtCurrency(ctx.capexM != null ? Math.abs(ctx.capexM) : null), "Reinvestment requirement to sustain operations."],
+        ["Free cash flow", fmtCurrency(ctx.freeCashFlowM), "Cash available after reinvestment."],
+        ["FCF conversion", fmtPercent(ctx.fcfConversionPct), "Free cash flow as a percentage of net income."],
+        ["Dividends paid", fmtCurrency(ctx.dividendsPaidM), "Recurring capital return to shareholders."],
+        ["Share repurchases", fmtCurrency(ctx.shareRepurchasesM), "Discretionary capital return and EPS support."],
+      ],
+    },
+  ]);
+}
+
+function buildReturnsGrid(ctx: FinancialModelContext): FinancialGridModel {
+  return buildAnalystScheduleGrid("returns", "RETURNS & EFFICIENCY MODEL", ctx, [
+    {
+      title: "Returns",
+      rows: [
+        ["ROIC", fmtPercent(ctx.roicPct), "Best proxy for economic value creation versus invested capital."],
+        ["ROE", fmtPercent(ctx.roePct), "Equity return, influenced by leverage and margins."],
+        ["ROA", fmtPercent(ctx.roaPct), "Asset productivity after all expenses."],
+      ],
+    },
+    {
+      title: "Efficiency",
+      rows: [
+        ["Asset turnover", fmtRatio(ctx.assetTurnover), "Revenue generated per dollar of assets."],
+        ["Inventory turns", fmtRatio(ctx.inventoryTurnover), "Inventory velocity and operating efficiency."],
+        ["A/R turns", fmtRatio(ctx.receivablesTurnover), "Collection speed and customer credit discipline."],
+        ["Gross margin", fmtPercent(ctx.grossMarginPct), "Pricing power and production efficiency."],
+        ["Operating margin", fmtPercent(ctx.operatingMarginPct), "Core operating leverage after overhead."],
+      ],
+    },
+  ]);
 }
 
 export function columnIndexToLetter(index: number): string {
