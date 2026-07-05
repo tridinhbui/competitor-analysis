@@ -67,6 +67,8 @@ interface ExcelWorkbookEditorProps {
   workbook: EditableWorkbook;
   onChange: (nextWorkbook: EditableWorkbook) => void;
   onError: (message: string | null) => void;
+  className?: string;
+  gridClassName?: string;
 }
 
 function normalizeSelection(selection: SelectionRange): SelectionRange {
@@ -126,7 +128,13 @@ function ToolbarButton({
   );
 }
 
-export function ExcelWorkbookEditor({ workbook, onChange, onError }: ExcelWorkbookEditorProps) {
+export function ExcelWorkbookEditor({
+  workbook,
+  onChange,
+  onError,
+  className,
+  gridClassName,
+}: ExcelWorkbookEditorProps) {
   const gridRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [activeSheetIndex, setActiveSheetIndex] = useState(0);
@@ -650,7 +658,7 @@ export function ExcelWorkbookEditor({ workbook, onChange, onError }: ExcelWorkbo
   }
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white/95 shadow-sm">
+    <div className={cn("rounded-2xl border border-slate-200 bg-white/95 shadow-sm", className)}>
       <div className="border-b border-slate-200 px-4 py-3">
         <div className="flex flex-wrap items-center gap-3">
           {workbook.sheets.map((sheet, sheetIndex) => (
@@ -906,7 +914,10 @@ export function ExcelWorkbookEditor({ workbook, onChange, onError }: ExcelWorkbo
           event.preventDefault();
           applyPastedText(event.clipboardData.getData("text/plain"));
         }}
-        className="relative max-h-[44rem] overflow-auto outline-none focus:ring-2 focus:ring-primary/15"
+        className={cn(
+          "relative max-h-[44rem] overflow-auto outline-none focus:ring-2 focus:ring-primary/15",
+          gridClassName,
+        )}
       >
         <div
           style={{

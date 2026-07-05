@@ -14,6 +14,7 @@ export function AnalyzeLandingShell({
   left,
   sidebar,
   className,
+  contentClassName,
 }: {
   eyebrow: string;
   title: string;
@@ -22,6 +23,7 @@ export function AnalyzeLandingShell({
   left: ReactNode;
   sidebar: ReactNode;
   className?: string;
+  contentClassName?: string;
 }) {
   return (
     <div className={cn("mx-auto w-full max-w-6xl px-4 py-8 sm:py-10", className)}>
@@ -32,7 +34,7 @@ export function AnalyzeLandingShell({
         {heroActions ? <div className="mt-4 flex flex-wrap justify-center gap-2">{heroActions}</div> : null}
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
+      <div className={cn("grid gap-5 lg:grid-cols-[1.2fr_0.8fr]", contentClassName)}>
         <div className="flex min-h-[26rem] flex-col rounded-3xl border border-slate-200/90 bg-white/90 p-5 shadow-elevation sm:min-h-[30rem] sm:p-6">
           {left}
         </div>

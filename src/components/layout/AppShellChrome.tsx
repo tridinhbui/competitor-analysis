@@ -12,12 +12,12 @@ import { FinbudProLogo } from "@/components/branding/FinbudProLogo";
 
 const NAV_ITEMS = [
   { href: "/analyze", label: "Analyze", icon: LayoutDashboard },
+  { href: "/excel-analyze", label: "Excel Analysis", icon: Grid2x2 },
 ] as const;
 
 const MORE_NAV_ITEMS = [
   { href: "/workspace", label: "Workspace", icon: BriefcaseBusiness },
   { href: "/earnings-analysis", label: "Earnings Scripts", icon: Grid2x2 },
-  { href: "/excel-analyze", label: "Excel Analysis", icon: Grid2x2 },
 ] as const;
 
 function isItemActive(pathname: string, href: string): boolean {

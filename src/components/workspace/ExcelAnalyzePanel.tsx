@@ -287,6 +287,8 @@ export function ExcelAnalyzePanel() {
             split large comparison workbooks into smaller competitor-ready Excel files.
           </>
         }
+        className="max-w-[min(100vw-0.5rem,2200px)] px-2 sm:px-4"
+        contentClassName="xl:grid-cols-[minmax(0,1fr)_340px]"
         left={
           <div className="flex min-h-0 flex-1 flex-col gap-5">
             <div className="flex flex-wrap justify-center gap-2">

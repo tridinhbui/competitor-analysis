@@ -12,6 +12,7 @@ import type {
 import type { ChatThreadSummary } from "@/types/chatThread";
 import { AnalysisCalculationsExplainer } from "@/components/data-source/AnalysisCalculationsExplainer";
 import { FinancialModelSheetView } from "@/components/data-source/FinancialModelSheetView";
+import { ExcelWorkbookEditor } from "@/components/workspace/ExcelWorkbookEditor";
 import {
   appendFinancialModelSheets,
   buildFinancialModelContext,
@@ -19,6 +20,9 @@ import {
 } from "@/lib/dataSourceFinancialModel";
 import {
   financialGridStorageKey,
+  buildFinancialGrid,
+  getCellDisplayValue,
+  type FinancialCellStyle,
   type FinancialShortcutTarget,
 } from "@/lib/financialModelGrid";
 import type { FilingCategorySection } from "@/lib/financialModelFromFiling";
@@ -68,6 +72,8 @@ import {
   X,
 } from "lucide-react";
 import * as XLSX from "xlsx-js-style";
+import type { EditableWorkbook } from "@/lib/excelWorkbook";
+import { cellStyleKey as excelCellStyleKey } from "@/lib/excelWorkbook";
 import {
   columnIndexToLetter,
   computeWorkbookRows,
@@ -185,6 +191,70 @@ const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
   periodEnd: 92,
 };
 const BASE_WORKBOOK_FIELDS = ["quarterLabel", "periodEnd"] as const;
+const FINANCIAL_TEMPLATE_STYLES: Record<FinancialCellStyle, DataSourceWorkbookCellStyle> = {
+  navyTitle: {
+    bold: true,
+    fillColor: "#1E3A5F",
+    textColor: "#ffffff",
+    fontSize: 13,
+    align: "left",
+  },
+  navySub: {
+    fillColor: "#1E3A5F",
+    textColor: "#ffffff",
+    fontSize: 10,
+    align: "left",
+  },
+  sectionHeader: {
+    bold: true,
+    fillColor: "#2B579A",
+    textColor: "#ffffff",
+    fontSize: 10,
+    align: "left",
+  },
+  tableHeader: {
+    bold: true,
+    fillColor: "#2B579A",
+    textColor: "#ffffff",
+    fontSize: 10,
+    align: "center",
+  },
+  label: {
+    bold: true,
+    fillColor: "#D9E8F7",
+    textColor: "#1E3A5F",
+    align: "left",
+  },
+  metricLabel: {
+    bold: true,
+    fillColor: "#f8fafc",
+    textColor: "#1E3A5F",
+    align: "left",
+  },
+  number: {
+    align: "right",
+    textColor: "#0f172a",
+  },
+  text: {
+    align: "left",
+    textColor: "#0f172a",
+  },
+  total: {
+    bold: true,
+    fillColor: "#D9E8F7",
+    textColor: "#1E3A5F",
+    align: "right",
+  },
+  shortcutBtn: {
+    bold: true,
+    fillColor: "#3B82F6",
+    textColor: "#ffffff",
+    align: "center",
+  },
+  empty: {
+    textColor: "#0f172a",
+  },
+};
 const FINANCIAL_WORKBOOK_SECTIONS: readonly WorkbookSectionConfig[] = [
   {
     key: "underwriting",
@@ -341,6 +411,45 @@ function getDefaultColumnWidth(field: string): number {
 
 function isWorkbookSectionKey(value: string): value is WorkbookSectionKey {
   return WORKBOOK_SECTIONS.some((section) => section.key === value);
+}
+
+function financialGridToEditableWorkbook(
+  sheetKey: "underwriting" | "annualCf",
+  sheetName: string,
+  context: ReturnType<typeof buildFinancialModelContext>,
+): EditableWorkbook {
+  const model = buildFinancialGrid(sheetKey, context);
+  const cells = Array.from({ length: model.rowCount }, (_, rowIndex) =>
+    Array.from({ length: model.colCount }, (_, colIndex) =>
+      getCellDisplayValue(model, {}, rowIndex, colIndex),
+    ),
+  );
+  const styles: EditableWorkbook["styles"] = {};
+
+  for (const [cellAddress, cell] of model.cells) {
+    const [rowPart, colPart] = cellAddress.split(",").map(Number);
+    if (!Number.isFinite(rowPart) || !Number.isFinite(colPart)) continue;
+
+    const style = FINANCIAL_TEMPLATE_STYLES[cell.style] ?? FINANCIAL_TEMPLATE_STYLES.empty;
+    const rowSpan = Math.max(1, cell.rowspan ?? 1);
+    const colSpan = Math.max(1, cell.colspan ?? 1);
+
+    for (let rowOffset = 0; rowOffset < rowSpan; rowOffset += 1) {
+      for (let colOffset = 0; colOffset < colSpan; colOffset += 1) {
+        styles[excelCellStyleKey(0, rowPart + rowOffset, colPart + colOffset)] = style;
+      }
+    }
+  }
+
+  return {
+    sheets: [
+      {
+        name: sheetName,
+        cells,
+      },
+    ],
+    styles,
+  };
 }
 
 function deepClone<T>(value: T): T {
@@ -1271,6 +1380,9 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
   } | null>(null);
   const [aiBoardLoading, setAiBoardLoading] = useState(false);
   const [workbookCells, setWorkbookCells] = useState<WorkbookRowCellStateMap>({});
+  const [embeddedExcelStylesBySheet, setEmbeddedExcelStylesBySheet] = useState<
+    Partial<Record<WorkbookSectionKey, Record<string, DataSourceWorkbookCellStyle | null>>>
+  >({});
   const [numericOverrides, setNumericOverrides] = useState<WorkbookNumericOverrideMap>({});
   const [editLog, setEditLog] = useState<DataSourceEditLogEntry[]>([]);
   const [companyOptions, setCompanyOptions] = useState<CompanyWorkbookOption[]>([]);
@@ -3608,59 +3720,267 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
     }
   };
 
-  return (
-    <RequireAuth>
-      <div className={embedded ? "w-full px-0 py-0" : "mx-auto max-w-[99vw] px-4 py-6"}>
-        {editConfirm && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="data-source-edit-enable-title"
-          >
-            <div className="relative w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
+  const embeddedExcelWorkbook = useMemo<EditableWorkbook>(() => {
+    const sheetStyles = embeddedExcelStylesBySheet[activeSheet] ?? {};
+    if (isFinancialTemplateSheet && isFinancialModelSheetKey(activeSheet)) {
+      const financialWorkbook = financialGridToEditableWorkbook(
+        activeSheet,
+        activeSheetConfig.title,
+        financialModelContext,
+      );
+
+      return {
+        ...financialWorkbook,
+        styles: {
+          ...financialWorkbook.styles,
+          ...sheetStyles,
+        },
+      };
+    }
+
+    const headerRow = visibleColumns.map((column) => column.label);
+    const dataRows = visibleRows.map((row) =>
+      visibleColumns.map((column) => {
+        const cellState = getWorkbookStateForCell(workbookCells, row.id, column.field);
+        if (cellState?.formula) return cellState.formula;
+        const value = getRowFieldValue(row, column.field);
+        return value == null ? "" : String(value);
+      }),
+    );
+    const headerStyles: Record<string, DataSourceWorkbookCellStyle | null> = {};
+    visibleColumns.forEach((column, colIndex) => {
+      headerStyles[excelCellStyleKey(0, 0, colIndex)] = {
+        bold: true,
+        fillColor: "#f8fafc",
+        textColor: "#334155",
+        align: column.align ?? "left",
+      };
+    });
+
+    return {
+      sheets: [
+        {
+          name: activeSheetConfig.title,
+          cells: [headerRow, ...dataRows],
+        },
+      ],
+      styles: {
+        ...headerStyles,
+        ...sheetStyles,
+      },
+    };
+  }, [
+    activeSheet,
+    activeSheetConfig.title,
+    embeddedExcelStylesBySheet,
+    financialModelContext,
+    isFinancialTemplateSheet,
+    visibleColumns,
+    visibleRows,
+    workbookCells,
+  ]);
+
+  const handleEmbeddedExcelWorkbookChange = useCallback(
+    (nextWorkbook: EditableWorkbook) => {
+      setEmbeddedExcelStylesBySheet((current) => ({
+        ...current,
+        [activeSheet]: nextWorkbook.styles,
+      }));
+
+      if (isFinancialTemplateSheet) {
+        return;
+      }
+
+      const previousCells = embeddedExcelWorkbook.sheets[0]?.cells ?? [];
+      const nextCells = nextWorkbook.sheets[0]?.cells ?? [];
+      let changeIndex = 0;
+
+      for (let rowIndex = 1; rowIndex < nextCells.length; rowIndex += 1) {
+        const sourceRow = visibleRows[rowIndex - 1];
+        if (!sourceRow) continue;
+
+        for (let colIndex = 0; colIndex < (nextCells[rowIndex]?.length ?? 0); colIndex += 1) {
+          const column = visibleColumns[colIndex];
+          if (!column) continue;
+
+          const nextValue = nextCells[rowIndex]?.[colIndex] ?? "";
+          const previousValue = previousCells[rowIndex]?.[colIndex] ?? "";
+          if (nextValue === previousValue) continue;
+
+          commitCellInput(sourceRow, column.field, nextValue, changeIndex === 0);
+          changeIndex += 1;
+        }
+      }
+    },
+    [activeSheet, commitCellInput, embeddedExcelWorkbook, isFinancialTemplateSheet, visibleColumns, visibleRows],
+  );
+
+  const embeddedActiveSheet = embeddedExcelWorkbook.sheets[0];
+  const embeddedColumnCount = embeddedActiveSheet
+    ? Math.max(0, ...embeddedActiveSheet.cells.map((row) => row.length))
+    : 0;
+  const embeddedRowCount = embeddedActiveSheet?.cells.length ?? 0;
+  const embeddedModelLabel = isFinancialTemplateSheet ? "Financial model" : "Extracted data";
+
+  const editConfirmDialog = editConfirm ? (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="data-source-edit-enable-title"
+    >
+      <div className="relative w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
+        <button
+          type="button"
+          onClick={() => setEditConfirm(null)}
+          className="absolute right-3 top-3 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          aria-label="Close"
+        >
+          <X className="h-4 w-4" />
+        </button>
+        <div className="flex gap-3">
+          <AlertTriangle className="h-8 w-8 shrink-0 text-amber-500" aria-hidden />
+          <div className="min-w-0">
+            <h2 id="data-source-edit-enable-title" className="text-sm font-bold text-slate-900">
+              Heads up before you edit
+            </h2>
+            <p className="mt-2 text-xs leading-relaxed text-slate-600">
+              Edits in this workbook are saved to the current company thread only. Verify any changed values
+              against the original filing PDF or SEC source before saving.
+            </p>
+            <p className="mt-2 text-[11px] font-medium text-slate-400">
+              This message only appears once.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setEditConfirm(null)}
-                className="absolute right-3 top-3 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-                aria-label="Close"
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
               >
-                <X className="h-4 w-4" />
+                Cancel
               </button>
-              <div className="flex gap-3">
-                <AlertTriangle className="h-8 w-8 shrink-0 text-amber-500" aria-hidden />
-                <div className="min-w-0">
-                  <h2 id="data-source-edit-enable-title" className="text-sm font-bold text-slate-900">
-                    Heads up before you edit
-                  </h2>
-                  <p className="mt-2 text-xs leading-relaxed text-slate-600">
-                    Edits in this workbook are saved to the current company thread only. Verify any changed values
-                    against the original filing PDF or SEC source before saving.
-                  </p>
-                  <p className="mt-2 text-[11px] font-medium text-slate-400">
-                    This message only appears once.
-                  </p>
-                  <div className="mt-4 flex justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setEditConfirm(null)}
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={confirmEnableEditing}
-                      className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
-                    >
-                      Got it, enable editing
-                    </button>
-                  </div>
-                </div>
-              </div>
+              <button
+                type="button"
+                onClick={confirmEnableEditing}
+                className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+              >
+                Got it, enable editing
+              </button>
             </div>
           </div>
-        )}
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  if (embedded) {
+    return (
+      <RequireAuth>
+        <div className="w-full px-0 py-0">
+          {editConfirmDialog}
+          <div className="rounded-[24px] border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
+            <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#cc521d]">
+                  Analyze workbook
+                </p>
+                <h2 className="mt-1 text-base font-bold tracking-tight text-slate-900 sm:text-lg">
+                  {selectedCompany ? `${selectedCompany.ticker} workbook` : "Workbook"}
+                </h2>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  Numbers come from Extract/Data Source. Edit cells here with the same Excel-style component used in Excel Analysis.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={activeSheet}
+                  onChange={(event) => setActiveSheet(event.target.value as WorkbookSectionKey)}
+                  className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none"
+                  aria-label="Workbook sheet"
+                >
+                  {WORKBOOK_SECTIONS.map((sheet) => (
+                    <option key={sheet.key} value={sheet.key}>
+                      {sheet.title}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => void fetchData({ includeNavigator: true, preserveVisibleState: false, resetWorkbookUi: true })}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Refresh
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={!hasUnsavedChanges || saving || hasFormulaErrors || !threadSchemaReady}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-[#217346] px-3 text-xs font-semibold text-white shadow-sm hover:bg-[#1b5d38] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                  Save workbook
+                </button>
+              </div>
+            </div>
+
+            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-2xl border border-[#e7c7b7]/70 bg-[#fffaf6] px-3 py-2 text-[11px] font-semibold text-[#5a6065]">
+              <span className="rounded-full bg-[#cc521d] px-2.5 py-1 text-white">
+                {embeddedModelLabel}
+              </span>
+              <span>
+                Source: {selectedCompanyTicker ?? selectedCompany?.ticker ?? "latest extract"}
+              </span>
+              <span className="text-slate-300">/</span>
+              <span>{visibleRows.length} extracted rows</span>
+              <span className="text-slate-300">/</span>
+              <span>{embeddedRowCount} model rows</span>
+              <span className="text-slate-300">/</span>
+              <span>{embeddedColumnCount} columns</span>
+              {hasUnsavedChanges ? (
+                <span className="rounded-full bg-amber-100 px-2.5 py-1 text-amber-700">
+                  Unsaved edits
+                </span>
+              ) : (
+                <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-emerald-700">
+                  Synced
+                </span>
+              )}
+            </div>
+
+            {loading ? (
+              <div className="flex min-h-[22rem] items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-sm text-slate-500">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Loading extracted workbook...
+              </div>
+            ) : visibleRows.length === 0 ? (
+              <div className="flex min-h-[22rem] flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 text-center">
+                <p className="text-sm font-semibold text-slate-900">No extracted numbers yet.</p>
+                <p className="mt-2 max-w-md text-xs leading-5 text-slate-500">
+                  Upload a 10-Q in Extract first. Once the filing saves, the rows will appear here automatically.
+                </p>
+              </div>
+            ) : (
+              <ExcelWorkbookEditor
+                workbook={embeddedExcelWorkbook}
+                onChange={handleEmbeddedExcelWorkbookChange}
+                className="overflow-hidden rounded-[20px]"
+                gridClassName="max-h-[calc(100dvh-27rem)] min-h-[20rem]"
+                onError={(message) => {
+                  if (message) window.alert(message);
+                }}
+              />
+            )}
+          </div>
+        </div>
+      </RequireAuth>
+    );
+  }
+
+  return (
+    <RequireAuth>
+      <div className={embedded ? "w-full px-0 py-0" : "mx-auto max-w-[99vw] px-4 py-6"}>
+        {editConfirmDialog}
 
         <div className={`mb-4 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between ${embedded ? "pt-2" : ""}`}>
           <div>
