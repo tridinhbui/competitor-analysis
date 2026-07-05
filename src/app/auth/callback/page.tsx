@@ -1,10 +1,10 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { GOOGLE_OAUTH_NEXT_KEY, getSafeNextPath } from "@/lib/authRedirect";
+import { GOOGLE_OAUTH_NEXT_KEY } from "@/lib/authRedirect";
 
 function AuthCallbackCard({ error, onBackHome }: { error: string | null; onBackHome?: () => void }) {
   return (
@@ -48,10 +48,6 @@ function AuthCallbackContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [error, setError] = useState<string | null>(null);
-  const nextPath = useMemo(
-    () => getSafeNextPath(searchParams.get("next")),
-    [searchParams],
-  );
 
   useEffect(() => {
     let cancelled = false;
@@ -87,7 +83,7 @@ function AuthCallbackContent() {
         window.sessionStorage.removeItem(GOOGLE_OAUTH_NEXT_KEY);
       }
 
-      router.replace(getSafeNextPath(storedNext ?? nextPath));
+      router.replace("/analyze?tab=extract");
       router.refresh();
     }
 
@@ -96,7 +92,7 @@ function AuthCallbackContent() {
     return () => {
       cancelled = true;
     };
-  }, [nextPath, router, searchParams]);
+  }, [router, searchParams]);
 
   return <AuthCallbackCard error={error} onBackHome={() => router.replace("/")} />;
 }

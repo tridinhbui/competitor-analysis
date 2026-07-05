@@ -16,6 +16,7 @@ import {
   filterFilingsForWorkspace,
   getWorkspaceResetAt,
 } from "@/lib/workspaceReset";
+import { requireAuthedUser } from "@/lib/serverAuth";
 import type { FullAnalysis } from "@/types/analysis";
 
 export const runtime = "nodejs";
@@ -27,6 +28,9 @@ interface AppendBody {
 }
 
 export async function POST(request: Request) {
+  const authResult = await requireAuthedUser(request);
+  if (authResult instanceof Response) return authResult;
+
   let body: AppendBody;
   try {
     body = await request.json();

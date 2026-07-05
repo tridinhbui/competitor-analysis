@@ -23,6 +23,7 @@ import {
   encodePdfAnalyzeSse,
   type PdfAnalyzeStreamEvent,
 } from "@/lib/pdfAiPartial";
+import { requireAuthedUser } from "@/lib/serverAuth";
 import {
   classifySegmentType,
   extractSegmentsHeuristic as extractSegmentsHeuristicShared,
@@ -1254,6 +1255,9 @@ function attachSupplementalAnalysisData(
 // ---------------------------------------------------------------------------
 
 export async function POST(request: Request) {
+  const authResult = await requireAuthedUser(request);
+  if (authResult instanceof NextResponse) return authResult;
+
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey?.trim()) {
     return NextResponse.json(

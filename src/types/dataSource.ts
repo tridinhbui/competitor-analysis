@@ -81,6 +81,18 @@ export interface DataSourceRow {
   adjustedOpPerCwt: number | null;
   /** SG&A as % of revenue */
   sgaAsPercent: number | null;
+  /** Optional per-metric provenance used by the workbook detail drawer. */
+  _metricTrace?: Record<string, DataSourceMetricTrace>;
+}
+
+export interface DataSourceMetricTrace {
+  label: string;
+  value: number | string | null;
+  source: string;
+  confidence: "high" | "medium" | "low";
+  statement: string;
+  originalText: string;
+  normalizedCalculation: string;
 }
 
 /** The list of metric columns displayed in the grid, in order. */

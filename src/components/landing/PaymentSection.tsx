@@ -21,18 +21,17 @@ export function PaymentSection() {
     >
       <div className="mx-auto max-w-3xl px-4">
         <div className="text-center">
-          <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-primary">Checkout</p>
+          <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-primary">Billing setup</p>
           <h2 id="payment-heading" className="mt-3 text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
-            Finance-controlled checkout (coming soon)
+            Procurement-ready billing for finance teams
           </h2>
           <p className="mx-auto mt-3 max-w-lg text-sm text-muted-foreground">
-            This is a <strong className="font-semibold text-foreground">UI preview</strong> - no charges are processed
-            in-app yet. When billing goes live, checkout will support annual finance-team plans and procurement-friendly
-            payment flows.
+            Start with a billing setup request. We support annual plans, finance-team seat controls, and procurement-friendly
+            payment flows before any charge is processed.
           </p>
           <div className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700">
             <BadgeCheck className="h-3.5 w-3.5" aria-hidden />
-            Secure checkout preview
+            Secure billing workflow
           </div>
         </div>
 
@@ -45,7 +44,7 @@ export function PaymentSection() {
         >
           <div className="mb-6 grid gap-4 rounded-2xl border border-border bg-secondary/55 p-4 sm:grid-cols-[1fr_auto] sm:items-center">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Mock checkout card</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Billing request</p>
               <p className="mt-1 text-sm font-semibold text-foreground">Strategic Finance Team | Annual billing</p>
               <p className="mt-1 text-xs text-muted-foreground">5 seats included | next renewal in 365 days</p>
             </div>
@@ -58,7 +57,7 @@ export function PaymentSection() {
               className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#cc521d] px-4 py-2.5 text-xs font-semibold text-white shadow-subtle transition hover:bg-[#b7491a] sm:col-span-2"
             >
               <Wallet className="h-3.5 w-3.5" aria-hidden />
-              Continue to secure checkout (preview)
+              Request billing setup
             </button>
           </div>
 
@@ -78,7 +77,7 @@ export function PaymentSection() {
           </div>
 
           <p className="mt-6 text-center text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-            Accepted methods (preview)
+            Supported payment methods
           </p>
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
             {methods.map((m) => (

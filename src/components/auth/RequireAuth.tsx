@@ -21,16 +21,16 @@ export function RequireAuth({ children }: { children: React.ReactNode }) {
     return (
       <>
         <div className="mx-auto flex min-h-[calc(100dvh-4rem)] max-w-sm flex-col items-center justify-center gap-5 px-4 py-16 text-center">
-          <p className="text-sm font-medium text-foreground">Sign in required</p>
-          <p className="text-xs text-muted-foreground">
-            This area is only available after you sign in.
+          <p className="text-sm font-semibold text-foreground">Sign in to open your finance workspace</p>
+          <p className="text-xs leading-5 text-muted-foreground">
+            Your analyses, workbook edits, source traces, and exports are saved to your account.
           </p>
           <button
             type="button"
             onClick={() => setAuthOpen(true)}
             className="rounded-full bg-primary px-5 py-2 text-xs font-semibold text-white shadow-subtle transition hover:bg-primary/90"
           >
-            Sign in
+            Sign in and continue
           </button>
         </div>
         {authOpen && <AuthModal onClose={() => setAuthOpen(false)} />}

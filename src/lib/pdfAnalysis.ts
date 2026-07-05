@@ -12,6 +12,7 @@
  */
 
 import type { BSItem, FullAnalysis, StepEvent } from "@/types/analysis";
+import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import { PIPELINE_STEPS } from "@/types/analysis";
 import { assembleAnalysis } from "./analysisEngine";
 import {
@@ -255,7 +256,7 @@ async function analyzeWithAI(
   chars: number,
   onPartial?: (analysis: FullAnalysis) => void
 ): Promise<AnalyzeWithAIResult> {
-  const resp = await fetch("/api/analyze-pdf", {
+  const resp = await fetchWithAuth("/api/analyze-pdf", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text: fullText, fileName, pages, chars, stream: true }),

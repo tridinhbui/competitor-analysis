@@ -1,6 +1,7 @@
 import {
   buildCompetitorEarningsReleasePayload,
 } from "@/lib/competitorEarningsRelease";
+import { requireAuthedUser } from "@/lib/serverAuth";
 import type {
   ComparisonNarrative,
   NormalizedCompanyMetrics,
@@ -16,6 +17,9 @@ interface CompetitorReleaseRequestBody {
 }
 
 export async function POST(request: Request) {
+  const authResult = await requireAuthedUser(request);
+  if (authResult instanceof Response) return authResult;
+
   try {
     const body = (await request.json()) as CompetitorReleaseRequestBody;
     if (!body.benchmark || !body.competitor || !body.narrative) {

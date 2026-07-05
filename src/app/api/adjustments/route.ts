@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
+import { requireAuthedUser } from "@/lib/serverAuth";
 import type { CompanyAdjustments } from "@/types/adjustments";
 import { emptyAdjustments } from "@/types/adjustments";
 
@@ -8,6 +9,9 @@ import { emptyAdjustments } from "@/types/adjustments";
  * Returns the CompanyAdjustments for a given ticker.
  */
 export async function GET(req: NextRequest) {
+  const authResult = await requireAuthedUser(req);
+  if (authResult instanceof NextResponse) return authResult;
+
   const ticker = req.nextUrl.searchParams.get("ticker")?.toUpperCase();
   if (!ticker) {
     return NextResponse.json({ error: "ticker required" }, { status: 400 });
@@ -36,6 +40,9 @@ export async function GET(req: NextRequest) {
  * Upserts the full adjustment set for a company.
  */
 export async function PUT(req: NextRequest) {
+  const authResult = await requireAuthedUser(req);
+  if (authResult instanceof NextResponse) return authResult;
+
   const body: CompanyAdjustments = await req.json();
   if (!body.ticker) {
     return NextResponse.json({ error: "ticker required" }, { status: 400 });

@@ -5,6 +5,7 @@ import { Loader2, PanelLeftClose, PanelLeftOpen, Search, TrendingUp, UploadCloud
 import type { CompanyComparisonPayload } from "@/lib/companyComparison";
 import { ComparisonReportContent, buildComparisonExportHref } from "@/components/workspace/ComparisonReportContent";
 import { analyzePdf } from "@/lib/pdfAnalysis";
+import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import type { FullAnalysis } from "@/types/analysis";
 import { normalizeCompanyName, resolveTicker } from "@/lib/filingIdentity";
 
@@ -426,7 +427,7 @@ export function PeerComparisonView({
       const analysis = entry.analysis;
       const ticker = entry.resolvedTicker.toUpperCase();
       setGuidanceStatus(`Saving ${i + 1}/${analyses.length}: ${ticker || entry.sourceFileName || "PDF"}`);
-      await fetch("/api/filings/save", {
+      await fetchWithAuth("/api/filings/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -440,7 +441,7 @@ export function PeerComparisonView({
 
       if (ticker && !seenTicker.has(ticker)) {
         seenTicker.add(ticker);
-        await fetch("/api/filings/peer", {
+        await fetchWithAuth("/api/filings/peer", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -477,7 +478,7 @@ export function PeerComparisonView({
     setClearingAll(true);
     setError("");
     try {
-      const response = await fetch("/api/workspace/clear-all", {
+      const response = await fetchWithAuth("/api/workspace/clear-all", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ confirmationText: typed.trim() }),
@@ -551,7 +552,7 @@ export function PeerComparisonView({
     setGuidanceLoading(true);
     try {
       for (const company of activeCompanies.filter((entry) => entry.mode === "new")) {
-        await fetch("/api/filings/peer", {
+        await fetchWithAuth("/api/filings/peer", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

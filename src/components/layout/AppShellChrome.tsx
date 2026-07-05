@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, X, LogIn, LogOut, User, Settings, ChevronDown, CreditCard, ChevronRight, CalendarDays, LayoutDashboard, History, BriefcaseBusiness, ChartColumn, Grid2x2 } from "lucide-react";
+import { Menu, X, LogIn, LogOut, User, Settings, ChevronDown, CreditCard, ChevronRight, CalendarDays, LayoutDashboard, BriefcaseBusiness, Grid2x2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/authContext";
 import { useProfile } from "@/lib/profileContext";
@@ -12,12 +12,10 @@ import { FinbudProLogo } from "@/components/branding/FinbudProLogo";
 
 const NAV_ITEMS = [
   { href: "/analyze", label: "Analyze", icon: LayoutDashboard },
-  { href: "/history", label: "History", icon: History },
 ] as const;
 
 const MORE_NAV_ITEMS = [
   { href: "/workspace", label: "Workspace", icon: BriefcaseBusiness },
-  { href: "/competitor-dashboard", label: "Earnings Calendar", icon: ChartColumn },
   { href: "/earnings-analysis", label: "Earnings Scripts", icon: Grid2x2 },
   { href: "/excel-analyze", label: "Excel Analysis", icon: Grid2x2 },
 ] as const;

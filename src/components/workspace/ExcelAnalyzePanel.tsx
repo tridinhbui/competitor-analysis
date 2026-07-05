@@ -17,6 +17,7 @@ import { AnalyzeLandingShell } from "@/components/workspace/AnalyzeLandingShell"
 import { ComparisonReportContent } from "@/components/workspace/ComparisonReportContent";
 import { ExcelWorkbookEditor } from "@/components/workspace/ExcelWorkbookEditor";
 import { TextTxtAttachment } from "@/components/workspace/TextTxtAttachment";
+import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import type { CompanyComparisonPayload } from "@/lib/companyComparison";
 import { cn } from "@/lib/utils";
 import {
@@ -196,7 +197,7 @@ export function ExcelAnalyzePanel() {
         text = await getPasteSourceText();
       }
 
-      const response = await fetch("/api/earnings-script-analysis", {
+      const response = await fetchWithAuth("/api/earnings-script-analysis", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -235,7 +236,7 @@ export function ExcelAnalyzePanel() {
       const formData = new FormData();
       formData.append("file", excelFile);
 
-      const response = await fetch("/api/excel-preprocess", {
+      const response = await fetchWithAuth("/api/excel-preprocess", {
         method: "POST",
         body: formData,
       });
@@ -388,7 +389,13 @@ export function ExcelAnalyzePanel() {
                       Excel-style preview is live now: use the toolbar for font/number formatting, and right click in
                       the grid for cut, copy, paste, insert row, delete row, and clear.
                     </div>
-                    <ExcelWorkbookEditor workbook={excelWorkbook} onChange={setExcelWorkbook} onError={setError} />
+                    <ExcelWorkbookEditor
+                      workbook={excelWorkbook}
+                      onChange={(nextWorkbook) => {
+                        setExcelWorkbook(nextWorkbook);
+                      }}
+                      onError={setError}
+                    />
                     <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 py-3 text-xs text-emerald-900">
                       <p className="font-semibold">Competitor-prep workflow</p>
                       <p className="mt-1 leading-relaxed">

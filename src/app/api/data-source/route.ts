@@ -4,7 +4,7 @@ import { supabase } from "@/lib/supabase";
 import { extractMetrics } from "@/lib/analysisModules";
 import { normalizeWorkbookSnapshot } from "@/lib/dataSourceWorkbookSnapshot";
 import { normalizeCompanyName } from "@/lib/filingIdentity";
-import type { DataSourceRow } from "@/types/dataSource";
+import type { DataSourceMetricTrace, DataSourceRow } from "@/types/dataSource";
 import type { Filing } from "@/types/competitor";
 import type { FullAnalysis } from "@/types/analysis";
 import type { ChatThreadSummary, DataSourceWorkbookSnapshot } from "@/types/chatThread";
@@ -16,6 +16,7 @@ import type {
   DataSourceWorkbookTickerState,
 } from "@/types/dataSourceWorkbook";
 import { groupWorkbookCellsByTicker, normalizeCellState } from "@/lib/dataSourceWorkbook";
+import { requireAdminUser } from "@/lib/serverAuth";
 
 export const runtime = "nodejs";
 
@@ -45,6 +46,104 @@ type WorkbookThreadRow = {
   workbook_snapshot: unknown;
   updated_at: string;
 };
+
+const TRACE_TAGS_BY_FIELD: Record<string, string[]> = {
+  revenue: ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"],
+  grossProfit: ["GrossProfit"],
+  operatingIncome: ["OperatingIncomeLoss"],
+  netIncome: ["NetIncomeLoss"],
+  totalAssets: ["Assets"],
+  totalLiabilities: ["Liabilities"],
+  totalEquity: ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
+  totalDebt: ["LongTermDebt", "LongTermDebtCurrent", "ShortTermBorrowings", "Debt"],
+  cashAndEquivalents: ["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"],
+  operatingCashFlow: ["NetCashProvidedByUsedInOperatingActivities", "NetCashProvidedByOperatingActivities"],
+  capex: ["PaymentsToAcquirePropertyPlantAndEquipment", "CapitalExpenditures"],
+  freeCashFlow: ["NetCashProvidedByUsedInOperatingActivities", "PaymentsToAcquirePropertyPlantAndEquipment"],
+  sgaExpense: ["SellingGeneralAndAdministrativeExpense"],
+  depreciation: ["DepreciationDepletionAndAmortization", "DepreciationAndAmortization", "Depreciation"],
+  ebit: ["OperatingIncomeLoss"],
+  ebitda: ["OperatingIncomeLoss", "DepreciationDepletionAndAmortization", "DepreciationAndAmortization"],
+  interestExpense: ["InterestExpenseNonOperating", "InterestExpense"],
+  epsBasic: ["EarningsPerShareBasic"],
+  epsDiluted: ["EarningsPerShareDiluted"],
+  shareBasedComp: ["ShareBasedCompensation"],
+  dividendsPaid: ["PaymentsOfDividends", "PaymentsOfDividendsCommonStock"],
+};
+
+const NORMALIZED_CALC_BY_FIELD: Record<string, string> = {
+  grossProfit: "Gross profit from filing line; if unavailable, revenue minus cost of revenue.",
+  totalDebt: "Short-term debt plus long-term debt, normalized to USD millions.",
+  freeCashFlow: "Operating cash flow minus capital expenditures.",
+  grossMargin: "Gross profit divided by revenue.",
+  operatingMargin: "Operating income divided by revenue.",
+  netMargin: "Net income divided by revenue.",
+  debtToEquity: "Total debt divided by total equity.",
+  currentRatio: "Current assets divided by current liabilities when available from extraction.",
+  ebit: "Operating income used as EBIT proxy unless a direct EBIT line exists.",
+  ebitda: "EBIT plus depreciation and amortization.",
+  ebitdaMargin: "EBITDA divided by revenue.",
+  roe: "Net income divided by total equity.",
+  roa: "Net income divided by total assets.",
+  fcfMargin: "Free cash flow divided by revenue.",
+  opPerHead: "Operating income divided by heads processed.",
+  opPerCwt: "Operating income divided by hundredweight volume.",
+  adjustedOperatingIncome: "Operating income adjusted for non-comparable add-backs and removals.",
+  adjustedOperatingMargin: "Adjusted operating income divided by revenue.",
+  adjustedOpPerHead: "Adjusted operating income divided by heads processed.",
+  adjustedOpPerCwt: "Adjusted operating income divided by hundredweight volume.",
+  sgaAsPercent: "Absolute SG&A divided by revenue.",
+};
+
+function buildMetricTraceMap(
+  analysis: FullAnalysis,
+  values: Record<string, number | string | null | undefined>,
+): Record<string, DataSourceMetricTrace> {
+  const items = [
+    ...(analysis.cfItems ?? []),
+    ...(analysis.balanceSheet?.items ?? []),
+    ...(analysis.debtStructure?.items ?? []),
+  ];
+  const defaultConfidence = analysis.meta.confidence ?? (analysis.meta.source === "sec" ? "high" : "medium");
+  const defaultSource =
+    analysis.meta.source === "sec"
+      ? "SEC XBRL / company filing"
+      : `${analysis.meta.extractionMethod ?? "PDF extraction"} / company filing`;
+
+  return Object.fromEntries(
+    Object.entries(values).map(([field, value]) => {
+      const tags = TRACE_TAGS_BY_FIELD[field] ?? [];
+      const matchedItems = items.filter((item) =>
+        tags.some((tag) => item.tag.toLowerCase().includes(tag.toLowerCase())),
+      );
+      const primary = matchedItems[0] ?? null;
+      const label = primary?.label ?? field;
+      const source = primary?.source ?? defaultSource;
+      const confidence = primary?.confidence ?? defaultConfidence;
+      const statement = primary
+        ? `${label} from ${primary.period || analysis.meta.periodEnd || "the reported period"}`
+        : `${field} normalized by the workbook engine`;
+      const originalText = primary
+        ? `${primary.label} (${primary.tag}) • ${primary.source}`
+        : (analysis.meta.rawFilingText?.slice(0, 240) ?? "No exact source line stored for this computed workbook field.");
+      const normalizedCalculation =
+        NORMALIZED_CALC_BY_FIELD[field] ??
+        (primary
+          ? `Direct extraction normalized to ${typeof value === "number" ? "USD millions where applicable" : "reported text"}.`
+          : "Workbook field carried forward from normalized filing metrics.");
+
+      return [field, {
+        label,
+        value: value ?? null,
+        source,
+        confidence,
+        statement,
+        originalText,
+        normalizedCalculation,
+      }];
+    }),
+  );
+}
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -440,7 +539,7 @@ async function buildWorkbookResponse({
         + (corporateAllocationAdjustment ?? 0)
       : null;
     const adjustedOperatingMargin = adjustedOperatingIncome != null && rawRevenue != null && rawRevenue > 0
-      ? parseFloat((adjustedOperatingIncome / rawRevenue).toFixed(4))
+      ? parseFloat(((adjustedOperatingIncome / rawRevenue) * 100).toFixed(1))
       : null;
     const adjustedOpPerHead = volumeHeads != null && adjustedOperatingIncome != null && volumeHeads > 0
       ? parseFloat(((adjustedOperatingIncome * 1000) / volumeHeads).toFixed(2))
@@ -449,10 +548,56 @@ async function buildWorkbookResponse({
       ? parseFloat((adjustedOperatingIncome / volumeCwt).toFixed(2))
       : null;
     const sgaAsPercent = rawSga != null && rawRevenue != null && rawRevenue > 0
-      ? parseFloat((Math.abs(rawSga) / rawRevenue).toFixed(4))
+      ? parseFloat(((Math.abs(rawSga) / rawRevenue) * 100).toFixed(1))
       : null;
 
     const workflowOrigin = analysis.meta.workflowOrigin === "competitor" ? "competitor" : "analyze";
+    const rowMetricTrace = buildMetricTraceMap(analysis, {
+      revenue: rawRevenue,
+      grossProfit: overrides.grossProfit ?? metrics.grossProfit,
+      operatingIncome: rawOperatingIncome,
+      netIncome: overrides.netIncome ?? metrics.netIncome,
+      totalAssets: overrides.totalAssets ?? metrics.totalAssets,
+      totalLiabilities: overrides.totalLiabilities ?? metrics.totalLiabilities,
+      totalEquity: overrides.totalEquity ?? metrics.totalEquity,
+      totalDebt: overrides.totalDebt ?? metrics.totalDebt,
+      cashAndEquivalents: overrides.cashAndEquivalents ?? metrics.cash,
+      operatingCashFlow: overrides.operatingCashFlow ?? metrics.operatingCashFlow,
+      capex: overrides.capex ?? metrics.capex,
+      freeCashFlow: overrides.freeCashFlow ?? metrics.freeCashFlow,
+      grossMargin: overrides.grossMargin ?? metrics.grossMargin,
+      operatingMargin: overrides.operatingMargin ?? metrics.operatingMargin,
+      netMargin: overrides.netMargin ?? metrics.netMargin,
+      debtToEquity: overrides.debtToEquity ?? metrics.debtToEquity,
+      currentRatio: overrides.currentRatio ?? metrics.currentRatio,
+      sgaExpense: rawSga,
+      depreciation: overrides.depreciation ?? depItem?.value ?? null,
+      ebit: overrides.ebit ?? ebit,
+      ebitda: overrides.ebitda ?? ebitda,
+      ebitdaMargin: overrides.ebitdaMargin ?? ebitdaMargin,
+      interestExpense: overrides.interestExpense ?? analysis.incomeStatement?.interestExpense ?? null,
+      epsBasic: overrides.epsBasic ?? analysis.incomeStatement?.epsBasic ?? null,
+      epsDiluted: overrides.epsDiluted ?? analysis.incomeStatement?.epsDiluted ?? null,
+      shareBasedComp: overrides.shareBasedComp ?? sbcItem?.value ?? null,
+      dividendsPaid: overrides.dividendsPaid ?? metrics.dividendsPaid ?? null,
+      roe: overrides.roe ?? metrics.roe ?? null,
+      roa: overrides.roa ?? metrics.roa ?? null,
+      fcfMargin: overrides.fcfMargin ?? metrics.fcfMargin ?? null,
+      volumeHeads,
+      volumeLbs,
+      volumeCwt,
+      opPerHead,
+      opPerCwt,
+      ercAdjustment,
+      legalChargeAdjustment,
+      transferValueAdjustment,
+      corporateAllocationAdjustment,
+      adjustedOperatingIncome,
+      adjustedOperatingMargin,
+      adjustedOpPerHead,
+      adjustedOpPerCwt,
+      sgaAsPercent,
+    });
 
     rows.push({
       id: filingRow.id,
@@ -506,6 +651,7 @@ async function buildWorkbookResponse({
       adjustedOpPerHead,
       adjustedOpPerCwt,
       sgaAsPercent,
+      _metricTrace: rowMetricTrace,
     });
 
     const workbookPeriodState = workbookStateMap.get(filingRow.ticker)?.[filingRow.period_end];
@@ -655,6 +801,9 @@ async function loadThreadSnapshotFromId(
 
 /** GET /api/data-source - returns workbook rows for the shared view or a specific workbook thread */
 export async function GET(req: NextRequest) {
+  const authResult = await requireUserId(req);
+  if (authResult instanceof NextResponse) return authResult;
+
   const searchParams = new URL(req.url).searchParams;
   const includeNavigator = searchParams.get("includeNavigator") === "1";
   const requestedThreadId = searchParams.get("threadId")?.trim() ?? null;
@@ -926,6 +1075,9 @@ export async function PATCH(req: NextRequest) {
 
 /** DELETE /api/data-source - clear all filings for one workflow table */
 export async function DELETE(req: NextRequest) {
+  const adminResult = await requireAdminUser(req);
+  if (adminResult instanceof NextResponse) return adminResult;
+
   const body = (await req.json().catch(() => ({}))) as {
     workflowOrigin?: "analyze" | "competitor";
     confirmationText?: string;

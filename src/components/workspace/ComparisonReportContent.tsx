@@ -37,6 +37,7 @@ import type {
   MultiComparisonRow,
   MultiTrendPoint,
 } from "@/lib/companyComparison";
+import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import { StatusPill } from "@/components/ui/status-pill";
 import type { CompetitorEarningsReleasePayload } from "@/types/competitorRelease";
 
@@ -1439,7 +1440,7 @@ export function ComparisonReportContent({
       setCompetitorReleaseError(null);
 
       try {
-        const response = await fetch("/api/competitor-earnings-release", {
+        const response = await fetchWithAuth("/api/competitor-earnings-release", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -2003,4 +2004,3 @@ export function ComparisonReportContent({
     </div>
   );
 }
-

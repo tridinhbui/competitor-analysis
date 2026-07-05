@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateAiFinancialBoard } from "@/lib/financialModelAiBoard";
+import { requireAuthedUser } from "@/lib/serverAuth";
 import type { DataSourceRow } from "@/types/dataSource";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
+  const authResult = await requireAuthedUser(req);
+  if (authResult instanceof NextResponse) return authResult;
+
   let body: {
     rows?: DataSourceRow[];
     company?: { ticker: string; companyName: string } | null;

@@ -6,6 +6,7 @@ import type { AppendReview, TimelineSlot } from "@/types/competitor";
 import { QuarterReviewPanel } from "./QuarterReviewPanel";
 import { AgentWorkflow } from "@/components/filings/AgentWorkflow";
 import { analyzePdf } from "@/lib/pdfAnalysis";
+import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import {
   FileUp,
   CheckCircle2,
@@ -82,7 +83,7 @@ export function QuarterAppendFlow({
       setReview(null);
       setError("");
       try {
-        const resp = await fetch("/api/filings/append", {
+        const resp = await fetchWithAuth("/api/filings/append", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -160,7 +161,7 @@ export function QuarterAppendFlow({
     setPhase("confirming");
 
     try {
-      const resp = await fetch("/api/filings/append", {
+      const resp = await fetchWithAuth("/api/filings/append", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

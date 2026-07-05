@@ -31,7 +31,10 @@ import type { DataSourceWorkbookCellStyle, DataSourceWorkbookNumberFormat } from
 import type { EditableWorkbook, EditableWorkbookSheet } from "@/lib/excelWorkbook";
 
 const FONT_FAMILIES = ["Arial", "Calibri", "Georgia", "Times New Roman", "Verdana", "Courier New"];
-const FONT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24];
+const FONT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48];
+const DEFAULT_COLUMN_WIDTH = 118;
+const DEFAULT_ROW_HEIGHT = 34;
+const ROW_HEADER_WIDTH = 46;
 const NUMBER_FORMAT_OPTIONS: Array<{ value: "auto" | DataSourceWorkbookNumberFormat; label: string }> = [
   { value: "auto", label: "Automatic" },
   { value: "currency", label: "Currency" },
@@ -138,6 +141,9 @@ export function ExcelWorkbookEditor({ workbook, onChange, onError }: ExcelWorkbo
   const [formulaDraft, setFormulaDraft] = useState("");
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [clipboardBuffer, setClipboardBuffer] = useState("");
+  const [zoomLevel, setZoomLevel] = useState(100);
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const [rowHeights, setRowHeights] = useState<Record<string, number>>({});
 
   const safeSheetIndex = clamp(activeSheetIndex, 0, Math.max(workbook.sheets.length - 1, 0));
   const baseSheet = workbook.sheets[safeSheetIndex];
@@ -155,6 +161,13 @@ export function ExcelWorkbookEditor({ workbook, onChange, onError }: ExcelWorkbo
     }),
     [normalizedSelection]
   );
+  const totalGridWidth = useMemo(() => {
+    let width = ROW_HEADER_WIDTH;
+    for (let col = 0; col < colCount; col += 1) {
+      width += columnWidths[`${safeSheetIndex}:${col}`] ?? DEFAULT_COLUMN_WIDTH;
+    }
+    return width;
+  }, [colCount, columnWidths, safeSheetIndex]);
 
   useEffect(() => {
     if (activeSheetIndex !== safeSheetIndex) {
@@ -209,6 +222,7 @@ export function ExcelWorkbookEditor({ workbook, onChange, onError }: ExcelWorkbo
       window.removeEventListener("scroll", handleClose, true);
     };
   }, [contextMenu]);
+
 
   const selectedCellStyle = useMemo(
     () =>
@@ -301,6 +315,83 @@ export function ExcelWorkbookEditor({ workbook, onChange, onError }: ExcelWorkbo
       ...workbook,
       styles: nextStyles,
     });
+    focusGrid();
+  }
+
+  function getColumnWidth(col: number) {
+    return columnWidths[`${safeSheetIndex}:${col}`] ?? DEFAULT_COLUMN_WIDTH;
+  }
+
+  function getRowHeight(row: number) {
+    return rowHeights[`${safeSheetIndex}:${row}`] ?? DEFAULT_ROW_HEIGHT;
+  }
+
+  function resizeSelectedColumns(delta: number) {
+    setColumnWidths((current) => {
+      const next = { ...current };
+      for (let col = normalizedSelection.startCol; col <= normalizedSelection.endCol; col += 1) {
+        const key = `${safeSheetIndex}:${col}`;
+        next[key] = clamp((next[key] ?? DEFAULT_COLUMN_WIDTH) + delta, 56, 420);
+      }
+      return next;
+    });
+    focusGrid();
+  }
+
+  function resizeSelectedRows(delta: number) {
+    setRowHeights((current) => {
+      const next = { ...current };
+      for (let row = normalizedSelection.startRow; row <= normalizedSelection.endRow; row += 1) {
+        const key = `${safeSheetIndex}:${row}`;
+        next[key] = clamp((next[key] ?? DEFAULT_ROW_HEIGHT) + delta, 22, 180);
+      }
+      return next;
+    });
+    focusGrid();
+  }
+
+  function handleColumnResizeStart(col: number, event: React.MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startWidth = getColumnWidth(col);
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      setColumnWidths((current) => ({
+        ...current,
+        [`${safeSheetIndex}:${col}`]: clamp(startWidth + moveEvent.clientX - startX, 56, 520),
+      }));
+    };
+    const handleMouseUp = () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+      focusGrid();
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+  }
+
+  function handleRowResizeStart(row: number, event: React.MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    const startY = event.clientY;
+    const startHeight = getRowHeight(row);
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      setRowHeights((current) => ({
+        ...current,
+        [`${safeSheetIndex}:${row}`]: clamp(startHeight + moveEvent.clientY - startY, 22, 180),
+      }));
+    };
+    const handleMouseUp = () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+      focusGrid();
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
   }
 
   function remapStylesForRows(startRow: number, deletedRows: number, insertedRows: number) {
@@ -486,6 +577,36 @@ export function ExcelWorkbookEditor({ workbook, onChange, onError }: ExcelWorkbo
       return;
     }
 
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b") {
+      event.preventDefault();
+      applyStylePatch({ bold: !selectedCellStyle?.bold });
+      return;
+    }
+
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "i") {
+      event.preventDefault();
+      applyStylePatch({ italic: !selectedCellStyle?.italic });
+      return;
+    }
+
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "u") {
+      event.preventDefault();
+      applyStylePatch({ underline: !selectedCellStyle?.underline });
+      return;
+    }
+
+    if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === ">") {
+      event.preventDefault();
+      applyStylePatch({ fontSize: Math.min(72, (selectedCellStyle?.fontSize ?? 12) + 1) });
+      return;
+    }
+
+    if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === "<") {
+      event.preventDefault();
+      applyStylePatch({ fontSize: Math.max(6, (selectedCellStyle?.fontSize ?? 12) - 1) });
+      return;
+    }
+
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "x") {
       event.preventDefault();
       void cutSelection();
@@ -588,6 +709,18 @@ export function ExcelWorkbookEditor({ workbook, onChange, onError }: ExcelWorkbo
               </select>
             </label>
             <ToolbarButton
+              title="Decrease font size"
+              onClick={() => applyStylePatch({ fontSize: Math.max(6, (selectedCellStyle?.fontSize ?? 12) - 1) })}
+            >
+              <span className="text-sm font-bold">A-</span>
+            </ToolbarButton>
+            <ToolbarButton
+              title="Increase font size"
+              onClick={() => applyStylePatch({ fontSize: Math.min(72, (selectedCellStyle?.fontSize ?? 12) + 1) })}
+            >
+              <span className="text-sm font-bold">A+</span>
+            </ToolbarButton>
+            <ToolbarButton
               title="Bold"
               active={Boolean(selectedCellStyle?.bold)}
               onClick={() => applyStylePatch({ bold: !selectedCellStyle?.bold })}
@@ -632,6 +765,32 @@ export function ExcelWorkbookEditor({ workbook, onChange, onError }: ExcelWorkbo
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600">
+              Zoom
+              <select
+                value={zoomLevel}
+                onChange={(event) => setZoomLevel(Number(event.target.value))}
+                className="bg-transparent outline-none"
+              >
+                {[50, 75, 90, 100, 110, 125, 150, 175, 200].map((zoom) => (
+                  <option key={zoom} value={zoom}>
+                    {zoom}%
+                  </option>
+                ))}
+              </select>
+            </label>
+            <ToolbarButton title="Narrow selected columns" onClick={() => resizeSelectedColumns(-16)}>
+              <span className="text-sm font-bold">W-</span>
+            </ToolbarButton>
+            <ToolbarButton title="Widen selected columns" onClick={() => resizeSelectedColumns(16)}>
+              <span className="text-sm font-bold">W+</span>
+            </ToolbarButton>
+            <ToolbarButton title="Shorten selected rows" onClick={() => resizeSelectedRows(-6)}>
+              <span className="text-sm font-bold">H-</span>
+            </ToolbarButton>
+            <ToolbarButton title="Taller selected rows" onClick={() => resizeSelectedRows(6)}>
+              <span className="text-sm font-bold">H+</span>
+            </ToolbarButton>
             <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600">
               Number
               <select
@@ -732,14 +891,37 @@ export function ExcelWorkbookEditor({ workbook, onChange, onError }: ExcelWorkbo
       <div
         ref={gridRef}
         tabIndex={0}
+        onMouseDownCapture={(event) => {
+          if (
+            event.target instanceof HTMLInputElement ||
+            event.target instanceof HTMLTextAreaElement ||
+            event.target instanceof HTMLSelectElement
+          ) {
+            return;
+          }
+          focusGrid();
+        }}
         onKeyDown={handleKeyDown}
         onPaste={(event) => {
           event.preventDefault();
           applyPastedText(event.clipboardData.getData("text/plain"));
         }}
-        className="relative max-h-[30rem] overflow-auto outline-none focus:ring-2 focus:ring-primary/15"
+        className="relative max-h-[44rem] overflow-auto outline-none focus:ring-2 focus:ring-primary/15"
       >
-        <table className="border-separate border-spacing-0 text-[11px]" style={{ minWidth: `${Math.max(colCount * 102, 620)}px` }}>
+        <div
+          style={{
+            transform: `scale(${zoomLevel / 100})`,
+            transformOrigin: "top left",
+            width: `${100 / (zoomLevel / 100)}%`,
+          }}
+        >
+        <table className="border-separate border-spacing-0 text-[11px]" style={{ minWidth: `${Math.max(totalGridWidth, 620)}px`, tableLayout: "fixed" }}>
+          <colgroup>
+            <col style={{ width: ROW_HEADER_WIDTH }} />
+            {Array.from({ length: colCount }, (_, colIndex) => (
+              <col key={`col-width-${colIndex}`} style={{ width: getColumnWidth(colIndex) }} />
+            ))}
+          </colgroup>
           <thead className="sticky top-0 z-20">
             <tr>
               <th className="sticky left-0 z-30 border-b border-r border-slate-200 bg-slate-100 px-2.5 py-1.5 text-center font-semibold text-slate-500">
@@ -759,9 +941,17 @@ export function ExcelWorkbookEditor({ workbook, onChange, onError }: ExcelWorkbo
                       endCol: colIndex,
                     });
                   }}
-                  className="cursor-pointer select-none border-b border-r border-slate-200 bg-slate-100 px-2.5 py-1.5 text-center font-semibold text-slate-500 hover:bg-slate-200/70"
+                  className="relative cursor-pointer select-none border-b border-r border-slate-200 bg-slate-100 px-2.5 py-1.5 text-center font-semibold text-slate-500 hover:bg-slate-200/70"
+                  style={{ width: getColumnWidth(colIndex) }}
                 >
                   {columnIndexToLetter(colIndex)}
+                  <span
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-label={`Resize column ${columnIndexToLetter(colIndex)}`}
+                    onMouseDown={(event) => handleColumnResizeStart(colIndex, event)}
+                    className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-primary/40"
+                  />
                 </th>
               ))}
             </tr>
@@ -782,8 +972,16 @@ export function ExcelWorkbookEditor({ workbook, onChange, onError }: ExcelWorkbo
                     });
                   }}
                   className="sticky left-0 z-10 cursor-pointer select-none border-b border-r border-slate-200 bg-slate-50 px-2.5 py-1.5 text-center font-semibold text-slate-500 hover:bg-slate-100"
+                  style={{ height: getRowHeight(rowIndex) }}
                 >
                   {rowIndex + 1}
+                  <span
+                    role="separator"
+                    aria-orientation="horizontal"
+                    aria-label={`Resize row ${rowIndex + 1}`}
+                    onMouseDown={(event) => handleRowResizeStart(rowIndex, event)}
+                    className="absolute bottom-0 left-0 h-1.5 w-full cursor-row-resize bg-transparent hover:bg-primary/40"
+                  />
                 </th>
                 {Array.from({ length: colCount }, (_, colIndex) => {
                   const key = cellStyleKey(safeSheetIndex, rowIndex, colIndex);
@@ -843,6 +1041,8 @@ export function ExcelWorkbookEditor({ workbook, onChange, onError }: ExcelWorkbo
                         active && "shadow-[inset_0_0_0_2px_rgba(43,124,255,0.7)]"
                       )}
                       style={{
+                        width: getColumnWidth(colIndex),
+                        height: getRowHeight(rowIndex),
                         color: style?.textColor ?? undefined,
                         backgroundColor: selected ? undefined : style?.fillColor ?? undefined,
                         fontFamily: style?.fontFamily ?? undefined,
@@ -860,11 +1060,11 @@ export function ExcelWorkbookEditor({ workbook, onChange, onError }: ExcelWorkbo
                           autoFocus
                           value={editDraft}
                           onChange={(event) => setEditDraft(event.target.value)}
-                          onBlur={() => commitEdit(editDraft, rowIndex, colIndex)}
+                          onBlur={(event) => commitEdit(event.currentTarget.value, rowIndex, colIndex)}
                           onKeyDown={(event) => {
                             if (event.key === "Enter") {
                               event.preventDefault();
-                              commitEdit(editDraft, rowIndex, colIndex);
+                              commitEdit(event.currentTarget.value, rowIndex, colIndex);
                             }
                             if (event.key === "Escape") {
                               event.preventDefault();
@@ -886,6 +1086,7 @@ export function ExcelWorkbookEditor({ workbook, onChange, onError }: ExcelWorkbo
             ))}
           </tbody>
         </table>
+        </div>
 
         {contextMenu ? (
           <div

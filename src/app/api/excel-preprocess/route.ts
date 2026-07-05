@@ -3,11 +3,15 @@ import {
   CompanyComparisonRequestError,
 } from "@/lib/companyComparisonPayload";
 import { preprocessCompetitorWorkbookFromArrayBuffer } from "@/lib/excelCompetitorPreprocess";
+import { requireAuthedUser } from "@/lib/serverAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
+  const authResult = await requireAuthedUser(request);
+  if (authResult instanceof Response) return authResult;
+
   try {
     const formData = await request.formData();
     const file = formData.get("file");

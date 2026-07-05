@@ -75,7 +75,7 @@ export function AnalysisHistoryPanel() {
             </p>
             <h1 className="mt-1 text-xl font-bold tracking-tight text-slate-900">Analysis History</h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-500">
-              {threads.length} past analyses saved. Reopen a run to restore the analysis state inside Analyze.
+              {threads.length} past analyses saved. Reopen a run to restore the analysis state inside Analyze and continue the extract → workbook → export workflow.
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">

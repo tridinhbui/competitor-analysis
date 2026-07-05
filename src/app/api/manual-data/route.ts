@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAuthedUser } from "@/lib/serverAuth";
 import {
   listManualData,
   upsertManualData,
@@ -11,6 +12,9 @@ import type { ManualDataType } from "@/types/manualData";
  * Lists manual data entries. ticker is required; type and periodEnd are optional filters.
  */
 export async function GET(req: NextRequest) {
+  const authResult = await requireAuthedUser(req);
+  if (authResult instanceof NextResponse) return authResult;
+
   const ticker = req.nextUrl.searchParams.get("ticker")?.toUpperCase();
   if (!ticker) {
     return NextResponse.json({ error: "ticker required" }, { status: 400 });
@@ -40,6 +44,9 @@ export async function GET(req: NextRequest) {
  * Creates or updates a manual data entry.
  */
 export async function POST(req: NextRequest) {
+  const authResult = await requireAuthedUser(req);
+  if (authResult instanceof NextResponse) return authResult;
+
   const body = await req.json();
   if (!body.ticker || !body.dataType) {
     return NextResponse.json(
@@ -70,6 +77,9 @@ export async function POST(req: NextRequest) {
  * Deletes a manual data entry by ID.
  */
 export async function DELETE(req: NextRequest) {
+  const authResult = await requireAuthedUser(req);
+  if (authResult instanceof NextResponse) return authResult;
+
   const id = req.nextUrl.searchParams.get("id");
   if (!id) {
     return NextResponse.json({ error: "id required" }, { status: 400 });

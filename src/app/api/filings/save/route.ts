@@ -13,6 +13,7 @@ import {
   resolveTicker,
 } from "@/lib/filingIdentity";
 import { supabase } from "@/lib/supabase";
+import { requireAuthedUser } from "@/lib/serverAuth";
 import type { FullAnalysis } from "@/types/analysis";
 
 export const runtime = "nodejs";
@@ -36,6 +37,9 @@ async function loadDataSourceOverrides(
 }
 
 export async function POST(request: Request) {
+  const authResult = await requireAuthedUser(request);
+  if (authResult instanceof Response) return authResult;
+
   try {
     const body = await request.json();
     const { ticker, periodEnd, source, analysis } = body as {

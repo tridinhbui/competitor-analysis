@@ -2,7 +2,7 @@
 
 import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { DataSourceRow } from "@/types/dataSource";
+import type { DataSourceMetricTrace, DataSourceRow } from "@/types/dataSource";
 import type {
   DataSourceEditLogEntry,
   DataSourceWorkbookCellState,
@@ -29,7 +29,10 @@ import {
   AlignCenter,
   AlignLeft,
   AlignRight,
+  BarChart3,
+  Baseline,
   Bold,
+  Brush,
   ChevronLeft,
   ChevronRight,
   ClipboardPaste,
@@ -37,15 +40,29 @@ import {
   DollarSign,
   Download,
   Eraser,
+  Eye,
+  FileSpreadsheet,
+  Filter,
   Italic,
+  Link,
+  ListFilter,
   Loader2,
+  MessageSquarePlus,
+  Minus,
+  MoreVertical,
+  PaintBucket,
   Percent,
   Plus,
+  Printer,
   Redo2,
   RotateCcw,
   Save,
   Scissors,
+  Search,
+  Sigma,
   Strikethrough,
+  Table2,
+  Trash2,
   Underline,
   Undo2,
   X,
@@ -61,6 +78,7 @@ import {
   normalizeCellStyle,
   serializeWorkbookRowCellStates,
   WORKBOOK_COLUMNS,
+  type WorkbookColumn,
   type WorkbookNumericOverrideMap,
   type WorkbookRowCellStateMap,
 } from "@/lib/dataSourceWorkbook";
@@ -306,10 +324,15 @@ const WORKBOOK_SECTIONS: readonly WorkbookSectionConfig[] = [
 const WORKBOOK_COLUMN_INDEX_BY_FIELD = new Map(
   WORKBOOK_COLUMNS.map((column, index) => [column.field, index]),
 );
+const CUSTOM_WORKBOOK_FIELD_PREFIX = "__custom_col__";
 
 function getWorkbookColumnsForSection(section: WorkbookSectionConfig) {
   const fieldSet = new Set<string>([...BASE_WORKBOOK_FIELDS, ...section.exportFields]);
   return WORKBOOK_COLUMNS.filter((column) => fieldSet.has(column.field));
+}
+
+function isEditableWorkbookField(field: string): boolean {
+  return Boolean(field);
 }
 
 function getDefaultColumnWidth(field: string): number {
@@ -932,10 +955,309 @@ function ToolbarButton({
   );
 }
 
+function RibbonCommand({
+  active = false,
+  disabled = false,
+  icon,
+  label,
+  hint,
+  onClick,
+}: {
+  active?: boolean;
+  disabled?: boolean;
+  icon: React.ReactNode;
+  label: string;
+  hint?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      title={hint ?? label}
+      disabled={disabled}
+      onClick={onClick}
+      className={`inline-flex min-h-12 items-center gap-2 rounded-md border px-3 py-2 text-left text-xs font-semibold transition ${
+        active
+          ? "border-[#217346]/40 bg-[#e9f5ee] text-[#217346]"
+          : "border-[#d0d7de] bg-white text-slate-700 hover:bg-[#f7f7f7]"
+      } disabled:cursor-not-allowed disabled:opacity-50`}
+    >
+      <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[#f3f6f4] text-[#217346]">
+        {icon}
+      </span>
+      <span className="leading-4">{label}</span>
+    </button>
+  );
+}
+
+function CompactToolbarButton({
+  active = false,
+  disabled = false,
+  title,
+  onClick,
+  children,
+}: {
+  active?: boolean;
+  disabled?: boolean;
+  title: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      disabled={disabled}
+      onClick={onClick}
+      className={`inline-flex h-8 min-w-8 items-center justify-center rounded px-1.5 text-slate-700 transition ${
+        active ? "bg-[#dcebe3] text-[#217346]" : "hover:bg-slate-200/80"
+      } disabled:cursor-not-allowed disabled:opacity-40`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SheetContextMenuItem({
+  disabled = false,
+  icon,
+  label,
+  shortcut,
+  badge,
+  submenu = false,
+  onClick,
+}: {
+  disabled?: boolean;
+  icon: React.ReactNode;
+  label: string;
+  shortcut?: string;
+  badge?: string;
+  submenu?: boolean;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="flex h-8 w-full items-center gap-3 px-3 text-left text-sm text-slate-800 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400 disabled:hover:bg-transparent"
+    >
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center text-slate-600 group-disabled:text-slate-300">
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {badge ? (
+        <span className="rounded-full bg-emerald-700 px-2 py-0.5 text-[11px] font-bold text-white">
+          {badge}
+        </span>
+      ) : null}
+      {shortcut ? <span className="text-xs text-slate-400">{shortcut}</span> : null}
+      {submenu ? <ChevronRight className="h-4 w-4 text-slate-500" /> : null}
+    </button>
+  );
+}
+
+function confidenceBadgeClass(confidence: DataSourceMetricTrace["confidence"] | "edited" | "calculated") {
+  switch (confidence) {
+    case "high":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "medium":
+      return "border-amber-200 bg-amber-50 text-amber-700";
+    case "low":
+      return "border-rose-200 bg-rose-50 text-rose-700";
+    case "calculated":
+      return "border-blue-200 bg-blue-50 text-blue-700";
+    case "edited":
+      return "border-violet-200 bg-violet-50 text-violet-700";
+    default:
+      return "border-slate-200 bg-slate-50 text-slate-600";
+  }
+}
+
+function formatTraceValue(value: string | number | null | undefined): string {
+  if (value == null || value === "") return "Blank";
+  if (typeof value === "number") return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return value;
+}
+
+function MetricDetailDrawer({
+  open,
+  row,
+  field,
+  column,
+  cellReference,
+  displayValue,
+  trace,
+  cellState,
+  derivedFormula,
+  editEntries,
+  onClose,
+}: {
+  open: boolean;
+  row: DataSourceRow | null;
+  field: string | null;
+  column: WorkbookColumn | null;
+  cellReference: string | null;
+  displayValue: string;
+  trace: DataSourceMetricTrace | null;
+  cellState: DataSourceWorkbookCellState | null;
+  derivedFormula: string | null;
+  editEntries: DataSourceEditLogEntry[];
+  onClose: () => void;
+}) {
+  if (!open) return null;
+
+  const metricName = column?.label ?? field ?? "Selected cell";
+  const formula = cellState?.formula ?? derivedFormula ?? null;
+  const isEdited = editEntries.length > 0;
+  const statusBadges: Array<{ label: string; tone: DataSourceMetricTrace["confidence"] | "edited" | "calculated" }> = [];
+  if (trace) statusBadges.push({ label: "Extracted", tone: trace.confidence });
+  if (formula) statusBadges.push({ label: "Calculated", tone: "calculated" });
+  if (isEdited) statusBadges.push({ label: "Edited", tone: "edited" });
+  if (statusBadges.length === 0) statusBadges.push({ label: "Manual / blank", tone: "medium" });
+
+  const source = trace?.source ?? "Workbook value; no filing source attached yet.";
+  const originalText = trace?.originalText ?? "No exact filing line stored for this cell yet.";
+  const normalizedCalculation =
+    formula ??
+    trace?.normalizedCalculation ??
+    "Direct workbook value. Add a formula or re-run extraction to attach a richer calculation trail.";
+  const explanation = formula
+    ? `${metricName} is calculated in the workbook from ${formula}. Validate referenced cells before using it in an investor memo.`
+    : trace
+      ? `${metricName} is tied to ${source}. The value should be read with ${trace.confidence} confidence and reconciled against nearby period trends before publication.`
+      : `${metricName} is currently a workbook-only value. Treat it as analyst-maintained until it is connected to a filing source.`;
+  const managementQuestion = `What drove ${metricName.toLowerCase()} for ${row?.ticker ?? "this company"} in ${row?.quarterLabel ?? "this period"}, and is the change recurring, timing-related, or one-time?`;
+
+  const traceMarkdown = [
+    `Metric: ${metricName}`,
+    `Cell: ${cellReference ?? "N/A"}`,
+    `Company: ${row?.ticker ?? "N/A"} (${row?.companyName ?? "N/A"})`,
+    `Period: ${row?.quarterLabel ?? "N/A"} / ${row?.periodEnd ?? "N/A"}`,
+    `Value: ${displayValue || formatTraceValue(trace?.value)}`,
+    `Source: ${source}`,
+    `Confidence: ${trace?.confidence ?? "workbook-only"}`,
+    `Original line: ${originalText}`,
+    `Calculation: ${normalizedCalculation}`,
+    `AI explanation: ${explanation}`,
+    `Management question: ${managementQuestion}`,
+  ].join("\n");
+
+  return (
+    <aside className="fixed right-5 top-24 z-40 flex max-h-[calc(100vh-7rem)] w-[430px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+      <div className="border-b border-slate-200 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 p-5 text-white">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-xs font-bold uppercase tracking-[0.22em] text-emerald-200">Metric detail</p>
+            <h3 className="mt-2 truncate text-xl font-semibold">{metricName}</h3>
+            <p className="mt-1 text-sm text-slate-300">
+              {cellReference ?? "No cell"} · {row?.ticker ?? "No company"} · {row?.quarterLabel ?? "No period"}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-white/10 bg-white/10 p-2 text-white transition hover:bg-white/20"
+            aria-label="Close metric detail"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="mt-4 rounded-xl border border-white/10 bg-white/10 p-4">
+          <p className="text-xs uppercase tracking-[0.18em] text-slate-300">Current value</p>
+          <p className="mt-1 text-3xl font-semibold">{displayValue || formatTraceValue(trace?.value)}</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {statusBadges.map((badge) => (
+              <span
+                key={`${badge.label}-${badge.tone}`}
+                className={`rounded-full border px-2.5 py-1 text-xs font-bold ${confidenceBadgeClass(badge.tone)}`}
+              >
+                {badge.label}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5 text-sm text-slate-700">
+        <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <div className="flex items-center gap-2 font-semibold text-slate-900">
+            <FileSpreadsheet className="h-4 w-4 text-emerald-700" />
+            Source
+          </div>
+          <p className="mt-2 leading-6">{source}</p>
+          <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3 font-mono text-xs leading-5 text-slate-600">
+            {originalText}
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-slate-200 bg-white p-4">
+          <p className="font-semibold text-slate-900">Normalized calculation</p>
+          <p className="mt-2 rounded-lg bg-slate-950 p-3 font-mono text-xs leading-5 text-emerald-100">
+            {normalizedCalculation}
+          </p>
+        </section>
+
+        <section className="rounded-xl border border-slate-200 bg-white p-4">
+          <p className="font-semibold text-slate-900">AI explanation</p>
+          <p className="mt-2 leading-6">{explanation}</p>
+        </section>
+
+        <section className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <p className="font-semibold text-amber-950">Management question</p>
+          <p className="mt-2 leading-6 text-amber-900">{managementQuestion}</p>
+        </section>
+
+        <section className="rounded-xl border border-slate-200 bg-white p-4">
+          <p className="font-semibold text-slate-900">Edit history</p>
+          {editEntries.length > 0 ? (
+            <div className="mt-3 space-y-2">
+              {editEntries.slice(0, 6).map((entry) => (
+                <div key={`${entry.at}-${entry.field}-${entry.kind}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <div className="flex items-center justify-between gap-3 text-xs">
+                    <span className="font-bold uppercase tracking-[0.16em] text-slate-500">{entry.kind}</span>
+                    <span className="text-slate-400">{new Date(entry.at).toLocaleString()}</span>
+                  </div>
+                  <p className="mt-2 font-mono text-xs text-slate-700">
+                    {formatTraceValue(entry.prevValue)} → {formatTraceValue(entry.nextValue)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-2 text-slate-500">No saved edits for this cell yet.</p>
+          )}
+        </section>
+      </div>
+
+      <div className="flex items-center gap-2 border-t border-slate-200 bg-white p-4">
+        <button
+          type="button"
+          onClick={() => {
+            void navigator.clipboard?.writeText(traceMarkdown);
+          }}
+          className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-800"
+        >
+          <Copy className="h-4 w-4" />
+          Copy trace
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+        >
+          Close
+        </button>
+      </div>
+    </aside>
+  );
+}
+
 export default function DataSourcePage({ embedded = false }: { embedded?: boolean } = {}) {
   const router = useRouter();
   const workbookRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const initialWorkbookCellsRef = useRef<string>("{}");
   const initialThreadSelectionAppliedRef = useRef(false);
   const workbookSignatureRef = useRef<string>("");
@@ -964,23 +1286,32 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
   const [creatingThreadTicker, setCreatingThreadTicker] = useState<string | null>(null);
   const [activeSheet, setActiveSheet] = useState<WorkbookSectionKey>("underwriting");
   const [financialScrollTarget, setFinancialScrollTarget] = useState<string | null>(null);
+  const [ribbonTab, setRibbonTab] = useState<"home" | "insert" | "review" | "view">("home");
+  const [zoomLevel, setZoomLevel] = useState(100);
+  const [freezeFirstColumn, setFreezeFirstColumn] = useState(true);
+  const [showFormulas, setShowFormulas] = useState(false);
+  const [sheetSearchQuery, setSheetSearchQuery] = useState("");
+  const [activeSearchMatchIndex, setActiveSearchMatchIndex] = useState(0);
+  const [worksheetColumnsBySheet, setWorksheetColumnsBySheet] = useState<Partial<Record<WorkbookSectionKey, WorkbookColumn[]>>>({});
   const [sortByWorkflow, setSortByWorkflow] = useState<Record<WorkflowOrigin, SortState | null>>({
     analyze: null,
     competitor: null,
   });
   const [editingEnabled, setEditingEnabled] = useState<Record<WorkflowOrigin, boolean>>({
-    analyze: false,
-    competitor: false,
+    analyze: true,
+    competitor: true,
   });
   const [selection, setSelection] = useState<SelectionRange | null>(null);
   const [editingCell, setEditingCell] = useState<{ rowId: string; field: string } | null>(null);
   const [inlineDraft, setInlineDraft] = useState("");
   const [formulaDraft, setFormulaDraft] = useState("");
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [metricDetailOpen, setMetricDetailOpen] = useState(false);
   const [undoStack, setUndoStack] = useState<HistorySnapshot[]>([]);
   const [redoStack, setRedoStack] = useState<HistorySnapshot[]>([]);
   const [editConfirm, setEditConfirm] = useState<EditConfirmState | null>(null);
   const [editWarningAcknowledged, setEditWarningAcknowledged] = useState(false);
+  const [copiedCellStyle, setCopiedCellStyle] = useState<DataSourceWorkbookCellStyle | null>(null);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const [cellMerges, setCellMerges] = useState<Record<WorkflowOrigin, Record<string, { rowSpan: number; colSpan: number }>>>({
     analyze: {},
@@ -1097,9 +1428,14 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
     [activeSheet],
   );
 
-  const visibleColumns = useMemo(
+  const baseVisibleColumns = useMemo(
     () => getWorkbookColumnsForSection(activeSheetConfig),
     [activeSheetConfig],
+  );
+
+  const visibleColumns = useMemo(
+    () => worksheetColumnsBySheet[activeSheet] ?? baseVisibleColumns,
+    [activeSheet, baseVisibleColumns, worksheetColumnsBySheet],
   );
 
   const totalTableWidth = useMemo(() => {
@@ -1509,18 +1845,93 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
     ? getWorkbookStateForCell(workbookCells, selectedRow.id, selectedField)
     : null;
   const selectedStyle = normalizeCellStyle(selectedCellState?.style);
+  const copySelectedStyle = useCallback(() => {
+    setCopiedCellStyle(selectedStyle ? { ...selectedStyle } : null);
+  }, [selectedStyle]);
   const selectedCellError =
     selectedRow && selectedField ? formulaErrors[`${selectedRow.id}:${selectedField}`] ?? null : null;
-  const canEditSelectedCell = Boolean(selectedRow && selectedField && EDITABLE_WORKBOOK_FIELDS.has(selectedField));
+  const canEditSelectedCell = Boolean(selectedRow && selectedField && isEditableWorkbookField(selectedField));
   const selectedDerivedFormula =
     selectedRow && selectedField && selectedRowNumber
       ? getWorkbookDerivedFormula(selectedRow, selectedField, selectedRowNumber)
       : null;
+  const selectedCellReference =
+    normalizedSelection && selectedColumn && selectedRowNumber
+      ? `${columnIndexToLetter(WORKBOOK_COLUMN_INDEX_BY_FIELD.get(selectedColumn.field) ?? normalizedSelection.endCol)}${selectedRowNumber}`
+      : null;
+  const selectedMetricTrace = selectedRow && selectedField
+    ? selectedRow._metricTrace?.[selectedField] ?? null
+    : null;
+  const selectedDisplayValue = selectedRow && selectedField
+    ? fmtCellWithOverride(getRowFieldValue(selectedRow, selectedField), selectedColumn?.format, selectedStyle?.numberFormat)
+    : "";
+  const selectedEditEntries = useMemo(() => {
+    if (!selectedRow || !selectedField) return [];
+    return editLog
+      .filter((entry) =>
+        entry.field === selectedField &&
+        entry.ticker === selectedRow.ticker &&
+        entry.periodEnd === selectedRow.periodEnd,
+      )
+      .sort((left, right) => right.at.localeCompare(left.at));
+  }, [editLog, selectedField, selectedRow]);
   const formulaReferenceHighlights = useMemo(() => {
     const draft = formulaDraft.trim();
     if (!draft.startsWith("=")) return new Map<string, number>();
     return getFormulaReferenceHighlights(draft);
   }, [formulaDraft]);
+
+  const visibleSearchMatches = useMemo(() => {
+    const query = sheetSearchQuery.trim().toLowerCase();
+    if (!query) return [];
+    const matches: Array<{ rowIndex: number; colIndex: number; key: string }> = [];
+
+    visibleRows.forEach((row, rowIndex) => {
+      visibleColumns.forEach((column, colIndex) => {
+        const state = getWorkbookStateForCell(workbookCells, row.id, column.field);
+        const raw = getRowFieldValue(row, column.field);
+        const searchable = [
+          column.label,
+          state?.formula,
+          raw == null ? "" : String(raw),
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+
+        if (searchable.includes(query)) {
+          matches.push({ rowIndex, colIndex, key: `${rowIndex}:${colIndex}` });
+        }
+      });
+    });
+
+    return matches;
+  }, [sheetSearchQuery, visibleColumns, visibleRows, workbookCells]);
+
+  const searchMatchIndexByCell = useMemo(() => {
+    return new Map(visibleSearchMatches.map((match, index) => [match.key, index]));
+  }, [visibleSearchMatches]);
+
+  useEffect(() => {
+    setActiveSearchMatchIndex(0);
+  }, [sheetSearchQuery, activeSheet]);
+
+  const jumpToSearchMatch = useCallback((direction: "next" | "previous") => {
+    if (visibleSearchMatches.length === 0) return;
+    const nextIndex =
+      direction === "next"
+        ? (activeSearchMatchIndex + 1) % visibleSearchMatches.length
+        : (activeSearchMatchIndex - 1 + visibleSearchMatches.length) % visibleSearchMatches.length;
+    const match = visibleSearchMatches[nextIndex];
+    setActiveSearchMatchIndex(nextIndex);
+    setSelection({
+      startRow: match.rowIndex,
+      endRow: match.rowIndex,
+      startCol: match.colIndex,
+      endCol: match.colIndex,
+    });
+    workbookRef.current?.focus();
+  }, [activeSearchMatchIndex, visibleSearchMatches]);
 
   const syncFormulaDraftFromSelection = useCallback(() => {
     if (!selectedRow || !selectedField) {
@@ -1529,12 +1940,12 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
     }
 
     const currentState = getWorkbookStateForCell(workbookCells, selectedRow.id, selectedField);
-    if (currentState?.formula && EDITABLE_WORKBOOK_FIELDS.has(selectedField)) {
+    if (currentState?.formula && isEditableWorkbookField(selectedField)) {
       setFormulaDraft(currentState.formula);
       return;
     }
 
-    if (selectedDerivedFormula && EDITABLE_WORKBOOK_FIELDS.has(selectedField)) {
+    if (selectedDerivedFormula && isEditableWorkbookField(selectedField)) {
       setFormulaDraft(selectedDerivedFormula);
       return;
     }
@@ -1728,10 +2139,7 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
       return;
     }
 
-    const defaultEditableCol = Math.max(
-      0,
-      visibleColumns.findIndex((column) => column.editable),
-    );
+    const defaultEditableCol = 0;
     const maxColIndex = visibleColumns.length - 1;
 
     if (!selection) {
@@ -1841,15 +2249,9 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
   }, []);
 
   const toggleEditMode = (workflow: WorkflowOrigin) => {
-    if (editingEnabled[workflow]) {
-      setEditingEnabled((prev) => ({ ...prev, [workflow]: false }));
-      return;
-    }
-    if (editWarningAcknowledged) {
-      setEditingEnabled((prev) => ({ ...prev, [workflow]: true }));
-      return;
-    }
-    setEditConfirm({ workflow });
+    setEditingEnabled((prev) => ({ ...prev, [workflow]: true }));
+    setEditWarningAcknowledged(true);
+    persistEditWarningAcknowledged();
   };
 
   const confirmEnableEditing = () => {
@@ -1862,13 +2264,46 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
 
   const ensureEditingEnabled = useCallback((workflow: WorkflowOrigin): boolean => {
     if (editingEnabled[workflow]) return true;
-    if (editWarningAcknowledged) {
-      setEditingEnabled((prev) => ({ ...prev, [workflow]: true }));
-      return true;
+    setEditingEnabled((prev) => ({ ...prev, [workflow]: true }));
+    setEditWarningAcknowledged(true);
+    persistEditWarningAcknowledged();
+    return true;
+  }, [editingEnabled, persistEditWarningAcknowledged]);
+
+  const createBlankWorksheetRow = useCallback((): DataSourceRow => {
+    const row = Object.fromEntries(WORKBOOK_COLUMNS.map((column) => [column.field, null])) as Record<string, unknown>;
+    for (const column of visibleColumns) {
+      if (column.field.startsWith(CUSTOM_WORKBOOK_FIELD_PREFIX)) row[column.field] = null;
     }
-    setEditConfirm({ workflow });
-    return false;
-  }, [editingEnabled, editWarningAcknowledged]);
+    const timestamp = Date.now();
+    row.id = `local-row-${timestamp}-${Math.random().toString(36).slice(2, 8)}`;
+    row.workflowOrigin = activeWorkflow;
+    row.ticker = selectedCompanyTicker ?? selectedCompany?.ticker ?? "LOCAL";
+    row.companyName = selectedCompany?.companyName ?? "Local worksheet row";
+    row.periodEnd = "";
+    row.quarterLabel = "";
+    row.savedAt = new Date().toISOString();
+    return row as unknown as DataSourceRow;
+  }, [activeWorkflow, selectedCompany, selectedCompanyTicker, visibleColumns]);
+
+  useEffect(() => {
+    if (loading || currentWorkbookRows.length > 0 || visibleColumns.length === 0) return;
+    const blankRow = createBlankWorksheetRow();
+    setBaseRows((rows) => {
+      const targetTicker = selectedCompanyTicker ?? selectedCompany?.ticker ?? "LOCAL";
+      const hasTargetRow = rows.some((row) => row.ticker?.toUpperCase() === targetTicker.toUpperCase());
+      return hasTargetRow ? rows : [...rows, blankRow];
+    });
+  }, [createBlankWorksheetRow, currentWorkbookRows.length, loading, selectedCompany, selectedCompanyTicker, visibleColumns.length]);
+
+  const materializeRowsThroughIndex = useCallback((targetRowIndex: number) => {
+    const missingRows = targetRowIndex - visibleRows.length + 1;
+    if (missingRows <= 0) return;
+    setBaseRows((rows) => [
+      ...rows,
+      ...Array.from({ length: missingRows }, () => createBlankWorksheetRow()),
+    ]);
+  }, [createBlankWorksheetRow, visibleRows.length]);
 
   const getSelectionCells = useCallback(() => {
     if (!selection) return [];
@@ -1885,6 +2320,42 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
     }
     return cells;
   }, [selection, visibleColumns, visibleRows]);
+
+  const selectionStats = useMemo(() => {
+    const cells = getSelectionCells();
+    let count = 0;
+    let numericCount = 0;
+    let sum = 0;
+
+    for (const cell of cells) {
+      const raw = getRowFieldValue(cell.row, cell.field);
+      if (raw != null && raw !== "") count += 1;
+      const numericValue =
+        typeof raw === "number"
+          ? raw
+          : typeof raw === "string"
+            ? parseNumericInput(raw)
+            : null;
+      if (typeof numericValue === "number" && Number.isFinite(numericValue)) {
+        numericCount += 1;
+        sum += numericValue;
+      }
+    }
+
+    return {
+      count,
+      numericCount,
+      sum,
+      average: numericCount > 0 ? sum / numericCount : null,
+    };
+  }, [getSelectionCells]);
+
+  const canFillSelectionDown = Boolean(
+    normalizedSelection && normalizedSelection.endRow > normalizedSelection.startRow,
+  );
+  const canFillSelectionRight = Boolean(
+    normalizedSelection && normalizedSelection.endCol > normalizedSelection.startCol,
+  );
 
   const selectGridCell = useCallback(
     (
@@ -1920,7 +2391,7 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
 
   const commitCellInput = useCallback(
     (row: DataSourceRow, field: string, input: string, trackHistory = true) => {
-      if (!EDITABLE_WORKBOOK_FIELDS.has(field) || row.periodEnd === "TTM") return false;
+      if (!isEditableWorkbookField(field) || row.periodEnd === "TTM") return false;
       if (!ensureEditingEnabled(activeWorkflow)) return false;
 
       const trimmed = input.trim();
@@ -1945,12 +2416,10 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
         };
       } else {
         const parsed = parseNumericInput(trimmed);
-        if (trimmed && parsed == null) {
-          window.alert("Please enter a valid number or a formula starting with =.");
-          return false;
-        }
-
-        nextOverrides = updateNumericOverride(nextOverrides, row.id, field, parsed);
+        const isNumericField = EDITABLE_WORKBOOK_FIELDS.has(field) || field.startsWith(CUSTOM_WORKBOOK_FIELD_PREFIX);
+        nextOverrides = isNumericField
+          ? updateNumericOverride(nextOverrides, row.id, field, parsed)
+          : nextOverrides;
         const nextCellState = normalizeCellState({
           ...(currentState?.style ? { style: currentState.style } : {}),
         });
@@ -1969,6 +2438,27 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
             nextWorkbookCells = cloned;
           }
         }
+      }
+
+      const shouldMirrorValueToRow =
+        field.startsWith(CUSTOM_WORKBOOK_FIELD_PREFIX) ||
+        !EDITABLE_WORKBOOK_FIELDS.has(field);
+
+      if (shouldMirrorValueToRow) {
+        const customValue = trimmed.startsWith("=") && trimmed.length > 1
+          ? trimmed
+          : EDITABLE_WORKBOOK_FIELDS.has(field) || field.startsWith(CUSTOM_WORKBOOK_FIELD_PREFIX)
+            ? parseNumericInput(trimmed)
+            : trimmed === ""
+              ? null
+              : trimmed;
+        setBaseRows((rows) => rows.map((entry) => {
+          if (entry.id !== row.id) return entry;
+          return {
+            ...(entry as unknown as Record<string, unknown>),
+            [field]: customValue,
+          } as unknown as DataSourceRow;
+        }));
       }
 
       setNumericOverrides(nextOverrides);
@@ -2017,6 +2507,11 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
     },
     [activeWorkflow, ensureEditingEnabled, getSelectionCells, pushHistory, workbookCells],
   );
+
+  const pasteCopiedStyle = useCallback(() => {
+    if (!copiedCellStyle) return;
+    applyStylePatch(copiedCellStyle);
+  }, [applyStylePatch, copiedCellStyle]);
 
   const applyBorderPreset = useCallback(
     (preset: "none" | "all" | "top" | "bottom" | "left" | "right" | "box") => {
@@ -2201,7 +2696,7 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
   }, [selection]);
 
   const clearSelectionContent = useCallback(() => {
-    const cells = getSelectionCells().filter((cell) => EDITABLE_WORKBOOK_FIELDS.has(cell.field) && cell.row.periodEnd !== "TTM");
+    const cells = getSelectionCells().filter((cell) => isEditableWorkbookField(cell.field) && cell.row.periodEnd !== "TTM");
     if (cells.length === 0) return;
     if (!ensureEditingEnabled(activeWorkflow)) return;
 
@@ -2250,7 +2745,7 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
         const field = visibleColumns[colIndex]?.field;
         if (!field) continue;
         const state = getWorkbookStateForCell(workbookCells, row.id, field);
-        if (state?.formula && EDITABLE_WORKBOOK_FIELDS.has(field)) {
+        if (state?.formula && isEditableWorkbookField(field)) {
           values.push(state.formula);
         } else {
           const raw = getRowFieldValue(row, field);
@@ -2295,7 +2790,7 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
         const row = visibleRows[normalized.startRow + rowOffset];
         const column = visibleColumns[normalized.startCol + colOffset];
         if (!row || !column) return;
-        if (!column.editable || row.periodEnd === "TTM") return;
+        if (row.periodEnd === "TTM") return;
 
         const field = column.field;
         const currentState = getWorkbookStateForCell(nextWorkbookCells, row.id, field);
@@ -2313,7 +2808,18 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
         }
 
         const parsed = parseNumericInput(trimmed);
-        nextOverrides = updateNumericOverride(nextOverrides, row.id, field, parsed);
+        const isNumericField = EDITABLE_WORKBOOK_FIELDS.has(field) || field.startsWith(CUSTOM_WORKBOOK_FIELD_PREFIX);
+        if (isNumericField) {
+          nextOverrides = updateNumericOverride(nextOverrides, row.id, field, parsed);
+        } else {
+          setBaseRows((rows) => rows.map((entry) => {
+            if (entry.id !== row.id) return entry;
+            return {
+              ...(entry as unknown as Record<string, unknown>),
+              [field]: trimmed === "" ? null : trimmed,
+            } as unknown as DataSourceRow;
+          }));
+        }
         const rowState = { ...(nextWorkbookCells[row.id] ?? {}) };
         const nextState = normalizeCellState({
           ...(currentState?.style ? { style: currentState.style } : {}),
@@ -2354,6 +2860,231 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
     clearSelectionContent();
   }, [clearSelectionContent, copySelection]);
 
+  const fillSelection = useCallback((direction: "down" | "right") => {
+    if (!selection) return;
+    if (!ensureEditingEnabled(activeWorkflow)) return;
+    const normalized = normalizeSelection(selection);
+    const hasFillRange =
+      direction === "down"
+        ? normalized.endRow > normalized.startRow
+        : normalized.endCol > normalized.startCol;
+    if (!hasFillRange) return;
+
+    pushHistory();
+    let nextOverrides = numericOverrides;
+    let nextWorkbookCells = workbookCells;
+
+    const applySourceToTarget = (
+      sourceRow: DataSourceRow,
+      sourceField: string,
+      targetRow: DataSourceRow,
+      targetField: string,
+    ) => {
+      const targetColumn = visibleColumns.find((column) => column.field === targetField);
+      if (!targetColumn?.editable || targetRow.periodEnd === "TTM") return;
+
+      const sourceState = getWorkbookStateForCell(nextWorkbookCells, sourceRow.id, sourceField);
+      const sourceStyle = normalizeCellStyle(sourceState?.style);
+      const rowState = { ...(nextWorkbookCells[targetRow.id] ?? {}) };
+
+      if (sourceState?.formula && isEditableWorkbookField(targetField)) {
+        nextOverrides = updateNumericOverride(nextOverrides, targetRow.id, targetField, null, true);
+        rowState[targetField] = normalizeCellState({
+          formula: sourceState.formula,
+          ...(sourceStyle ? { style: sourceStyle } : {}),
+        })!;
+        nextWorkbookCells = { ...nextWorkbookCells, [targetRow.id]: rowState };
+        return;
+      }
+
+      const raw = getRowFieldValue(sourceRow, sourceField);
+      const parsed =
+        typeof raw === "number"
+          ? raw
+          : typeof raw === "string"
+            ? parseNumericInput(raw)
+            : null;
+      nextOverrides = updateNumericOverride(nextOverrides, targetRow.id, targetField, parsed);
+      const nextState = normalizeCellState({
+        ...(sourceStyle ? { style: sourceStyle } : {}),
+      });
+
+      if (nextState) {
+        rowState[targetField] = nextState;
+        nextWorkbookCells = { ...nextWorkbookCells, [targetRow.id]: rowState };
+      } else {
+        delete rowState[targetField];
+        if (Object.keys(rowState).length > 0) {
+          nextWorkbookCells = { ...nextWorkbookCells, [targetRow.id]: rowState };
+        } else {
+          const cloned = { ...nextWorkbookCells };
+          delete cloned[targetRow.id];
+          nextWorkbookCells = cloned;
+        }
+      }
+    };
+
+    if (direction === "down") {
+      for (let colIndex = normalized.startCol; colIndex <= normalized.endCol; colIndex += 1) {
+        const sourceRow = visibleRows[normalized.startRow];
+        const sourceField = visibleColumns[colIndex]?.field;
+        if (!sourceRow || !sourceField) continue;
+        for (let rowIndex = normalized.startRow + 1; rowIndex <= normalized.endRow; rowIndex += 1) {
+          const targetRow = visibleRows[rowIndex];
+          if (targetRow) applySourceToTarget(sourceRow, sourceField, targetRow, sourceField);
+        }
+      }
+    } else {
+      for (let rowIndex = normalized.startRow; rowIndex <= normalized.endRow; rowIndex += 1) {
+        const sourceRow = visibleRows[rowIndex];
+        const sourceField = visibleColumns[normalized.startCol]?.field;
+        if (!sourceRow || !sourceField) continue;
+        for (let colIndex = normalized.startCol + 1; colIndex <= normalized.endCol; colIndex += 1) {
+          const targetField = visibleColumns[colIndex]?.field;
+          if (targetField) applySourceToTarget(sourceRow, sourceField, sourceRow, targetField);
+        }
+      }
+    }
+
+    setNumericOverrides(nextOverrides);
+    setWorkbookCells(nextWorkbookCells);
+  }, [
+    activeWorkflow,
+    ensureEditingEnabled,
+    numericOverrides,
+    pushHistory,
+    selection,
+    visibleColumns,
+    visibleRows,
+    workbookCells,
+  ]);
+
+  const autoFitSelectedColumns = useCallback(() => {
+    const normalized = selection ? normalizeSelection(selection) : null;
+    const startCol = normalized?.startCol ?? 0;
+    const endCol = normalized?.endCol ?? Math.max(visibleColumns.length - 1, 0);
+    const nextWidths: Record<string, number> = {};
+
+    for (let colIndex = startCol; colIndex <= endCol; colIndex += 1) {
+      const column = visibleColumns[colIndex];
+      if (!column) continue;
+      let maxChars = column.label.length;
+      for (const row of visibleRows.slice(0, 80)) {
+        const raw = getRowFieldValue(row, column.field);
+        const length = raw == null ? 0 : String(raw).length;
+        maxChars = Math.max(maxChars, length);
+      }
+      nextWidths[column.field] = Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, maxChars * 8 + 32));
+    }
+
+    if (Object.keys(nextWidths).length > 0) {
+      setColumnWidths((prev) => ({ ...prev, ...nextWidths }));
+    }
+  }, [selection, visibleColumns, visibleRows]);
+
+  const insertRowAbove = useCallback(() => {
+    if (!ensureEditingEnabled(activeWorkflow)) return;
+    const normalized = selection ? normalizeSelection(selection) : null;
+    const selectedVisibleRow = normalized ? visibleRows[normalized.startRow] : null;
+    const blankRow = createBlankWorksheetRow();
+
+    pushHistory();
+    setBaseRows((rows) => {
+      const index = selectedVisibleRow ? rows.findIndex((row) => row.id === selectedVisibleRow.id) : -1;
+      if (index < 0) return [...rows, blankRow];
+      return [...rows.slice(0, index), blankRow, ...rows.slice(index)];
+    });
+    setSelection({
+      startRow: normalized?.startRow ?? Math.max(visibleRows.length, 0),
+      endRow: normalized?.startRow ?? Math.max(visibleRows.length, 0),
+      startCol: normalized?.startCol ?? 0,
+      endCol: normalized?.startCol ?? 0,
+    });
+  }, [activeWorkflow, createBlankWorksheetRow, ensureEditingEnabled, pushHistory, selection, visibleRows]);
+
+  const insertColumnLeft = useCallback(() => {
+    if (!ensureEditingEnabled(activeWorkflow)) return;
+    const normalized = selection ? normalizeSelection(selection) : null;
+    const insertAt = normalized?.startCol ?? visibleColumns.length;
+    const field = `${CUSTOM_WORKBOOK_FIELD_PREFIX}_${activeSheet}_${Date.now()}`;
+    const nextColumn: WorkbookColumn = {
+      field,
+      label: `Column ${visibleColumns.length + 1}`,
+      editable: true,
+      align: "right",
+      format: "number",
+    };
+
+    setWorksheetColumnsBySheet((current) => {
+      const existing = current[activeSheet] ?? visibleColumns;
+      return {
+        ...current,
+        [activeSheet]: [
+          ...existing.slice(0, insertAt),
+          nextColumn,
+          ...existing.slice(insertAt),
+        ],
+      };
+    });
+    setColumnWidths((current) => ({ ...current, [field]: DEFAULT_METRIC_COLUMN_WIDTH }));
+    setBaseRows((rows) => rows.map((row) => ({ ...(row as unknown as Record<string, unknown>), [field]: null }) as unknown as DataSourceRow));
+    setSelection({
+      startRow: normalized?.startRow ?? 0,
+      endRow: normalized?.startRow ?? 0,
+      startCol: insertAt,
+      endCol: insertAt,
+    });
+  }, [activeSheet, activeWorkflow, ensureEditingEnabled, selection, visibleColumns]);
+
+  const deleteSelectedRows = useCallback(() => {
+    if (!selection) return;
+    if (!ensureEditingEnabled(activeWorkflow)) return;
+    const normalized = normalizeSelection(selection);
+    const ids = new Set(
+      visibleRows
+        .slice(normalized.startRow, normalized.endRow + 1)
+        .map((row) => row.id),
+    );
+    if (ids.size === 0) return;
+    pushHistory();
+    setBaseRows((rows) => rows.filter((row) => !ids.has(row.id)));
+    setSelection(null);
+  }, [activeWorkflow, ensureEditingEnabled, pushHistory, selection, visibleRows]);
+
+  const deleteSelectedColumns = useCallback(() => {
+    if (!selection) return;
+    if (!ensureEditingEnabled(activeWorkflow)) return;
+    const normalized = normalizeSelection(selection);
+    const fields = new Set(
+      visibleColumns
+        .slice(normalized.startCol, normalized.endCol + 1)
+        .filter((column) => column.editable || column.field.startsWith(CUSTOM_WORKBOOK_FIELD_PREFIX))
+        .map((column) => column.field),
+    );
+    if (fields.size === 0) return;
+
+    setWorksheetColumnsBySheet((current) => {
+      const existing = current[activeSheet] ?? visibleColumns;
+      return {
+        ...current,
+        [activeSheet]: existing.filter((column) => !fields.has(column.field)),
+      };
+    });
+    setBaseRows((rows) => rows.map((row) => {
+      const next = { ...(row as unknown as Record<string, unknown>) };
+      for (const field of fields) delete next[field];
+      return next as unknown as DataSourceRow;
+    }));
+    setWorkbookCells((rows) => {
+      const next = deepClone(rows);
+      for (const rowState of Object.values(next)) {
+        for (const field of fields) delete rowState[field];
+      }
+      return next;
+    });
+    setSelection(null);
+  }, [activeSheet, activeWorkflow, ensureEditingEnabled, selection, visibleColumns]);
+
   const moveSelection = useCallback((nextRow: number, nextCol: number, extend = false) => {
     if (workbookDisplayRowCount === 0 || visibleColumns.length === 0) return;
     const boundedRow = Math.max(0, Math.min(workbookDisplayRowCount - 1, nextRow));
@@ -2373,13 +3104,21 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
     });
   }, [visibleColumns.length, workbookDisplayRowCount]);
 
-  const startInlineEdit = useCallback((seedText?: string) => {
-    if (!selection) return;
-    const normalized = normalizeSelection(selection);
-    const row = visibleRows[normalized.endRow];
-    const column = visibleColumns[normalized.endCol];
-    if (!row || !column?.editable || row.periodEnd === "TTM") return;
+  const startInlineEdit = useCallback((rowIndexOrSeedText?: number | string, colIndex?: number, seedText?: string) => {
+    const rowIndex = typeof rowIndexOrSeedText === "number" ? rowIndexOrSeedText : undefined;
+    const initialSeedText = typeof rowIndexOrSeedText === "string" ? rowIndexOrSeedText : seedText;
+    const targetRowIndex = typeof rowIndex === "number" ? rowIndex : selection?.endRow;
+    const targetColIndex = typeof colIndex === "number" ? colIndex : selection?.endCol;
+    if (targetRowIndex == null || targetColIndex == null) return;
+
+    const row = visibleRows[targetRowIndex];
+    const column = visibleColumns[targetColIndex];
+    if (!row || !column || row.periodEnd === "TTM") return;
     if (!ensureEditingEnabled(activeWorkflow)) return;
+
+    if (typeof rowIndex === "number" && typeof colIndex === "number") {
+      selectGridCell(rowIndex, colIndex, {});
+    }
 
     const state = getWorkbookStateForCell(workbookCells, row.id, column.field);
     const currentValue = state?.formula
@@ -2389,9 +3128,9 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
         : String(getRowFieldValue(row, column.field));
 
     setEditingCell({ rowId: row.id, field: column.field });
-    setInlineDraft(seedText ?? currentValue);
+    setInlineDraft(initialSeedText ?? currentValue);
     setContextMenu(null);
-  }, [activeWorkflow, ensureEditingEnabled, selection, visibleColumns, visibleRows, workbookCells]);
+  }, [activeWorkflow, ensureEditingEnabled, selectGridCell, selection, visibleColumns, visibleRows, workbookCells]);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.target instanceof HTMLInputElement) return;
@@ -2402,6 +3141,41 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
       void copySelection();
       return;
     }
+    if (withMeta && event.key.toLowerCase() === "f") {
+      event.preventDefault();
+      searchInputRef.current?.focus();
+      return;
+    }
+    if (withMeta && event.key.toLowerCase() === "b") {
+      event.preventDefault();
+      applyStylePatch({ bold: !selectedStyle?.bold });
+      return;
+    }
+    if (withMeta && event.key.toLowerCase() === "i") {
+      event.preventDefault();
+      applyStylePatch({ italic: !selectedStyle?.italic });
+      return;
+    }
+    if (withMeta && event.key.toLowerCase() === "u") {
+      event.preventDefault();
+      applyStylePatch({ underline: !selectedStyle?.underline });
+      return;
+    }
+    if (withMeta && event.shiftKey && event.key.toLowerCase() === "x") {
+      event.preventDefault();
+      applyStylePatch({ strikethrough: !selectedStyle?.strikethrough });
+      return;
+    }
+    if (withMeta && event.key.toLowerCase() === "k") {
+      event.preventDefault();
+      applyStylePatch({ textColor: "#1155cc", underline: true });
+      return;
+    }
+    if (withMeta && event.shiftKey && event.key === "7") {
+      event.preventDefault();
+      applyBorderPreset("all");
+      return;
+    }
     if (withMeta && event.key.toLowerCase() === "z") {
       event.preventDefault();
       handleUndo();
@@ -2410,6 +3184,16 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
     if (withMeta && event.key.toLowerCase() === "y") {
       event.preventDefault();
       handleRedo();
+      return;
+    }
+    if (withMeta && event.key.toLowerCase() === "d") {
+      event.preventDefault();
+      fillSelection("down");
+      return;
+    }
+    if (withMeta && event.key.toLowerCase() === "r") {
+      event.preventDefault();
+      fillSelection("right");
       return;
     }
 
@@ -2462,13 +3246,166 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
       event.key.length === 1 &&
       !event.altKey &&
       row &&
-      EDITABLE_WORKBOOK_FIELDS.has(column.field) &&
+      isEditableWorkbookField(column.field) &&
       row.periodEnd !== "TTM"
     ) {
       event.preventDefault();
-      startInlineEdit(event.key);
+      startInlineEdit(undefined, undefined, event.key);
     }
-  }, [clearSelectionContent, copySelection, handleRedo, handleUndo, moveSelection, selection, startInlineEdit, visibleColumns, visibleRows]);
+  }, [
+    applyBorderPreset,
+    applyStylePatch,
+    clearSelectionContent,
+    copySelection,
+    fillSelection,
+    handleRedo,
+    handleUndo,
+    moveSelection,
+    selectedStyle,
+    selection,
+    startInlineEdit,
+    visibleColumns,
+    visibleRows,
+  ]);
+
+  useEffect(() => {
+    if (!selection) return;
+
+    const isTypingTarget = (target: EventTarget | null) => {
+      if (!(target instanceof HTMLElement)) return false;
+      const tagName = target.tagName.toLowerCase();
+      return tagName === "input" || tagName === "textarea" || tagName === "select" || target.isContentEditable;
+    };
+
+    const handleGlobalWorkbookShortcut = (event: KeyboardEvent) => {
+      if (isTypingTarget(event.target)) return;
+
+      const withMeta = event.ctrlKey || event.metaKey;
+      const key = event.key.toLowerCase();
+
+      if (withMeta && key === "c") {
+        event.preventDefault();
+        void copySelection();
+        return;
+      }
+      if (withMeta && key === "f") {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+      if (withMeta && key === "b") {
+        event.preventDefault();
+        applyStylePatch({ bold: !selectedStyle?.bold });
+        workbookRef.current?.focus();
+        return;
+      }
+      if (withMeta && key === "i") {
+        event.preventDefault();
+        applyStylePatch({ italic: !selectedStyle?.italic });
+        workbookRef.current?.focus();
+        return;
+      }
+      if (withMeta && key === "u") {
+        event.preventDefault();
+        applyStylePatch({ underline: !selectedStyle?.underline });
+        workbookRef.current?.focus();
+        return;
+      }
+      if (withMeta && event.shiftKey && key === "x") {
+        event.preventDefault();
+        applyStylePatch({ strikethrough: !selectedStyle?.strikethrough });
+        workbookRef.current?.focus();
+        return;
+      }
+      if (withMeta && key === "k") {
+        event.preventDefault();
+        applyStylePatch({ textColor: "#1155cc", underline: true });
+        workbookRef.current?.focus();
+        return;
+      }
+      if (withMeta && event.shiftKey && event.key === "7") {
+        event.preventDefault();
+        applyBorderPreset("all");
+        workbookRef.current?.focus();
+        return;
+      }
+      if (withMeta && key === "z") {
+        event.preventDefault();
+        handleUndo();
+        return;
+      }
+      if (withMeta && key === "y") {
+        event.preventDefault();
+        handleRedo();
+        return;
+      }
+      if (withMeta && key === "d") {
+        event.preventDefault();
+        fillSelection("down");
+        workbookRef.current?.focus();
+        return;
+      }
+      if (withMeta && key === "r") {
+        event.preventDefault();
+        fillSelection("right");
+        workbookRef.current?.focus();
+      }
+    };
+
+    document.addEventListener("keydown", handleGlobalWorkbookShortcut, true);
+    return () => document.removeEventListener("keydown", handleGlobalWorkbookShortcut, true);
+  }, [
+    applyBorderPreset,
+    applyStylePatch,
+    copySelection,
+    fillSelection,
+    handleRedo,
+    handleUndo,
+    selectedStyle,
+    selection,
+  ]);
+
+  useEffect(() => {
+    const handleWorkbookContextMenu = (event: MouseEvent) => {
+      const root = workbookRef.current;
+      const target = event.target;
+      if (!root || !(target instanceof Node) || !root.contains(target)) return;
+
+      event.preventDefault();
+      root.focus();
+      setEditingCell(null);
+
+      const element = target instanceof HTMLElement ? target : null;
+      const indexedCell = element?.closest<HTMLElement>("[data-workbook-row][data-workbook-col]");
+      const rowIndex = Number(indexedCell?.dataset.workbookRow);
+      const colIndex = Number(indexedCell?.dataset.workbookCol);
+
+      if (Number.isFinite(rowIndex) && Number.isFinite(colIndex) && rowIndex >= 0 && colIndex >= 0) {
+        materializeRowsThroughIndex(rowIndex);
+        setSelection({
+          startRow: rowIndex,
+          endRow: rowIndex,
+          startCol: Math.min(colIndex, Math.max(visibleColumns.length - 1, 0)),
+          endCol: Math.min(colIndex, Math.max(visibleColumns.length - 1, 0)),
+        });
+      } else if (!selection && workbookDisplayRowCount > 0 && visibleColumns.length > 0) {
+        setSelection({
+          startRow: 0,
+          endRow: 0,
+          startCol: 0,
+          endCol: 0,
+        });
+      }
+
+      setContextMenu({
+        x: Math.max(12, Math.min(event.clientX, window.innerWidth - 340)),
+        y: Math.max(12, Math.min(event.clientY, window.innerHeight - 620)),
+      });
+    };
+
+    document.addEventListener("contextmenu", handleWorkbookContextMenu, true);
+    return () => document.removeEventListener("contextmenu", handleWorkbookContextMenu, true);
+  }, [materializeRowsThroughIndex, selection, visibleColumns.length, workbookDisplayRowCount]);
 
   const handleSave = useCallback(async () => {
     if (!hasUnsavedChanges) return;
@@ -2486,7 +3423,7 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
         if (!rowState) return [];
 
         return Object.entries(rowState)
-          .filter(([field, state]) => Boolean(state?.formula) && EDITABLE_WORKBOOK_FIELDS.has(field))
+          .filter(([field, state]) => Boolean(state?.formula) && isEditableWorkbookField(field))
           .map(([field]) => ({
             id: row.id,
             ticker: row.ticker,
@@ -2894,7 +3831,7 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
 
             <div className="space-y-6">
               <div
-                className="relative overflow-hidden rounded-[18px] border border-[#d6dbe1] bg-white shadow-[0_18px_40px_rgba(15,23,42,0.08)]"
+                className="relative overflow-hidden rounded-none border border-[#d6dbe1] bg-white shadow-sm"
                 style={{ fontFamily: WORKBOOK_FONT_FAMILY }}
               >
                 {loading && (
@@ -2905,11 +3842,14 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                     </div>
                   </div>
                 )}
-              <div className="sticky top-0 z-30 border-b border-[#d6dbe1] bg-white/95 p-5 backdrop-blur">
+              <div className="sticky top-0 z-30 border-b border-[#d6dbe1] bg-white">
                 <>
-                <div className="mb-5 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-                  <div>
-                    <div className="flex items-center gap-2">
+                <div className="flex min-h-10 items-center justify-between gap-3 border-b border-[#e0e3e7] bg-white px-3 py-1.5">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded bg-[#0f9d58] text-white">
+                      <FileSpreadsheet className="h-4 w-4" />
+                    </span>
+                    <div className="hidden items-center gap-2 lg:flex">
                       <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${activeSheetConfig.accentClass}`}>
                         {isFinancialTemplateSheet
                           ? "Financial model template"
@@ -2933,12 +3873,11 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                         {editLog.length} saved edit{editLog.length === 1 ? "" : "s"}
                       </span>
                     </div>
-                    <h2 className="mt-3 text-lg font-semibold tracking-tight text-slate-900">
+                    <h2 className="truncate text-sm font-semibold text-slate-900">
                       {selectedCompany
                         ? `${selectedCompany.companyName} (${selectedCompany.ticker})`
                         : activeSheetConfig.title}
                     </h2>
-                    <p className="mt-1 max-w-4xl text-sm leading-6 text-slate-500">{activeSheetConfig.description}</p>
                   </div>
 
                   {!isFinancialTemplateSheet ? (
@@ -2952,7 +3891,7 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                             : "border-[#d0d7de] bg-white text-slate-700 hover:bg-[#f7f7f7]"
                         }`}
                       >
-                        {editingEnabled[activeWorkflow] ? "Lock sheet" : "Edit data"}
+                        Editing on
                       </button>
                       <button
                         type="button"
@@ -2969,6 +3908,204 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                   ) : null}
                 </div>
 
+                <div className="hidden">
+                  <div className="flex flex-wrap items-center gap-1 bg-[#217346] px-3 py-1.5 text-white">
+                    <span className="mr-2 inline-flex h-7 w-7 items-center justify-center rounded bg-white/15">
+                      <FileSpreadsheet className="h-4 w-4" />
+                    </span>
+                    {[
+                      ["file", "File"],
+                      ["home", "Home"],
+                      ["insert", "Insert"],
+                      ["review", "Review"],
+                      ["view", "View"],
+                    ].map(([key, label]) => {
+                      const active = ribbonTab === key || (key === "file" && ribbonTab === "home");
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => setRibbonTab(key === "file" ? "home" : (key as typeof ribbonTab))}
+                          className={`rounded px-3 py-1.5 text-sm font-semibold transition ${
+                            active ? "bg-white text-[#217346]" : "text-white/90 hover:bg-white/12 hover:text-white"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                    <div className="ml-auto flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={handleExportExcel}
+                        title="Export Excel"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded text-white/90 hover:bg-white/12 hover:text-white"
+                      >
+                        <Download className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void fetchData({
+                          preserveVisibleState: true,
+                          preserveNavigatorState: true,
+                          resetWorkbookUi: false,
+                        })}
+                        title="Refresh workbook"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded text-white/90 hover:bg-white/12 hover:text-white"
+                      >
+                        {revalidating ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 bg-[#f6f8f7] px-3 py-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <RibbonCommand icon={<Copy className="h-4 w-4" />} label="Copy" hint="Copy selected cells" onClick={() => void copySelection()} />
+                      <RibbonCommand icon={<ClipboardPaste className="h-4 w-4" />} label="Paste" hint="Paste clipboard into selection" onClick={() => void pasteSelection()} />
+                      <RibbonCommand icon={<ChevronRight className="h-4 w-4 rotate-90" />} label="Fill Down" hint="Copy top row values through the selected range" disabled={!canFillSelectionDown} onClick={() => fillSelection("down")} />
+                      <RibbonCommand icon={<ChevronRight className="h-4 w-4" />} label="Fill Right" hint="Copy left column values through the selected range" disabled={!canFillSelectionRight} onClick={() => fillSelection("right")} />
+                      <RibbonCommand icon={<Brush className="h-4 w-4" />} label="Copy Format" hint="Copy selected cell style" onClick={copySelectedStyle} />
+                      <RibbonCommand icon={<Brush className="h-4 w-4" />} label="Apply Format" hint="Apply copied format to selection" disabled={!copiedCellStyle} onClick={pasteCopiedStyle} />
+                      <RibbonCommand icon={<AlignLeft className="h-4 w-4" />} label="AutoFit" hint="Resize selected columns to fit visible values" onClick={autoFitSelectedColumns} />
+                      <RibbonCommand icon={<Sigma className="h-4 w-4" />} label="Formula" hint="Use the formula bar below" onClick={() => workbookRef.current?.focus()} />
+                      <RibbonCommand icon={<Table2 className="h-4 w-4" />} label={selectionHasMerge ? "Unmerge" : "Merge"} hint="Merge or unmerge selected cells" disabled={!canMergeSelection && !selectionHasMerge} onClick={() => (selectionHasMerge ? unmergeSelection() : mergeSelection())} />
+                      <RibbonCommand icon={<ListFilter className="h-4 w-4" />} label="Sort" hint="Click column headers to sort" onClick={() => workbookRef.current?.focus()} />
+                      <RibbonCommand icon={<Eye className="h-4 w-4" />} label={freezeFirstColumn ? "Unfreeze" : "Freeze"} hint="Freeze or unfreeze row numbers" active={freezeFirstColumn} onClick={() => setFreezeFirstColumn((current) => !current)} />
+                      <RibbonCommand icon={<Sigma className="h-4 w-4" />} label="Show Formulas" hint="Toggle formula display in cells" active={showFormulas} onClick={() => setShowFormulas((current) => !current)} />
+                      <RibbonCommand icon={<Eye className="h-4 w-4" />} label="Reset Zoom" hint="Reset workbook zoom" onClick={() => setZoomLevel(100)} />
+                    </div>
+                    <div className="ml-auto flex flex-wrap items-center justify-end gap-2 text-xs text-slate-600">
+                      <div className="flex h-9 items-center overflow-hidden rounded-md border border-slate-200 bg-white">
+                        <span className="flex h-full w-9 items-center justify-center border-r border-slate-200 text-slate-400">
+                          <Search className="h-4 w-4" />
+                        </span>
+                        <input
+                          ref={searchInputRef}
+                          value={sheetSearchQuery}
+                          onChange={(event) => setSheetSearchQuery(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              jumpToSearchMatch(event.shiftKey ? "previous" : "next");
+                            }
+                            if (event.key === "Escape") {
+                              setSheetSearchQuery("");
+                              workbookRef.current?.focus();
+                            }
+                          }}
+                          className="h-full w-44 bg-transparent px-2 text-sm outline-none"
+                          placeholder="Find in sheet"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => jumpToSearchMatch("previous")}
+                          disabled={visibleSearchMatches.length === 0}
+                          className="flex h-full w-8 items-center justify-center border-l border-slate-200 text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                          title="Previous match"
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => jumpToSearchMatch("next")}
+                          disabled={visibleSearchMatches.length === 0}
+                          className="flex h-full w-8 items-center justify-center border-l border-slate-200 text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                          title="Next match"
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                        </button>
+                      </div>
+                      {sheetSearchQuery.trim() && (
+                        <span className="rounded border border-slate-200 bg-white px-2.5 py-1 font-semibold">
+                          {visibleSearchMatches.length === 0
+                            ? "0"
+                            : `${Math.min(activeSearchMatchIndex + 1, visibleSearchMatches.length)}/${visibleSearchMatches.length}`}
+                        </span>
+                      )}
+                      <span className="rounded border border-slate-200 bg-white px-2.5 py-1 font-semibold">
+                        {zoomLevel}%
+                      </span>
+                      <input
+                        aria-label="Zoom workbook"
+                        type="range"
+                        min={75}
+                        max={140}
+                        step={5}
+                        value={zoomLevel}
+                        onChange={(event) => setZoomLevel(Number(event.target.value))}
+                        className="h-1.5 w-36 cursor-pointer accent-[#217346]"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border-b border-slate-200 bg-slate-50">
+                  <div className="flex flex-wrap items-center gap-3 px-3 py-3 text-sm text-slate-700">
+                    <button
+                      type="button"
+                      onClick={handleExportExcel}
+                      className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+                    >
+                      <Download className="h-4 w-4" />
+                      Export
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void fetchData({
+                          preserveVisibleState: true,
+                          preserveNavigatorState: true,
+                          resetWorkbookUi: false,
+                        })
+                      }
+                      className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+                    >
+                      {revalidating ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                      Refresh
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowFormulas((current) => !current)}
+                      className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+                    >
+                      <Sigma className="h-4 w-4" />
+                      {showFormulas ? "Hide formulas" : "Show formulas"}
+                    </button>
+                    <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                      <Search className="h-4 w-4 text-slate-500" />
+                      <input
+                        ref={searchInputRef}
+                        value={sheetSearchQuery}
+                        onChange={(event) => setSheetSearchQuery(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            jumpToSearchMatch(event.shiftKey ? "previous" : "next");
+                          }
+                          if (event.key === "Escape") {
+                            setSheetSearchQuery("");
+                            workbookRef.current?.focus();
+                          }
+                        }}
+                        className="w-36 bg-transparent text-sm outline-none"
+                        placeholder="Find in sheet"
+                      />
+                    </div>
+                    <div className="ml-auto flex items-center gap-2 text-xs text-slate-600">
+                      <span>Zoom</span>
+                      <span className="rounded border border-slate-200 bg-white px-2 py-1">{zoomLevel}%</span>
+                      <input
+                        aria-label="Zoom workbook"
+                        type="range"
+                        min={75}
+                        max={140}
+                        step={5}
+                        value={zoomLevel}
+                        onChange={(event) => setZoomLevel(Number(event.target.value))}
+                        className="h-1.5 w-28 cursor-pointer accent-slate-700"
+                      />
+                    </div>
+                  </div>
+                </div>
                 {isFinancialTemplateSheet && isFinancialModelSheetKey(activeSheet) ? (
                   <FinancialModelSheetView
                     variant={activeSheet}
@@ -2980,9 +4117,12 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                   />
                 ) : (
                   <>
-                <div className="mb-5 rounded-2xl border border-[#d6dbe1] bg-[#f3f3f3] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]">
-                  <div className="flex flex-col gap-4 xl:flex-row xl:items-center">
-                    <div className="flex flex-wrap items-center gap-2">
+                <div className="border-b border-[#d6dbe1] bg-white">
+                  <div className="hidden">
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <div className="rounded-xl border border-[#d6dbe1] bg-white p-3 shadow-sm">
+                        <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Clipboard</p>
+                        <div className="flex flex-wrap items-center gap-2">
                       <ToolbarButton title="Undo" disabled={undoStack.length === 0} onClick={handleUndo}>
                         <Undo2 className="h-4 w-4" />
                       </ToolbarButton>
@@ -3073,12 +4213,15 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                         disabled={!canMergeSelection && !selectionHasMerge}
                         onClick={() => (selectionHasMerge ? unmergeSelection() : mergeSelection())}
                         className="inline-flex h-10 items-center gap-1 rounded-lg border border-[#d0d7de] bg-white px-3 text-xs font-semibold text-slate-600 transition hover:bg-[#f7f7f7] disabled:cursor-not-allowed disabled:opacity-50"
-                      >
+                        >
                         {selectionHasMerge ? "Unmerge" : "Merge"}
                       </button>
-                    </div>
+                        </div>
+                      </div>
 
-                    <div className="flex flex-wrap items-center gap-3">
+                      <div className="rounded-xl border border-[#d6dbe1] bg-white p-3 shadow-sm">
+                        <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Font</p>
+                        <div className="flex flex-wrap items-center gap-3">
                       <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
                         Font
                         <select
@@ -3126,6 +4269,12 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                           ))}
                         </select>
                       </label>
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl border border-[#d6dbe1] bg-white p-3 shadow-sm">
+                        <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Color</p>
+                        <div className="flex flex-wrap items-center gap-3">
                       <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
                         Text
                         <input
@@ -3144,40 +4293,52 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                           className="h-10 w-10 cursor-pointer rounded-lg border border-[#d0d7de] bg-white p-1"
                         />
                       </label>
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl border border-[#d6dbe1] bg-white p-3 shadow-sm">
+                        <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Alignment</p>
+                        <div className="flex flex-wrap items-center gap-2">
+                      <ToolbarButton
+                        title="Align left"
+                        active={selectedStyle?.align === "left"}
+                        onClick={() => applyStylePatch({ align: "left" })}
+                      >
+                        <AlignLeft className="h-4 w-4" />
+                      </ToolbarButton>
+                      <ToolbarButton
+                        title="Align center"
+                        active={selectedStyle?.align === "center"}
+                        onClick={() => applyStylePatch({ align: "center" })}
+                      >
+                        <AlignCenter className="h-4 w-4" />
+                      </ToolbarButton>
+                      <ToolbarButton
+                        title="Align right"
+                        active={selectedStyle?.align === "right"}
+                        onClick={() => applyStylePatch({ align: "right" })}
+                      >
+                        <AlignRight className="h-4 w-4" />
+                      </ToolbarButton>
+                        </div>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="mt-4 grid gap-2 xl:grid-cols-[96px_36px_36px_minmax(0,1fr)]">
-                      <div className="flex h-10 items-center rounded-lg border border-[#cfd6dd] bg-white px-3 text-xs font-semibold text-slate-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
-                      {normalizedSelection && selectedColumn && selectedRowNumber
-                        ? `${columnIndexToLetter(WORKBOOK_COLUMN_INDEX_BY_FIELD.get(selectedColumn.field) ?? normalizedSelection.endCol)}${selectedRowNumber}`
-                        : "No cell"}
+                  <div className="grid h-9 grid-cols-[92px_32px_minmax(0,1fr)] items-center border-t border-[#eef1f4] bg-white">
+                      <div className="flex h-full items-center border-r border-[#d6dbe1] bg-white px-3 text-xs font-medium text-slate-700">
+                      {selectedCellReference ?? "F10"}
                     </div>
                     <button
                       type="button"
                       onClick={syncFormulaDraftFromSelection}
                       disabled={!selectedRow || !selectedField}
-                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#cfd6dd] bg-white text-slate-500 transition hover:bg-[#f7f7f7] disabled:cursor-not-allowed disabled:opacity-40"
+                      className="inline-flex h-full w-8 items-center justify-center border-r border-[#d6dbe1] bg-white text-slate-500 transition hover:bg-[#f7f7f7] disabled:cursor-not-allowed disabled:opacity-40"
                       title="Revert formula bar to selected cell value"
                     >
-                      <X className="h-3.5 w-3.5" />
+                      <span className="font-serif text-base italic text-slate-400">fx</span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!selectedRow || !selectedField || !canEditSelectedCell) return;
-                        void commitCellInput(selectedRow, selectedField, formulaDraft);
-                      }}
-                      disabled={!selectedRow || !selectedField || !canEditSelectedCell}
-                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#cfd6dd] bg-white text-[#217346] transition hover:bg-[#eef7f1] disabled:cursor-not-allowed disabled:text-slate-300"
-                      title="Apply formula bar value to selected cell"
-                    >
-                      <span className="text-[10px] font-bold leading-none">OK</span>
-                    </button>
-                    <div className="flex items-center rounded-md border border-[#cfd6dd] bg-white pr-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
-                      <span className="flex h-9 w-10 items-center justify-center border-r border-[#e2e6ea] text-xs font-semibold text-slate-500">
-                        fx
-                      </span>
+                    <div className="flex h-full items-center bg-white pr-2">
                       <input
                         value={formulaDraft}
                         onChange={(event) => setFormulaDraft(event.target.value)}
@@ -3190,8 +4351,18 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                         }}
                         disabled={!selectedRow || !selectedField || !canEditSelectedCell}
                       className="min-w-0 flex-1 bg-transparent px-3 text-sm text-slate-700 outline-none disabled:cursor-not-allowed disabled:text-slate-400"
-                      placeholder="Type a number or formula, e.g. =E2*1.1"
+                      placeholder=""
                     />
+                      <button
+                        type="button"
+                        disabled={!selectedRow || !selectedField}
+                        onClick={() => setMetricDetailOpen(true)}
+                        className="ml-2 inline-flex h-7 items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2 text-xs font-bold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                        title="Open metric detail"
+                      >
+                        <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-700" />
+                        Details
+                      </button>
                   </div>
                 </div>
                   {selectedCellError && (
@@ -3203,16 +4374,47 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                   ref={workbookRef}
                   tabIndex={0}
                   onKeyDown={handleKeyDown}
+                  onMouseDownCapture={(event) => {
+                    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+                    workbookRef.current?.focus();
+                  }}
+                  onContextMenu={(event) => {
+                    const target = event.target;
+                    if (target instanceof HTMLElement && target.closest("td,th")) return;
+
+                    event.preventDefault();
+                    workbookRef.current?.focus();
+                    setEditingCell(null);
+                    if (!selection && workbookDisplayRowCount > 0 && visibleColumns.length > 0) {
+                      setSelection({
+                        startRow: 0,
+                        endRow: 0,
+                        startCol: 0,
+                        endCol: 0,
+                      });
+                    }
+                    setContextMenu({
+                      x: Math.max(12, Math.min(event.clientX, window.innerWidth - 340)),
+                      y: Math.max(12, Math.min(event.clientY, window.innerHeight - 620)),
+                    });
+                  }}
                   onPaste={(event) => {
                     event.preventDefault();
                     applyPastedText(event.clipboardData.getData("text/plain"));
                   }}
-                  className="max-h-[66vh] overflow-auto border border-[#d6dbe1] bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] outline-none focus:ring-2 focus:ring-[#217346]/20"
+                  className="max-h-[82vh] overflow-auto border border-[#d6dbe1] bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] outline-none focus:ring-2 focus:ring-[#217346]/20"
                 >
-                  <table
-                    className="border-separate border-spacing-0 text-[12px]"
-                    style={{ tableLayout: "fixed", width: "100%", minWidth: totalTableWidth }}
+                  <div
+                    style={{
+                      transform: `scale(${zoomLevel / 100})`,
+                      transformOrigin: "top left",
+                      width: `${100 / (zoomLevel / 100)}%`,
+                    }}
                   >
+                    <table
+                      className="border-separate border-spacing-0 text-[12px]"
+                      style={{ tableLayout: "fixed", width: "100%", minWidth: totalTableWidth }}
+                    >
                     <colgroup>
                       <col style={{ width: getColumnWidth(ROW_NUMBER_COLUMN_KEY) }} />
                       {visibleColumns.map((column) => (
@@ -3221,7 +4423,26 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                     </colgroup>
                     <thead className="sticky top-0 z-20">
                       <tr className="bg-[#f3f3f3] text-[#59636f]">
-                        <th className="sticky left-0 z-30 border-b border-r border-[#d6dbe1] bg-[#f3f3f3] px-3 py-2 text-center font-semibold">
+                        <th
+                          data-workbook-row={0}
+                          data-workbook-col={0}
+                          onContextMenu={(event) => {
+                            event.preventDefault();
+                            focusWorkbook();
+                            setEditingCell(null);
+                            setSelection({
+                              startRow: 0,
+                              endRow: Math.max(workbookDisplayRowCount - 1, 0),
+                              startCol: 0,
+                              endCol: Math.max(visibleColumns.length - 1, 0),
+                            });
+                            setContextMenu({
+                              x: Math.max(12, Math.min(event.clientX, window.innerWidth - 340)),
+                              y: Math.max(12, Math.min(event.clientY, window.innerHeight - 620)),
+                            });
+                          }}
+                          className={`${freezeFirstColumn ? "sticky left-0 z-30" : ""} border-b border-r border-[#d6dbe1] bg-[#f3f3f3] px-3 py-2 text-center font-semibold`}
+                        >
                           #
                         </th>
                         {visibleColumns.map((column, colIndex) => {
@@ -3229,6 +4450,8 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                           return (
                             <th
                               key={`${column.field}-letter`}
+                              data-workbook-row={0}
+                              data-workbook-col={colIndex}
                               onMouseDown={(event) => {
                                 if (event.button === 2) return;
                                 event.preventDefault();
@@ -3242,6 +4465,21 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                                   endCol: colIndex,
                                 });
                               }}
+                              onContextMenu={(event) => {
+                                event.preventDefault();
+                                focusWorkbook();
+                                setEditingCell(null);
+                                setSelection({
+                                  startRow: 0,
+                                  endRow: Math.max(workbookDisplayRowCount - 1, 0),
+                                  startCol: colIndex,
+                                  endCol: colIndex,
+                                });
+                                setContextMenu({
+                                  x: Math.max(12, Math.min(event.clientX, window.innerWidth - 340)),
+                                  y: Math.max(12, Math.min(event.clientY, window.innerHeight - 620)),
+                                });
+                              }}
                               className="cursor-pointer select-none border-b border-r border-[#d6dbe1] bg-[#f3f3f3] px-3 py-2 text-center font-semibold hover:bg-[#e9edf1]"
                             >
                               {columnIndexToLetter(globalIndex)}
@@ -3250,10 +4488,29 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                         })}
                       </tr>
                       <tr className="bg-[#fafafa] text-slate-700">
-                        <th className="sticky left-0 z-30 border-b border-r border-[#d6dbe1] bg-[#f8f8f8] px-3 py-2 text-center font-semibold text-slate-500">
+                        <th
+                          data-workbook-row={0}
+                          data-workbook-col={0}
+                          onContextMenu={(event) => {
+                            event.preventDefault();
+                            focusWorkbook();
+                            setEditingCell(null);
+                            setSelection({
+                              startRow: 0,
+                              endRow: Math.max(workbookDisplayRowCount - 1, 0),
+                              startCol: 0,
+                              endCol: Math.max(visibleColumns.length - 1, 0),
+                            });
+                            setContextMenu({
+                              x: Math.max(12, Math.min(event.clientX, window.innerWidth - 340)),
+                              y: Math.max(12, Math.min(event.clientY, window.innerHeight - 620)),
+                            });
+                          }}
+                          className={`${freezeFirstColumn ? "sticky left-0 z-30" : ""} border-b border-r border-[#d6dbe1] bg-[#f8f8f8] px-3 py-2 text-center font-semibold text-slate-500`}
+                        >
                           Row
                         </th>
-                        {visibleColumns.map((column) => {
+                        {visibleColumns.map((column, colIndex) => {
                           const activeSort = sortByWorkflow[activeWorkflow];
                           const sortIndicator =
                             activeSort?.field === column.field
@@ -3265,6 +4522,8 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                           return (
                             <th
                               key={column.field}
+                              data-workbook-row={0}
+                              data-workbook-col={colIndex}
                               className={`relative border-b border-r border-[#d6dbe1] bg-[#fafafa] px-3 py-2 font-semibold ${
                                 column.align === "right"
                                   ? "text-right"
@@ -3300,6 +4559,8 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                         return (
                           <tr key={row.id} className="bg-white">
                             <td
+                              data-workbook-row={rowIndex}
+                              data-workbook-col={-1}
                               onMouseDown={(event) => {
                                 if (event.button === 2) return;
                                 event.preventDefault();
@@ -3313,7 +4574,22 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                                   endCol: Math.max(visibleColumns.length - 1, 0),
                                 });
                               }}
-                              className="sticky left-0 z-10 cursor-pointer select-none border-b border-r border-[#dfe4ea] bg-[#f8f8f8] px-3 py-2 text-center font-semibold text-slate-500 hover:bg-[#eef2f5]"
+                              onContextMenu={(event) => {
+                                event.preventDefault();
+                                focusWorkbook();
+                                setEditingCell(null);
+                                setSelection({
+                                  startRow: rowIndex,
+                                  endRow: rowIndex,
+                                  startCol: 0,
+                                  endCol: Math.max(visibleColumns.length - 1, 0),
+                                });
+                                setContextMenu({
+                                  x: Math.max(12, Math.min(event.clientX, window.innerWidth - 340)),
+                                  y: Math.max(12, Math.min(event.clientY, window.innerHeight - 620)),
+                                });
+                              }}
+                              className={`${freezeFirstColumn ? "sticky left-0 z-10" : ""} cursor-pointer select-none border-b border-r border-[#dfe4ea] bg-[#f8f8f8] px-3 py-2 text-center font-semibold text-slate-500 hover:bg-[#eef2f5]`}
                             >
                               {canonicalRowNumber}
                             </td>
@@ -3336,23 +4612,36 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                                 normalizedSelection?.endRow === rowIndex && normalizedSelection?.endCol === colIndex;
                               const formulaError = formulaErrors[`${row.id}:${field}`];
                               const rawValue = getRowFieldValue(row, field);
-                              const displayValue = formulaError
+                              const searchMatchIndex = searchMatchIndexByCell.get(`${rowIndex}:${colIndex}`);
+                              const isSearchMatch = typeof searchMatchIndex === "number";
+                              const isActiveSearchMatch = searchMatchIndex === activeSearchMatchIndex;
+                              const displayValue = showFormulas && cellState?.formula
+                                ? cellState.formula
+                                : formulaError
                                 ? "#ERR"
                                 : fmtCellWithOverride(rawValue ?? null, column.format, cellStyle?.numberFormat);
 
                               return (
                                 <td
                                   key={cellKey}
+                                  data-workbook-row={rowIndex}
+                                  data-workbook-col={colIndex}
                                   {...(mergeInfo?.rowSpan && mergeInfo.rowSpan > 1 ? { rowSpan: mergeInfo.rowSpan } : {})}
                                   {...(mergeInfo?.colSpan && mergeInfo.colSpan > 1 ? { colSpan: mergeInfo.colSpan } : {})}
                                   onMouseDown={(event) => {
                                     focusWorkbook();
                                     if (event.button === 2) return;
                                     setContextMenu(null);
+                                    setMetricDetailOpen(true);
                                     selectGridCell(rowIndex, colIndex, {
                                       extend: event.shiftKey,
                                       mergeInfo,
                                     });
+                                  }}
+                                  onClick={() => {
+                                    if (!selection || !isCellInSelection(selection, rowIndex, colIndex)) {
+                                      selectGridCell(rowIndex, colIndex, { mergeInfo });
+                                    }
                                   }}
                                   onContextMenu={(event) => {
                                     event.preventDefault();
@@ -3362,8 +4651,8 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                                     }
                                     setEditingCell(null);
                                     setContextMenu({
-                                      x: Math.max(12, Math.min(event.clientX, window.innerWidth - 224)),
-                                      y: Math.max(12, Math.min(event.clientY, window.innerHeight - 312)),
+                                      x: Math.max(12, Math.min(event.clientX, window.innerWidth - 340)),
+                                      y: Math.max(12, Math.min(event.clientY, window.innerHeight - 620)),
                                     });
                                   }}
                                   onDoubleClick={() => {
@@ -3371,8 +4660,8 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                                     selectGridCell(rowIndex, colIndex, {
                                       mergeInfo,
                                     });
-                                    if (column.editable && row.periodEnd !== "TTM") {
-                                      startInlineEdit();
+                                    if (row.periodEnd !== "TTM") {
+                                      startInlineEdit(rowIndex, colIndex);
                                     }
                                   }}
                                 className="cursor-pointer border-b border-r border-[#dfe4ea] bg-white px-0 py-0"
@@ -3392,7 +4681,11 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                                         cellStyle?.fillColor ??
                                         (isSelected
                                           ? EXCEL_SELECTION_FILL
-                                          : referenceHighlight?.fill),
+                                          : isActiveSearchMatch
+                                            ? "rgba(245, 158, 11, 0.20)"
+                                            : isSearchMatch
+                                              ? "rgba(250, 204, 21, 0.18)"
+                                              : referenceHighlight?.fill),
                                       color: formulaError ? undefined : cellStyle?.textColor ?? undefined,
                                       fontWeight: cellStyle?.bold ? 700 : undefined,
                                       fontStyle: cellStyle?.italic ? "italic" : undefined,
@@ -3411,6 +4704,7 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                                       fontFamily: cellStyle?.fontFamily ?? undefined,
                                       boxShadow: [
                                         isActiveCell ? `inset 0 0 0 2px ${EXCEL_SELECTION_BORDER}` : null,
+                                        isActiveSearchMatch ? "inset 0 0 0 2px rgba(245, 158, 11, 0.95)" : null,
                                         referenceHighlight ? `inset 0 0 0 2px ${referenceHighlight.border}` : null,
                                       ]
                                         .filter(Boolean)
@@ -3422,13 +4716,13 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                                         autoFocus
                                         value={inlineDraft}
                                         onChange={(event) => setInlineDraft(event.target.value)}
-                                        onBlur={() => {
-                                          void commitCellInput(row, field, inlineDraft);
+                                        onBlur={(event) => {
+                                          void commitCellInput(row, field, event.currentTarget.value);
                                         }}
                                         onKeyDown={(event) => {
                                           if (event.key === "Enter") {
                                             event.preventDefault();
-                                            void commitCellInput(row, field, inlineDraft);
+                                            void commitCellInput(row, field, event.currentTarget.value);
                                           }
                                           if (event.key === "Escape") {
                                             event.preventDefault();
@@ -3464,10 +4758,13 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                             className="bg-white"
                           >
                             <td
+                              data-workbook-row={rowIndex}
+                              data-workbook-col={-1}
                               onMouseDown={(event) => {
                                 if (event.button === 2) return;
                                 event.preventDefault();
                                 focusWorkbook();
+                                materializeRowsThroughIndex(rowIndex);
                                 setContextMenu(null);
                                 setEditingCell(null);
                                 setSelection({
@@ -3477,7 +4774,7 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                                   endCol: Math.max(visibleColumns.length - 1, 0),
                                 });
                               }}
-                              className="sticky left-0 z-10 cursor-pointer select-none border-b border-r border-[#dfe4ea] bg-[#f8f8f8] px-3 py-2 text-center font-semibold text-slate-300 hover:bg-[#eef2f5]"
+                              className={`${freezeFirstColumn ? "sticky left-0 z-10" : ""} cursor-pointer select-none border-b border-r border-[#dfe4ea] bg-[#f8f8f8] px-3 py-2 text-center font-semibold text-slate-300 hover:bg-[#eef2f5]`}
                             >
                               {rowNumber}
                             </td>
@@ -3489,11 +4786,15 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                               return (
                               <td
                                 key={`placeholder-row-${activeSheet}-${rowNumber}-${column.field}`}
+                                data-workbook-row={rowIndex}
+                                data-workbook-col={colIndex}
                                 onMouseDown={(event) => {
                                   if (event.button === 2) return;
                                   event.preventDefault();
                                   focusWorkbook();
+                                  materializeRowsThroughIndex(rowIndex);
                                   setContextMenu(null);
+                                  setMetricDetailOpen(true);
                                   setEditingCell(null);
                                   setSelection({
                                     startRow: rowIndex,
@@ -3505,13 +4806,17 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                                 onContextMenu={(event) => {
                                   event.preventDefault();
                                   focusWorkbook();
-                                  setContextMenu(null);
+                                  materializeRowsThroughIndex(rowIndex);
                                   setEditingCell(null);
                                   setSelection({
                                     startRow: rowIndex,
                                     endRow: rowIndex,
                                     startCol: colIndex,
                                     endCol: colIndex,
+                                  });
+                                  setContextMenu({
+                                    x: Math.max(12, Math.min(event.clientX, window.innerWidth - 340)),
+                                    y: Math.max(12, Math.min(event.clientY, window.innerHeight - 620)),
                                   });
                                 }}
                                 className="cursor-pointer border-b border-r border-[#dfe4ea] bg-white px-0 py-0"
@@ -3554,145 +4859,287 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                         </tr>
                       )}
                     </tbody>
-                  </table>
+                    </table>
+                  </div>
                 </div>
                 {contextMenu ? (
                   <div
                     ref={menuRef}
-                    className="fixed z-50 w-52 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl"
+                    className="fixed z-50 w-80 overflow-hidden rounded-md border border-slate-200 bg-white py-1 shadow-2xl"
                     style={{ left: contextMenu.x, top: contextMenu.y }}
                   >
-                    <button
-                      type="button"
+                    <SheetContextMenuItem
+                      icon={<Scissors className="h-4 w-4" />}
+                      label="Cut"
+                      shortcut="⌘X"
                       onClick={() => {
                         void cutSelection();
                         setContextMenu(null);
                       }}
-                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-                    >
-                      <Scissors className="h-4 w-4" />
-                      Cut
-                    </button>
-                    <button
-                      type="button"
+                    />
+                    <SheetContextMenuItem
+                      icon={<Copy className="h-4 w-4" />}
+                      label="Copy"
+                      shortcut="⌘C"
                       onClick={() => {
                         void copySelection();
                         setContextMenu(null);
                       }}
-                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-                    >
-                      <Copy className="h-4 w-4" />
-                      Copy
-                    </button>
-                    <button
-                      type="button"
+                    />
+                    <SheetContextMenuItem
+                      icon={<ClipboardPaste className="h-4 w-4" />}
+                      label="Paste"
+                      shortcut="⌘V"
                       onClick={() => {
                         void pasteSelection();
                         setContextMenu(null);
                       }}
-                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-                    >
-                      <ClipboardPaste className="h-4 w-4" />
-                      Paste
-                    </button>
+                    />
+                    <SheetContextMenuItem
+                      icon={<ClipboardPaste className="h-4 w-4" />}
+                      label="Paste special"
+                      submenu
+                      onClick={() => {
+                        pasteCopiedStyle();
+                        setContextMenu(null);
+                      }}
+                    />
                     <div className="my-1 h-px bg-slate-200" />
-                    <button
-                      type="button"
+                    <SheetContextMenuItem
+                      icon={<Plus className="h-4 w-4" />}
+                      label="Insert 1 row above"
+                      onClick={() => {
+                        insertRowAbove();
+                        setContextMenu(null);
+                      }}
+                    />
+                    <SheetContextMenuItem
+                      icon={<Plus className="h-4 w-4" />}
+                      label="Insert 1 column left"
+                      onClick={() => {
+                        insertColumnLeft();
+                        setContextMenu(null);
+                      }}
+                    />
+                    <SheetContextMenuItem
+                      icon={<Plus className="h-4 w-4" />}
+                      label="Insert cells"
+                      submenu
+                      onClick={() => {
+                        insertRowAbove();
+                        setContextMenu(null);
+                      }}
+                    />
+                    <div className="my-1 h-px bg-slate-200" />
+                    <SheetContextMenuItem
+                      icon={<Trash2 className="h-4 w-4" />}
+                      label="Delete row"
+                      onClick={() => {
+                        deleteSelectedRows();
+                        setContextMenu(null);
+                      }}
+                    />
+                    <SheetContextMenuItem
+                      icon={<Trash2 className="h-4 w-4" />}
+                      label="Delete column"
+                      onClick={() => {
+                        deleteSelectedColumns();
+                        setContextMenu(null);
+                      }}
+                    />
+                    <SheetContextMenuItem
+                      icon={<Trash2 className="h-4 w-4" />}
+                      label="Delete cells"
+                      submenu
                       onClick={() => {
                         clearSelectionContent();
                         setContextMenu(null);
                       }}
-                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-                    >
-                      <Eraser className="h-4 w-4" />
-                      Clear contents
-                    </button>
+                    />
                     <div className="my-1 h-px bg-slate-200" />
-                    <button
-                      type="button"
+                    <SheetContextMenuItem
+                      icon={<Table2 className="h-4 w-4" />}
+                      label="Convert to table"
+                      badge="New"
                       onClick={() => {
-                        applyStylePatch({ bold: !selectedStyle?.bold });
+                        applyBorderPreset("all");
+                        applyStylePatch({ bold: true, fillColor: "#f3f6f4" });
                         setContextMenu(null);
                       }}
-                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-                    >
-                      <Bold className="h-4 w-4" />
-                      Toggle bold
-                    </button>
-                    <button
-                      type="button"
+                    />
+                    <SheetContextMenuItem
+                      icon={<Filter className="h-4 w-4" />}
+                      label="Create filter"
                       onClick={() => {
-                        applyStylePatch({ numberFormat: "currency" });
+                        workbookRef.current?.focus();
                         setContextMenu(null);
                       }}
-                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-                    >
-                      <DollarSign className="h-4 w-4" />
-                      Format as currency
-                    </button>
-                    <button
-                      type="button"
+                    />
+                    <div className="my-1 h-px bg-slate-200" />
+                    <SheetContextMenuItem
+                      icon={<Link className="h-4 w-4" />}
+                      label="Insert link"
                       onClick={() => {
-                        applyStylePatch({ numberFormat: "percent" });
+                        applyStylePatch({ textColor: "#1155cc", underline: true });
                         setContextMenu(null);
                       }}
-                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-                    >
-                      <Percent className="h-4 w-4" />
-                      Format as percent
-                    </button>
+                    />
+                    <SheetContextMenuItem
+                      icon={<MessageSquarePlus className="h-4 w-4" />}
+                      label="Comment"
+                      shortcut="⌘+Option+M"
+                      onClick={() => {
+                        applyStylePatch({ fillColor: "#fff7cc" });
+                        setContextMenu(null);
+                      }}
+                    />
+                    <SheetContextMenuItem
+                      icon={<MessageSquarePlus className="h-4 w-4" />}
+                      label="Insert note"
+                      onClick={() => {
+                        applyStylePatch({ fillColor: "#fff2cc", borderTop: true });
+                        setContextMenu(null);
+                      }}
+                    />
+                    <SheetContextMenuItem
+                      icon={<Table2 className="h-4 w-4" />}
+                      label="Table template"
+                      onClick={() => {
+                        applyBorderPreset("all");
+                        applyStylePatch({ bold: true, fillColor: "#f3f6f4" });
+                        setContextMenu(null);
+                      }}
+                    />
+                    <SheetContextMenuItem
+                      icon={<ChevronRight className="h-4 w-4 rotate-90" />}
+                      label="Dropdown"
+                      onClick={() => {
+                        applyStylePatch({ fillColor: "#eef6ff" });
+                        setContextMenu(null);
+                      }}
+                    />
+                    <SheetContextMenuItem
+                      icon={<Sigma className="h-4 w-4" />}
+                      label="Smart chip"
+                      submenu
+                      onClick={() => {
+                        setShowFormulas((current) => !current);
+                        setContextMenu(null);
+                      }}
+                    />
+                    <div className="my-1 h-px bg-slate-200" />
+                    <SheetContextMenuItem
+                      icon={<MoreVertical className="h-4 w-4" />}
+                      label="View more cell actions"
+                      submenu
+                      onClick={() => {
+                        startInlineEdit();
+                        setContextMenu(null);
+                      }}
+                    />
                   </div>
                 ) : null}
+                <MetricDetailDrawer
+                  open={metricDetailOpen}
+                  row={selectedRow}
+                  field={selectedField}
+                  column={selectedColumn}
+                  cellReference={selectedCellReference}
+                  displayValue={selectedDisplayValue}
+                  trace={selectedMetricTrace}
+                  cellState={selectedCellState}
+                  derivedFormula={selectedDerivedFormula}
+                  editEntries={selectedEditEntries}
+                  onClose={() => setMetricDetailOpen(false)}
+                />
                   </>
                 )}
                 </>
+                <div className="flex items-center gap-3 border-t border-[#d6dbe1] bg-[#f3f3f3] px-4 py-2.5">
+                  <div className="flex items-center gap-1 text-slate-400">
+                    <button
+                      type="button"
+                      disabled
+                      className="rounded-md p-1 transition disabled:cursor-default disabled:opacity-70"
+                      aria-label="Workbook navigation disabled"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled
+                      className="rounded-md p-1 transition disabled:cursor-default disabled:opacity-70"
+                      aria-label="Workbook navigation disabled"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  <div className="h-5 w-px bg-slate-200" />
+
+                  <div className="flex min-w-0 flex-1 items-end gap-2 overflow-x-auto pb-1">
+                    {WORKBOOK_SECTIONS.map((sheet) => {
+                      const isActive = sheet.key === activeSheet;
+                      return (
+                        <button
+                          key={sheet.key}
+                          type="button"
+                          onClick={() => {
+                            setActiveSheet(sheet.key);
+                            workbookRef.current?.focus();
+                          }}
+                          className={`inline-flex min-w-fit items-center rounded-t-md border px-4 py-2 text-sm font-semibold transition ${
+                            isActive
+                              ? "border-[#d6dbe1] border-b-white bg-white text-slate-900 shadow-[inset_0_-2px_0_0_#217346]"
+                              : "border-transparent bg-transparent text-slate-600 hover:bg-white/70 hover:text-slate-800"
+                          }`}
+                        >
+                          <span>{sheet.title}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="ml-auto flex items-center gap-2 text-xs text-slate-500">
+                    {sheetSearchQuery.trim() && (
+                      <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 font-semibold text-amber-800">
+                        Find {visibleSearchMatches.length}
+                      </span>
+                    )}
+                    {showFormulas && (
+                      <span className="rounded-full border border-[#217346]/20 bg-[#e9f5ee] px-2.5 py-1 font-semibold text-[#217346]">
+                        Formulas
+                      </span>
+                    )}
+                    {selectionStats.numericCount > 0 && (
+                      <>
+                        <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 font-semibold">
+                          Avg {selectionStats.average?.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                        </span>
+                        <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 font-semibold">
+                          Sum {selectionStats.sum.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                        </span>
+                      </>
+                    )}
+                    <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 font-semibold">
+                      Count {selectionStats.count}
+                    </span>
+                    <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 font-semibold">
+                      {normalizedSelection
+                        ? `${normalizedSelection.endRow - normalizedSelection.startRow + 1} row${normalizedSelection.endRow - normalizedSelection.startRow + 1 === 1 ? "" : "s"} selected`
+                        : `${currentWorkbookRows.length} rows in view`}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setZoomLevel(100)}
+                      className="rounded-full border border-slate-200 bg-white px-2.5 py-1 font-semibold text-slate-600 hover:bg-slate-50"
+                    >
+                      Reset zoom
+                    </button>
+                  </div>
+                </div>
               </div>
 
-              <div className="flex items-center gap-3 border-t border-[#d6dbe1] bg-[#f3f3f3] px-3 py-2">
-                <div className="flex items-center gap-1 text-slate-400">
-                  <button
-                    type="button"
-                    disabled
-                    className="rounded-md p-1 transition disabled:cursor-default disabled:opacity-70"
-                    aria-label="Workbook navigation disabled"
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    disabled
-                    className="rounded-md p-1 transition disabled:cursor-default disabled:opacity-70"
-                    aria-label="Workbook navigation disabled"
-                  >
-                    <ChevronRight className="h-4 w-4" />
-                  </button>
-                </div>
-
-                <div className="h-5 w-px bg-slate-200" />
-
-                <div className="flex min-w-0 flex-1 items-end gap-2 overflow-x-auto pb-1">
-                  {WORKBOOK_SECTIONS.map((sheet) => {
-                    const isActive = sheet.key === activeSheet;
-                    return (
-                      <button
-                        key={sheet.key}
-                        type="button"
-                        onClick={() => {
-                          setActiveSheet(sheet.key);
-                          workbookRef.current?.focus();
-                        }}
-                        className={`inline-flex min-w-fit items-center rounded-t-md border px-4 py-2 text-sm font-semibold transition ${
-                          isActive
-                            ? "border-[#d6dbe1] border-b-white bg-white text-slate-900 shadow-[inset_0_-2px_0_0_#217346]"
-                            : "border-transparent bg-transparent text-slate-600 hover:bg-white/70 hover:text-slate-800"
-                        }`}
-                      >
-                        <span>{sheet.title}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
             </div>
         </div>
       </div>

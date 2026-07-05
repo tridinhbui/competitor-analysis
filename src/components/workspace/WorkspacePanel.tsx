@@ -8,6 +8,7 @@ import type {
 } from "@/types/competitor";
 import { QuarterTimeline } from "./QuarterTimeline";
 import { QuarterAppendFlow } from "./QuarterAppendFlow";
+import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import { StatusPill } from "@/components/ui/status-pill";
 import {
   Building2,
@@ -253,7 +254,7 @@ export function WorkspacePanel({
     setResettingUploads(true);
     setActionError(null);
     try {
-      const resp = await fetch("/api/workspace/reset", {
+      const resp = await fetchWithAuth("/api/workspace/reset", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ticker }),

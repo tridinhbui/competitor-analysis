@@ -11,6 +11,7 @@
  */
 
 import { setCompanyPeerType, upsertCompany } from "@/lib/filingStorage";
+import { requireAuthedUser } from "@/lib/serverAuth";
 import type { PeerType } from "@/types/competitor";
 
 export const runtime = "nodejs";
@@ -25,6 +26,9 @@ const VALID_PEER_TYPES: PeerType[] = [
 ];
 
 export async function POST(request: Request) {
+  const authResult = await requireAuthedUser(request);
+  if (authResult instanceof Response) return authResult;
+
   try {
     const body = await request.json();
     const {
@@ -63,6 +67,9 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  const authResult = await requireAuthedUser(request);
+  if (authResult instanceof Response) return authResult;
+
   try {
     const body = await request.json();
     const { ticker, peerType } = body as { ticker?: string; peerType?: string };

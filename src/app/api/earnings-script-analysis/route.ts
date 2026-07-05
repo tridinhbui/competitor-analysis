@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAuthedUser } from "@/lib/serverAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -503,6 +504,9 @@ function withFallback(result: Partial<ExtractionResult>, script: string): Extrac
 }
 
 export async function POST(request: Request) {
+  const authResult = await requireAuthedUser(request);
+  if (authResult instanceof NextResponse) return authResult;
+
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey?.trim()) {
     return NextResponse.json({ error: "OPENAI_API_KEY not configured." }, { status: 503 });
@@ -567,4 +571,3 @@ export async function POST(request: Request) {
     );
   }
 }
-

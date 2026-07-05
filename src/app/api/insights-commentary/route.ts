@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAuthedUser } from "@/lib/serverAuth";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -59,6 +60,9 @@ function buildFallbackCommentary(reason?: string): CommentaryResponse {
 }
 
 export async function POST(request: Request) {
+  const authResult = await requireAuthedUser(request);
+  if (authResult instanceof NextResponse) return authResult;
+
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
     return NextResponse.json({ error: "OPENAI_API_KEY not set" }, { status: 503 });

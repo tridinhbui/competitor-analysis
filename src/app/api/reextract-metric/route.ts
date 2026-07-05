@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
+import { requireAuthedUser } from "@/lib/serverAuth";
 import {
   extractPdfFinancialValue,
   type PdfFinancialMetric,
@@ -104,6 +105,9 @@ function findExistingValue(analysis: FullAnalysis, metricTag?: string, metricLab
 }
 
 export async function POST(request: Request) {
+  const authResult = await requireAuthedUser(request);
+  if (authResult instanceof NextResponse) return authResult;
+
   try {
     const body = (await request.json()) as {
       ticker?: string;
@@ -186,4 +190,3 @@ export async function POST(request: Request) {
     );
   }
 }
-

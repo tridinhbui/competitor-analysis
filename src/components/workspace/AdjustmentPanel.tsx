@@ -10,6 +10,7 @@ import type {
 import { emptyAdjustments } from "@/types/adjustments";
 import type { SlideBlock, SlideBlocksResponse } from "@/types/slideBlocks";
 import type { Insight } from "@/lib/insightEngine";
+import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import {
   Pencil,
   Lock,
@@ -437,7 +438,7 @@ export function AdjustmentPanel({ ticker }: Props) {
     setLoading(true);
     try {
       const [adjResp, blockResp] = await Promise.all([
-        fetch(`/api/adjustments?ticker=${encodeURIComponent(t)}`),
+        fetchWithAuth(`/api/adjustments?ticker=${encodeURIComponent(t)}`),
         fetch(`/api/slide-blocks?ticker=${encodeURIComponent(t)}`),
       ]);
       if (adjResp.ok) {
@@ -464,7 +465,7 @@ export function AdjustmentPanel({ ticker }: Props) {
     setSaving(true);
     setSaved(false);
     try {
-      const resp = await fetch("/api/adjustments", {
+      const resp = await fetchWithAuth("/api/adjustments", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(adj),

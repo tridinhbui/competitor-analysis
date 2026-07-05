@@ -17,6 +17,7 @@ import PptxGenJS from "pptxgenjs";
 import { supabase } from "@/lib/supabase";
 import { extractMetrics } from "@/lib/analysisModules";
 import { COLORS, FONTS, LAYOUT, TABLE_STYLE } from "@/lib/pptxTemplates";
+import { requireAuthedUser } from "@/lib/serverAuth";
 import type { DataSourceRow } from "@/types/dataSource";
 import type { FullAnalysis } from "@/types/analysis";
 import type { Filing } from "@/types/competitor";
@@ -54,6 +55,9 @@ function addTitle(slide: Slide, title: string, subtitle?: string) {
 }
 
 export async function POST(request: Request) {
+  const authResult = await requireAuthedUser(request);
+  if (authResult instanceof Response) return authResult;
+
   try {
     const body = await request.json() as {
       ticker?: string;

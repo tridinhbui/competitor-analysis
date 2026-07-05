@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import { requireAdminUser } from "@/lib/serverAuth";
 
 export const runtime = "nodejs";
 
@@ -7,6 +8,9 @@ interface ResetWorkspaceBody {
 }
 
 export async function POST(request: Request) {
+  const adminResult = await requireAdminUser(request);
+  if (adminResult instanceof Response) return adminResult;
+
   let body: ResetWorkspaceBody;
   try {
     body = await request.json();

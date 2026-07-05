@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import { requireAdminUser } from "@/lib/serverAuth";
 
 export const runtime = "nodejs";
 
@@ -7,6 +8,9 @@ interface ClearAllBody {
 }
 
 export async function DELETE(request: Request) {
+  const adminResult = await requireAdminUser(request);
+  if (adminResult instanceof Response) return adminResult;
+
   const body = (await request.json().catch(() => ({}))) as ClearAllBody;
 
   if ((body.confirmationText ?? "").trim().toLowerCase() !== "delete all") {

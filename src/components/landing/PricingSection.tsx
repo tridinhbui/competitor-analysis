@@ -215,7 +215,7 @@ export function PricingSection() {
 
         <p className="mt-10 text-center text-xs text-muted-foreground">
           Need SSO, custom retention, or a procurement review pack?{" "}
-          <a href="mailto:sales@example.com" className="font-semibold text-primary hover:underline">
+          <a href="mailto:tridinhbui0901@gmail.com" className="font-semibold text-primary hover:underline">
             Contact sales
           </a>
         </p>

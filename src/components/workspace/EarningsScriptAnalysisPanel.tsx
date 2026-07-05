@@ -15,6 +15,7 @@ import { AnalyzeLandingShell } from "@/components/workspace/AnalyzeLandingShell"
 import { SourceTxtFileCard } from "@/components/workspace/SourceTxtFileCard";
 import { TextTxtAttachment } from "@/components/workspace/TextTxtAttachment";
 import { extractPdfLines } from "@/lib/pdfAnalysis";
+import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import {
   isTextLikeFile,
   normalizeUploadToTxtFile,
@@ -625,7 +626,7 @@ export function EarningsScriptAnalysisPanel() {
         };
       }
 
-      const response = await fetch("/api/earnings-script-analysis", {
+      const response = await fetchWithAuth("/api/earnings-script-analysis", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -1270,4 +1271,3 @@ export function EarningsScriptAnalysisPanel() {
     </div>
   );
 }
-

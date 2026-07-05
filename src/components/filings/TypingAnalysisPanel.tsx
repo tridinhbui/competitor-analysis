@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { Bot, Loader2 } from "lucide-react";
 import { compactAnalysisForLLM } from "@/lib/analysisContext";
+import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import type { FullAnalysis } from "@/types/analysis";
 import ReactMarkdown from "react-markdown";
 
@@ -38,7 +39,7 @@ export function TypingAnalysisPanel({ analysis, isAnalyzing }: Props) {
 
     (async () => {
       try {
-        const res = await fetch("/api/chat", {
+        const res = await fetchWithAuth("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ context, autoSummary: true }),

@@ -18,6 +18,7 @@ import type {
   QuarterAlignmentType,
 } from "@/types/manualData";
 import type { VolumeUnitType } from "@/types/segments";
+import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import {
   Database,
   Plus,
@@ -916,7 +917,7 @@ export function ManualDataPanel({ ticker }: Props) {
   const fetchRecords = useCallback(async (t: string) => {
     setLoading(true);
     try {
-      const resp = await fetch(
+      const resp = await fetchWithAuth(
         `/api/manual-data?ticker=${encodeURIComponent(t)}`
       );
       if (resp.ok) {
@@ -944,7 +945,7 @@ export function ManualDataPanel({ ticker }: Props) {
       setSaving(true);
       setSaved(false);
       try {
-        const resp = await fetch("/api/manual-data", {
+        const resp = await fetchWithAuth("/api/manual-data", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -970,7 +971,7 @@ export function ManualDataPanel({ ticker }: Props) {
   const handleDelete = useCallback(
     async (id: string) => {
       if (!ticker) return;
-      await fetch(`/api/manual-data?id=${id}`, { method: "DELETE" });
+      await fetchWithAuth(`/api/manual-data?id=${id}`, { method: "DELETE" });
       fetchRecords(ticker);
     },
     [ticker, fetchRecords]

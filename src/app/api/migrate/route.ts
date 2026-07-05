@@ -9,6 +9,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { supabase } from "@/lib/supabase";
 import { deriveQuarter } from "@/lib/competitorService";
+import { requireAdminUser } from "@/lib/serverAuth";
 import type { FullAnalysis } from "@/types/analysis";
 
 export const runtime = "nodejs";
@@ -38,7 +39,10 @@ interface OldFiling {
   filingDate?: string;
 }
 
-export async function POST() {
+export async function POST(request: Request) {
+  const adminResult = await requireAdminUser(request);
+  if (adminResult instanceof Response) return adminResult;
+
   try {
     // Read old registry
     const registryPath = path.join(FILINGS_ROOT, "companies.json");

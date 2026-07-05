@@ -185,19 +185,19 @@ export function FinanceQuiz() {
   };
 
   return (
-    <div className="rounded-2xl border border-slate-200/80 bg-white shadow-elevation overflow-hidden">
+    <div className="overflow-hidden rounded-xl border border-slate-200/80 bg-white shadow-sm">
       <button
         type="button"
         onClick={() => setCollapsed(!collapsed)}
-        className="flex w-full items-center justify-between bg-gradient-to-r from-primary/5 via-white to-primary/5 px-4 py-3 text-left sm:px-5 sm:py-4"
+        className="flex w-full items-center justify-between bg-gradient-to-r from-primary/5 via-white to-primary/5 px-3 py-2 text-left sm:px-4 sm:py-2.5"
       >
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10">
-            <BookOpen className="h-4 w-4 text-primary" />
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+            <BookOpen className="h-3.5 w-3.5 text-primary" />
           </div>
-          <div>
-            <p className="text-sm font-bold text-slate-900 sm:text-base">Practice: Financial Concepts Quiz</p>
-            <p className="text-[11px] text-slate-500 sm:text-xs">Test your knowledge of D/E, FCF, payout ratio, and more</p>
+          <div className="min-w-0">
+            <p className="truncate text-xs font-bold text-slate-900 sm:text-sm">Practice: Financial Concepts Quiz</p>
+            <p className="truncate text-[10px] text-slate-500 sm:text-[11px]">D/E, FCF, payout ratio, leverage</p>
           </div>
         </div>
         {collapsed ? <ChevronDown className="h-4 w-4 text-slate-400" /> : <ChevronUp className="h-4 w-4 text-slate-400" />}

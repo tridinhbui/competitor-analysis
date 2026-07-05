@@ -18,6 +18,7 @@ interface AuthContextValue {
   signIn: (email: string, password: string) => Promise<string | null>;
   signInWithGoogle: () => Promise<string | null>;
   signUp: (email: string, password: string) => Promise<string | null>;
+  resetPassword: (email: string) => Promise<string | null>;
   signOut: () => Promise<void>;
   /** Always returns the current access_token or null */
   getAccessToken: () => string | null;
@@ -115,6 +116,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return error?.message ?? null;
   }, []);
 
+  const resetPassword = useCallback(async (email: string) => {
+    const redirectTo =
+      typeof window !== "undefined"
+        ? new URL("/auth/update-password", getAppOrigin()).toString()
+        : undefined;
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo,
+    });
+    return error?.message ?? null;
+  }, []);
+
   const signOut = useCallback(async () => {
     const { error } = await supabase.auth.signOut();
     if (error && !recoverSupabaseSession(error)) return;
@@ -124,7 +136,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const getAccessToken = useCallback(() => session?.access_token ?? null, [session]);
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, signIn, signInWithGoogle, signUp, signOut, getAccessToken }}>
+    <AuthContext.Provider value={{ user, session, loading, signIn, signInWithGoogle, signUp, resetPassword, signOut, getAccessToken }}>
       {children}
     </AuthContext.Provider>
   );

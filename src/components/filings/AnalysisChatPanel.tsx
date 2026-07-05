@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { compactAnalysisForLLM } from "@/lib/analysisContext";
+import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import { trackTokenUsage } from "@/lib/tokenUsageTracker";
 import type { FullAnalysis } from "@/types/analysis";
 import ReactMarkdown from "react-markdown";
@@ -389,7 +390,7 @@ export function AnalysisChatPanel({ analysis, inline, disableAutoSummary = false
 
     (async () => {
       try {
-        const res = await fetch("/api/chat", {
+        const res = await fetchWithAuth("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ context, autoSummary: true }),
@@ -432,7 +433,7 @@ export function AnalysisChatPanel({ analysis, inline, disableAutoSummary = false
     setMessages(next);
     setLoading(true);
     try {
-      const res = await fetch("/api/chat", {
+      const res = await fetchWithAuth("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

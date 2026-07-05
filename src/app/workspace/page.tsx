@@ -9,6 +9,7 @@ import { PeerComparisonView } from "@/components/workspace/PeerComparisonView";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { MacroInsightsPanel } from "@/components/workspace/MacroInsightsPanel";
 import { getLatestEarningsAnalysisClient, type EarningsScriptAnalysis } from "@/components/workspace/EarningsScriptAnalysisPanel";
+import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import type { CompanyRegistry, TimelineSlot, WorkspaceReadiness } from "@/types/competitor";
 import {
   Boxes,
@@ -48,7 +49,7 @@ export default function WorkspacePage() {
     }
     setClearingAll(true);
     try {
-      const res = await fetch("/api/workspace/clear-all", {
+      const res = await fetchWithAuth("/api/workspace/clear-all", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ confirmationText: "delete all" }),
@@ -119,7 +120,7 @@ export default function WorkspacePage() {
     if (deletingTicker) return;
     setDeletingTicker(ticker);
     try {
-      const resp = await fetch("/api/workspace/reset", {
+      const resp = await fetchWithAuth("/api/workspace/reset", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ticker }),

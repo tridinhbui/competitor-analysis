@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import type { FullAnalysis, StepEvent } from "@/types/analysis";
 import { AgentWorkflow } from "./AgentWorkflow";
@@ -9,12 +9,13 @@ import { AnalysisDashboard, type TraceMetric } from "./AnalysisDashboard";
 import { AnalysisChatPanel } from "./AnalysisChatPanel";
 import { PdfViewer, type TraceTarget } from "./PdfViewer";
 import { AnalyzeExtractPanel } from "./AnalyzeExtractPanel";
+import { InvestorWorkspacePanel } from "./InvestorWorkspacePanel";
 import { analyzePdf } from "@/lib/pdfAnalysis";
 import {
   isFullAnalysisPayload,
   isStepEventPayload,
 } from "@/lib/sseClient";
-import { RotateCcw, FileText } from "lucide-react";
+import { RotateCcw, FileText, Sparkles } from "lucide-react";
 import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import { normalizeCompanyName, resolveTicker } from "@/lib/filingIdentity";
 type Phase = "idle" | "analyzing" | "done" | "error";
@@ -106,7 +107,71 @@ async function clearCachedPdfFile(): Promise<void> {
   db.close();
 }
 
+function ExtractingAurora({ compact = false }: { compact?: boolean }) {
+  const steps = [
+    "Reading filing pages",
+    "Extracting tables",
+    "Reconciling metrics",
+    "Preparing dashboard",
+  ];
+
+  return (
+    <div
+      className={cn(
+        "relative isolate overflow-hidden rounded-3xl border border-[#e7c7b7]/70 bg-[#3b4043] text-white shadow-[0_24px_80px_rgba(59,64,67,0.22)]",
+        compact ? "p-5" : "min-h-[360px] p-7 sm:p-8",
+      )}
+    >
+      <div className="absolute -left-20 -top-20 h-56 w-56 animate-pulse rounded-full bg-[#cc521d]/35 blur-3xl" />
+      <div className="absolute -bottom-24 right-0 h-64 w-64 animate-pulse rounded-full bg-[#f39a6d]/25 blur-3xl [animation-delay:350ms]" />
+      <div className="absolute inset-0 bg-[linear-gradient(115deg,transparent_0%,rgba(255,255,255,0.10)_36%,transparent_72%)] animate-[pulse_2.4s_ease-in-out_infinite]" />
+
+      <div className="relative z-10 flex h-full flex-col justify-between gap-6">
+        <div>
+          <p className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.18em] text-[#ffe7d8]">
+            <Sparkles className="h-3.5 w-3.5 animate-pulse" />
+            Extracting
+          </p>
+          <h2 className="mt-4 text-2xl font-bold tracking-tight sm:text-3xl">
+            Turning filing text into a finance-grade workspace
+          </h2>
+          <p className="mt-2 max-w-xl text-sm leading-6 text-slate-300">
+            Parsing source pages, mapping financial statements, checking formulas, and preparing traceable analytics.
+          </p>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-4">
+          {steps.map((step, index) => (
+            <div
+              key={step}
+              className="rounded-2xl border border-white/10 bg-white/[0.07] p-3 backdrop-blur"
+            >
+              <div className="mb-3 flex items-center gap-2">
+                <span
+                  className="h-2.5 w-2.5 animate-ping rounded-full bg-[#f39a6d]"
+                  style={{ animationDelay: `${index * 180}ms` }}
+                />
+                <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+              </div>
+              <p className="text-xs font-semibold text-white">{step}</p>
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-[#cc521d] via-[#de6b36] to-[#f39a6d]"
+                  style={{ width: `${42 + index * 14}%` }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function TenQDropAnalyzer() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const restoreHistoryId = searchParams.get("historyId");
   const [phase, setPhase] = useState<Phase>("idle");
@@ -127,6 +192,12 @@ export function TenQDropAnalyzer() {
   const extractedFilingTextRef = useRef<string | null>(null);
   const [traceTarget, setTraceTarget] = useState<TraceTarget | null>(null);
   const aiEnabled = true;
+
+  const openWorkbook = useCallback(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", "workbook");
+    router.push(`/analyze?${params.toString()}`);
+  }, [router, searchParams]);
 
   useEffect(() => {
     if (!restoreHistoryId) return;
@@ -225,7 +296,7 @@ export function TenQDropAnalyzer() {
     void (async () => {
       if (result.meta.source === "pdf") {
         try {
-          const saveResp = await fetch("/api/filings/save", {
+          const saveResp = await fetchWithAuth("/api/filings/save", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -373,13 +444,24 @@ export function TenQDropAnalyzer() {
         }
       );
 
-      setResult(resolveAnalysisMeta(analysis));
+      const resolvedAnalysis = resolveAnalysisMeta(analysis);
+      setResult(resolvedAnalysis);
       setPhase("done");
+      if (typeof window !== "undefined") {
+        const payload: PersistedAnalyzeSession = {
+          phase: "done",
+          result: resolvedAnalysis,
+          events,
+          error: "",
+          persistNotice,
+        };
+        window.localStorage.setItem(ANALYZE_SESSION_KEY, JSON.stringify(payload));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setPhase("error");
     }
-  }, []);
+  }, [events, persistNotice]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -440,7 +522,7 @@ export function TenQDropAnalyzer() {
     return (
       <div className="relative flex h-dvh flex-col overflow-hidden">
         {/* Toolbar + horizontal pipeline */}
-        <div className="flex shrink-0 flex-col gap-2 border-b border-slate-200/80 bg-white px-3 py-2 sm:px-4">
+        <div className="flex shrink-0 flex-col gap-2 border-b border-[#e3e5e7] bg-white px-3 py-2 sm:px-4">
           <div className="flex items-center gap-2">
             <button
               onClick={reset}
@@ -450,7 +532,7 @@ export function TenQDropAnalyzer() {
               New analysis
             </button>
             <span className="text-[11px] text-slate-500">{pdfFile?.name}</span>
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+            <span className="rounded-full bg-[#fff6f1] px-2 py-0.5 text-[10px] font-semibold text-[#cc521d]">
               {phase === "analyzing" ? "Extracting tables · mapping debt lines" : phase === "done" ? "Ready to review, export, and chat" : "Awaiting input"}
             </span>
           </div>
@@ -488,7 +570,7 @@ export function TenQDropAnalyzer() {
           </button>
 
           {/* Analysis dashboard */}
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto border-l border-slate-200/80 bg-white p-3 sm:p-4">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto border-l border-[#e3e5e7] bg-white p-3 sm:p-4">
             {result && (phase === "done" || phase === "analyzing") ? (
               <div className="flex min-h-0 flex-1 flex-col gap-2">
                 {phase === "analyzing" && (
@@ -499,19 +581,23 @@ export function TenQDropAnalyzer() {
                 <AnalysisDashboard
                   result={result}
                   onExport={phase === "done" ? handleExport : undefined}
+                  onOpenWorkbook={phase === "done" ? openWorkbook : undefined}
                   onTraceMetric={(m: TraceMetric) => setTraceTarget(m)}
                 />
+                {phase === "done" && (
+                  <InvestorWorkspacePanel analysis={result} onOpenWorkbook={openWorkbook} />
+                )}
               </div>
             ) : (
               <div className="flex flex-1 items-center justify-center p-6 text-center">
-                <div>
-                  <p className="text-sm font-semibold text-slate-600">
-                    {phase === "analyzing" ? "Analyzing and structuring filing data…" : "Analysis will appear here"}
-                  </p>
-                  <p className="mt-1 text-xs text-slate-400">
-                    {phase === "analyzing" ? "Parsing pages, extracting tables, and mapping statement lines." : "Upload a PDF to start extraction."}
-                  </p>
-                </div>
+                {phase === "analyzing" ? (
+                  <ExtractingAurora />
+                ) : (
+                  <div>
+                    <p className="text-sm font-semibold text-slate-600">Analysis will appear here</p>
+                    <p className="mt-1 text-xs text-slate-400">Upload a PDF to start extraction.</p>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -520,7 +606,9 @@ export function TenQDropAnalyzer() {
         {phase === "error" && (
           <div className="absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-red-800 shadow-lg">
             <p className="text-xs font-bold">{error}</p>
-            <p className="text-[11px] opacity-90">Try another ticker or upload a different 10-Q PDF.</p>
+            <p className="text-[11px] opacity-90">
+              If you have a 10-Q file, try a clearer PDF. If you need ticker-driven SEC extraction, use the Data Source page.
+            </p>
           </div>
         )}
 
@@ -531,11 +619,9 @@ export function TenQDropAnalyzer() {
 
   /* ───── SEC MODE or PDF hidden: Original layout ───── */
   return (
-    <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-4 px-3 py-4 sm:gap-5 sm:px-4 sm:py-6">
+    <div className="mx-auto flex w-full max-w-[2200px] flex-col gap-4 px-2 py-4 sm:gap-5 sm:px-4 sm:py-6">
       {phase === "analyzing" && (
-        <div className="rounded-2xl border border-primary/20 bg-primary/[0.06] px-4 py-2 text-xs text-primary">
-          Processing filing stream: ingesting source, mapping statements, and preparing dashboard blocks.
-        </div>
+        <ExtractingAurora compact />
       )}
       {persistNotice?.kind === "warn" && (
         <div
@@ -566,9 +652,9 @@ export function TenQDropAnalyzer() {
       </div>
 
       <div className={cn(
-        "grid items-start gap-4 sm:gap-5",
-        result && "lg:grid-cols-[280px_1fr] grid-cols-1",
-        !result && "mx-auto max-w-xl grid-cols-1",
+        "grid min-w-0 items-start gap-4 sm:gap-5",
+        (result || phase === "analyzing") && "grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)]",
+        !result && phase !== "analyzing" && "mx-auto max-w-xl grid-cols-1",
       )}>
         <div className="space-y-4 lg:sticky lg:top-4">
           <div className="rounded-2xl border border-slate-200/80 bg-white p-3 shadow-elevation sm:p-4">
@@ -587,8 +673,18 @@ export function TenQDropAnalyzer() {
             <AnalysisDashboard
               result={result}
               onExport={phase === "done" ? handleExport : undefined}
+              onOpenWorkbook={phase === "done" ? openWorkbook : undefined}
               onTraceMetric={hasPdf ? (m: TraceMetric) => setTraceTarget(m) : undefined}
             />
+            {phase === "done" && (
+              <InvestorWorkspacePanel analysis={result} onOpenWorkbook={openWorkbook} />
+            )}
+          </div>
+        )}
+
+        {phase === "analyzing" && !result && (
+          <div className="min-w-0">
+            <ExtractingAurora />
           </div>
         )}
       </div>
@@ -597,7 +693,7 @@ export function TenQDropAnalyzer() {
         <div className="mx-auto flex w-full max-w-xl items-start gap-3 rounded-2xl border border-red-100 bg-red-50/80 p-4 text-red-800">
           <p className="text-sm font-bold">Analysis failed</p>
           <p className="text-xs opacity-90">{error}</p>
-          <p className="text-xs opacity-90">Check ticker format, retry, or switch to PDF upload.</p>
+          <p className="text-xs opacity-90">Check ticker format, retry, or upload a different 10-Q PDF, or switch to Data Source for SEC extraction.</p>
         </div>
       )}
     </div>
