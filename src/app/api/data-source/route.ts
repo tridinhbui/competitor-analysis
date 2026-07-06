@@ -64,18 +64,30 @@ const TRACE_TAGS_BY_FIELD: Record<string, string[]> = {
   longTermDebt: ["LongTermDebtNoncurrent", "LongTermDebt"],
   netDebt: ["TotalNetDebtSupplemental", "LongTermDebt", "DebtCurrent", "CashAndCashEquivalentsAtCarryingValue"],
   cashAndEquivalents: ["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"],
+  shortTermInvestments: ["ShortTermInvestments"],
   currentAssets: ["AssetsCurrent"],
   currentLiabilities: ["LiabilitiesCurrent"],
   workingCapital: ["AssetsCurrent", "LiabilitiesCurrent"],
   inventory: ["InventoryNet", "Inventory"],
   accountsReceivable: ["AccountsReceivableNetCurrent", "AccountsReceivableNet"],
   accountsPayable: ["AccountsPayableCurrent", "AccountsPayable"],
+  accruedLiabilities: ["AccruedLiabilitiesCurrent"],
+  deferredRevenue: ["DeferredRevenueCurrent"],
+  propertyPlantEquipment: ["PropertyPlantAndEquipmentNet"],
+  goodwill: ["Goodwill"],
+  intangibleAssets: ["IntangibleAssetsNet"],
+  operatingLeaseLiabilities: ["OperatingLeaseLiabilityCurrent", "OperatingLeaseLiabilityNoncurrent"],
+  financeLeaseLiabilities: ["FinanceLeaseLiabilityCurrent", "FinanceLeaseLiabilityNoncurrent"],
+  leaseAdjustedDebt: ["OperatingLeaseLiabilityCurrent", "OperatingLeaseLiabilityNoncurrent", "FinanceLeaseLiabilityCurrent", "GrossDebt"],
+  leaseAdjustedNetDebt: ["OperatingLeaseLiabilityCurrent", "OperatingLeaseLiabilityNoncurrent", "CashAndCashEquivalentsAtCarryingValue", "GrossDebt"],
   operatingCashFlow: ["NetCashProvidedByUsedInOperatingActivities", "NetCashProvidedByOperatingActivities"],
   capex: ["PaymentsToAcquirePropertyPlantAndEquipment", "CapitalExpenditures"],
   freeCashFlow: ["NetCashProvidedByUsedInOperatingActivities", "PaymentsToAcquirePropertyPlantAndEquipment"],
   shareRepurchases: ["PaymentsForRepurchaseOfCommonStock"],
   investingCashFlow: ["NetCashProvidedByUsedInInvestingActivities", "NetCashProvidedByInvestingActivities"],
   financingCashFlow: ["NetCashProvidedByUsedInFinancingActivities", "NetCashProvidedByFinancingActivities"],
+  debtIssued: ["ProceedsFromIssuanceOfLongTermDebt", "ProceedsFromDebt"],
+  debtRepaid: ["RepaymentsOfLongTermDebt", "RepaymentsOfDebt", "RepaymentsOfShortTermDebt", "RepaymentsOfCommercialPaper"],
   sgaExpense: ["SellingGeneralAndAdministrativeExpense"],
   depreciation: ["DepreciationDepletionAndAmortization", "DepreciationAndAmortization", "Depreciation"],
   ebit: ["OperatingIncomeLoss"],
@@ -83,6 +95,8 @@ const TRACE_TAGS_BY_FIELD: Record<string, string[]> = {
   interestExpense: ["InterestExpenseNonOperating", "InterestExpense"],
   epsBasic: ["EarningsPerShareBasic"],
   epsDiluted: ["EarningsPerShareDiluted"],
+  weightedAverageSharesBasic: ["WeightedAverageSharesBasic"],
+  weightedAverageSharesDiluted: ["WeightedAverageSharesDiluted"],
   shareBasedComp: ["ShareBasedCompensation"],
   dividendsPaid: ["PaymentsOfDividends", "PaymentsOfDividendsCommonStock"],
 };
@@ -105,6 +119,19 @@ const NORMALIZED_CALC_BY_FIELD: Record<string, string> = {
   currentRatio: "Current assets divided by current liabilities when available from extraction.",
   workingCapital: "Current assets minus current liabilities.",
   workingCapitalRatio: "Working capital divided by revenue.",
+  daysSalesOutstanding: "Accounts receivable divided by revenue, multiplied by 90 days for quarterly rows.",
+  daysInventoryOutstanding: "Inventory divided by cost of revenue, multiplied by 90 days for quarterly rows.",
+  daysPayableOutstanding: "Accounts payable divided by cost of revenue, multiplied by 90 days for quarterly rows.",
+  cashConversionCycle: "DSO plus DIO minus DPO.",
+  effectiveTaxRate: "Income tax divided by pretax income when available.",
+  capexAsPercentRevenue: "Capital expenditures divided by revenue.",
+  dividendPayoutRatio: "Dividends paid divided by net income.",
+  buybackPayoutRatio: "Share repurchases divided by net income.",
+  totalPayoutRatio: "Dividends plus buybacks divided by net income.",
+  leaseAdjustedDebt: "Total debt plus lease obligations not already captured in gross debt.",
+  leaseAdjustedNetDebt: "Lease-adjusted debt minus cash and equivalents.",
+  leaseAdjustedDebtToEbitda: "Lease-adjusted debt divided by EBITDA.",
+  leaseAdjustedNetDebtToEbitda: "Lease-adjusted net debt divided by EBITDA.",
   inventoryTurnover: "Cost of revenue divided by inventory.",
   receivablesTurnover: "Revenue divided by accounts receivable.",
   assetTurnover: "Revenue divided by total assets.",
@@ -173,6 +200,25 @@ function buildMetricTraceMap(
       }];
     }),
   );
+}
+
+function ratioNumber(numerator: number | null, denominator: number | null): number | null {
+  if (numerator == null || denominator == null || denominator === 0) return null;
+  return numerator / denominator;
+}
+
+function roundOne(value: number | null): number | null {
+  return value == null || !Number.isFinite(value) ? null : Math.round(value * 10) / 10;
+}
+
+function daysMetric(numerator: number | null, denominator: number | null, days = 90): number | null {
+  const ratio = ratioNumber(numerator, denominator);
+  return roundOne(ratio != null ? ratio * days : null);
+}
+
+function sumNullable(...values: Array<number | null | undefined>): number | null {
+  const present = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  return present.length > 0 ? roundRatio(present.reduce((sum, value) => sum + value, 0), 2) : null;
 }
 
 function clone<T>(value: T): T {
@@ -584,6 +630,7 @@ async function buildWorkbookResponse({
     const shortTermDebt = overrides.shortTermDebt ?? analysis.debtStructure?.shortTermDebt ?? null;
     const longTermDebt = overrides.longTermDebt ?? analysis.debtStructure?.longTermDebt ?? null;
     const netDebt = overrides.netDebt ?? metrics.netDebt ?? analysis.debtStructure?.netDebt ?? null;
+    const shortTermInvestments = overrides.shortTermInvestments ?? findAnalysisItemValue(analysis, "ShortTermInvestments");
     const currentAssets = overrides.currentAssets ?? findAnalysisItemValue(analysis, "AssetsCurrent");
     const currentLiabilities = overrides.currentLiabilities ?? findAnalysisItemValue(analysis, "LiabilitiesCurrent");
     const workingCapital = overrides.workingCapital ?? analysis.ratios?.workingCapital ?? (
@@ -592,9 +639,42 @@ async function buildWorkbookResponse({
     const inventory = overrides.inventory ?? findAnalysisItemValue(analysis, "InventoryNet", "Inventory");
     const accountsReceivable = overrides.accountsReceivable ?? findAnalysisItemValue(analysis, "AccountsReceivableNetCurrent", "AccountsReceivableNet");
     const accountsPayable = overrides.accountsPayable ?? findAnalysisItemValue(analysis, "AccountsPayableCurrent", "AccountsPayable");
+    const accruedLiabilities = overrides.accruedLiabilities ?? findAnalysisItemValue(analysis, "AccruedLiabilitiesCurrent");
+    const deferredRevenue = overrides.deferredRevenue ?? findAnalysisItemValue(analysis, "DeferredRevenueCurrent");
+    const propertyPlantEquipment = overrides.propertyPlantEquipment ?? findAnalysisItemValue(analysis, "PropertyPlantAndEquipmentNet");
+    const goodwill = overrides.goodwill ?? findAnalysisItemValue(analysis, "Goodwill");
+    const intangibleAssets = overrides.intangibleAssets ?? findAnalysisItemValue(analysis, "IntangibleAssetsNet");
+    const operatingLeaseLiabilities =
+      overrides.operatingLeaseLiabilities ??
+      analysis.debtStructure?.operatingLeaseLiabilities ??
+      sumNullable(
+        findAnalysisItemValue(analysis, "OperatingLeaseLiabilityCurrent"),
+        findAnalysisItemValue(analysis, "OperatingLeaseLiabilityNoncurrent"),
+      );
+    const financeLeaseLiabilities =
+      overrides.financeLeaseLiabilities ??
+      analysis.debtStructure?.financeLeaseLiabilities ??
+      sumNullable(
+        findAnalysisItemValue(analysis, "FinanceLeaseLiabilityCurrent"),
+        findAnalysisItemValue(analysis, "FinanceLeaseLiabilityNoncurrent"),
+      );
+    const leaseAdjustedDebt =
+      overrides.leaseAdjustedDebt ??
+      analysis.debtStructure?.leaseAdjustedDebt ??
+      (metrics.totalDebt != null && operatingLeaseLiabilities != null
+        ? roundRatio(metrics.totalDebt + operatingLeaseLiabilities, 2)
+        : null);
+    const leaseAdjustedNetDebt =
+      overrides.leaseAdjustedNetDebt ??
+      analysis.debtStructure?.leaseAdjustedNetDebt ??
+      (netDebt != null && operatingLeaseLiabilities != null
+        ? roundRatio(netDebt + operatingLeaseLiabilities, 2)
+        : null);
     const shareRepurchases = overrides.shareRepurchases ?? analysis.cashFlow?.shareRepurchases ?? null;
     const investingCashFlow = overrides.investingCashFlow ?? analysis.cashFlow?.investingCashFlow ?? null;
     const financingCashFlow = overrides.financingCashFlow ?? analysis.cashFlow?.financingCashFlow ?? null;
+    const debtIssued = overrides.debtIssued ?? analysis.cashFlow?.debtIssued ?? null;
+    const debtRepaid = overrides.debtRepaid ?? analysis.cashFlow?.debtRepaid ?? null;
     const debtToCapital = overrides.debtToCapital ?? analysis.ratios?.debtToCapital ?? null;
     const netDebtToEbitda = overrides.netDebtToEbitda ?? analysis.ratios?.netDebtToEbitda ?? null;
     const interestCoverage = overrides.interestCoverage ?? metrics.interestCoverage ?? analysis.ratios?.interestCoverage ?? null;
@@ -602,8 +682,32 @@ async function buildWorkbookResponse({
     const assetTurnover = overrides.assetTurnover ?? analysis.ratios?.assetTurnover ?? null;
     const inventoryTurnover = overrides.inventoryTurnover ?? analysis.ratios?.inventoryTurnover ?? null;
     const receivablesTurnover = overrides.receivablesTurnover ?? analysis.ratios?.receivablesTurnover ?? null;
+    const daysSalesOutstanding = overrides.daysSalesOutstanding ?? analysis.ratios?.daysSalesOutstanding ?? daysMetric(accountsReceivable, rawRevenue);
+    const daysInventoryOutstanding = overrides.daysInventoryOutstanding ?? analysis.ratios?.daysInventoryOutstanding ?? daysMetric(inventory, costOfRevenue);
+    const daysPayableOutstanding = overrides.daysPayableOutstanding ?? analysis.ratios?.daysPayableOutstanding ?? daysMetric(accountsPayable, costOfRevenue);
+    const cashConversionCycle = overrides.cashConversionCycle ?? analysis.ratios?.cashConversionCycle ?? (
+      daysSalesOutstanding != null && daysInventoryOutstanding != null && daysPayableOutstanding != null
+        ? roundOne(daysSalesOutstanding + daysInventoryOutstanding - daysPayableOutstanding)
+        : null
+    );
     const fcfConversion = overrides.fcfConversion ?? analysis.ratios?.fcfConversion ?? percent(metrics.freeCashFlow, metrics.netIncome);
     const workingCapitalRatio = overrides.workingCapitalRatio ?? analysis.ratios?.workingCapitalRatio ?? percent(workingCapital, rawRevenue);
+    const effectiveTaxRate = overrides.effectiveTaxRate ?? analysis.ratios?.effectiveTaxRate ?? null;
+    const capexAsPercentRevenue = overrides.capexAsPercentRevenue ?? analysis.ratios?.capexAsPercentRevenue ?? percent(metrics.capex, rawRevenue);
+    const dividendPayoutRatio = overrides.dividendPayoutRatio ?? analysis.ratios?.dividendPayoutRatio ?? percent(metrics.dividendsPaid, metrics.netIncome);
+    const buybackPayoutRatio = overrides.buybackPayoutRatio ?? analysis.ratios?.buybackPayoutRatio ?? percent(shareRepurchases, metrics.netIncome);
+    const totalPayoutRatio = overrides.totalPayoutRatio ?? analysis.ratios?.totalPayoutRatio ?? percent(
+      metrics.dividendsPaid != null || shareRepurchases != null
+        ? (metrics.dividendsPaid ?? 0) + (shareRepurchases ?? 0)
+        : null,
+      metrics.netIncome,
+    );
+    const leaseAdjustedDebtToEbitda = overrides.leaseAdjustedDebtToEbitda ?? analysis.ratios?.leaseAdjustedDebtToEbitda ?? (
+      leaseAdjustedDebt != null && ebitda != null && ebitda !== 0 ? roundRatio(leaseAdjustedDebt / ebitda, 1) : null
+    );
+    const leaseAdjustedNetDebtToEbitda = overrides.leaseAdjustedNetDebtToEbitda ?? analysis.ratios?.leaseAdjustedNetDebtToEbitda ?? (
+      leaseAdjustedNetDebt != null && ebitda != null && ebitda !== 0 ? roundRatio(leaseAdjustedNetDebt / ebitda, 1) : null
+    );
     const volumeHeads = (overrides.volumeHeads ?? null) as number | null;
     const volumeLbs = (overrides.volumeLbs ?? null) as number | null;
     const volumeCwt = (overrides.volumeCwt ?? (volumeLbs != null ? volumeLbs / 100 : null)) as number | null;
@@ -655,18 +759,30 @@ async function buildWorkbookResponse({
       longTermDebt,
       netDebt,
       cashAndEquivalents: overrides.cashAndEquivalents ?? metrics.cash,
+      shortTermInvestments,
       currentAssets,
       currentLiabilities,
       workingCapital,
       inventory,
       accountsReceivable,
       accountsPayable,
+      accruedLiabilities,
+      deferredRevenue,
+      propertyPlantEquipment,
+      goodwill,
+      intangibleAssets,
+      operatingLeaseLiabilities,
+      financeLeaseLiabilities,
+      leaseAdjustedDebt,
+      leaseAdjustedNetDebt,
       operatingCashFlow: overrides.operatingCashFlow ?? metrics.operatingCashFlow,
       capex: overrides.capex ?? metrics.capex,
       freeCashFlow: overrides.freeCashFlow ?? metrics.freeCashFlow,
       shareRepurchases,
       investingCashFlow,
       financingCashFlow,
+      debtIssued,
+      debtRepaid,
       grossMargin: overrides.grossMargin ?? metrics.grossMargin,
       operatingMargin: overrides.operatingMargin ?? metrics.operatingMargin,
       netMargin: overrides.netMargin ?? metrics.netMargin,
@@ -679,8 +795,19 @@ async function buildWorkbookResponse({
       assetTurnover,
       inventoryTurnover,
       receivablesTurnover,
+      daysSalesOutstanding,
+      daysInventoryOutstanding,
+      daysPayableOutstanding,
+      cashConversionCycle,
       fcfConversion,
       workingCapitalRatio,
+      effectiveTaxRate,
+      capexAsPercentRevenue,
+      dividendPayoutRatio,
+      buybackPayoutRatio,
+      totalPayoutRatio,
+      leaseAdjustedDebtToEbitda,
+      leaseAdjustedNetDebtToEbitda,
       sgaExpense: rawSga,
       depreciation: overrides.depreciation ?? depItem?.value ?? null,
       ebit: overrides.ebit ?? ebit,
@@ -689,6 +816,8 @@ async function buildWorkbookResponse({
       interestExpense: overrides.interestExpense ?? analysis.incomeStatement?.interestExpense ?? null,
       epsBasic: overrides.epsBasic ?? analysis.incomeStatement?.epsBasic ?? null,
       epsDiluted: overrides.epsDiluted ?? analysis.incomeStatement?.epsDiluted ?? null,
+      weightedAverageSharesBasic: overrides.weightedAverageSharesBasic ?? analysis.incomeStatement?.weightedAverageSharesBasic ?? null,
+      weightedAverageSharesDiluted: overrides.weightedAverageSharesDiluted ?? analysis.incomeStatement?.weightedAverageSharesDiluted ?? null,
       shareBasedComp: overrides.shareBasedComp ?? sbcItem?.value ?? null,
       dividendsPaid: overrides.dividendsPaid ?? metrics.dividendsPaid ?? null,
       roe: overrides.roe ?? metrics.roe ?? null,
@@ -734,18 +863,30 @@ async function buildWorkbookResponse({
       longTermDebt,
       netDebt,
       cashAndEquivalents: overrides.cashAndEquivalents ?? metrics.cash,
+      shortTermInvestments,
       currentAssets,
       currentLiabilities,
       workingCapital,
       inventory,
       accountsReceivable,
       accountsPayable,
+      accruedLiabilities,
+      deferredRevenue,
+      propertyPlantEquipment,
+      goodwill,
+      intangibleAssets,
+      operatingLeaseLiabilities,
+      financeLeaseLiabilities,
+      leaseAdjustedDebt,
+      leaseAdjustedNetDebt,
       operatingCashFlow: overrides.operatingCashFlow ?? metrics.operatingCashFlow,
       capex: overrides.capex ?? metrics.capex,
       freeCashFlow: overrides.freeCashFlow ?? metrics.freeCashFlow,
       shareRepurchases,
       investingCashFlow,
       financingCashFlow,
+      debtIssued,
+      debtRepaid,
       grossMargin: overrides.grossMargin ?? metrics.grossMargin,
       operatingMargin: overrides.operatingMargin ?? metrics.operatingMargin,
       netMargin: overrides.netMargin ?? metrics.netMargin,
@@ -758,8 +899,19 @@ async function buildWorkbookResponse({
       assetTurnover,
       inventoryTurnover,
       receivablesTurnover,
+      daysSalesOutstanding,
+      daysInventoryOutstanding,
+      daysPayableOutstanding,
+      cashConversionCycle,
       fcfConversion,
       workingCapitalRatio,
+      effectiveTaxRate,
+      capexAsPercentRevenue,
+      dividendPayoutRatio,
+      buybackPayoutRatio,
+      totalPayoutRatio,
+      leaseAdjustedDebtToEbitda,
+      leaseAdjustedNetDebtToEbitda,
       sgaExpense: rawSga,
       depreciation: overrides.depreciation ?? depItem?.value ?? null,
       ebit: overrides.ebit ?? ebit,
@@ -768,6 +920,8 @@ async function buildWorkbookResponse({
       interestExpense: overrides.interestExpense ?? analysis.incomeStatement?.interestExpense ?? null,
       epsBasic: overrides.epsBasic ?? analysis.incomeStatement?.epsBasic ?? null,
       epsDiluted: overrides.epsDiluted ?? analysis.incomeStatement?.epsDiluted ?? null,
+      weightedAverageSharesBasic: overrides.weightedAverageSharesBasic ?? analysis.incomeStatement?.weightedAverageSharesBasic ?? null,
+      weightedAverageSharesDiluted: overrides.weightedAverageSharesDiluted ?? analysis.incomeStatement?.weightedAverageSharesDiluted ?? null,
       shareBasedComp: overrides.shareBasedComp ?? sbcItem?.value ?? null,
       dividendsPaid: overrides.dividendsPaid ?? metrics.dividendsPaid ?? null,
       roe: overrides.roe ?? metrics.roe ?? null,
@@ -842,6 +996,8 @@ async function buildWorkbookResponse({
     const shareRepurchases = sumN((row) => row.shareRepurchases);
     const investingCashFlow = sumN((row) => row.investingCashFlow);
     const financingCashFlow = sumN((row) => row.financingCashFlow);
+    const debtIssued = sumN((row) => row.debtIssued);
+    const debtRepaid = sumN((row) => row.debtRepaid);
     const dividendsPaid = sumN((row) => row.dividendsPaid);
     const sgaExpense = sumN((row) => row.sgaExpense);
     const depreciation = sumN((row) => row.depreciation);
@@ -876,18 +1032,30 @@ async function buildWorkbookResponse({
       longTermDebt: latest.longTermDebt,
       netDebt: latest.netDebt,
       cashAndEquivalents: latest.cashAndEquivalents,
+      shortTermInvestments: latest.shortTermInvestments,
       currentAssets: latest.currentAssets,
       currentLiabilities: latest.currentLiabilities,
       workingCapital: latest.workingCapital,
       inventory: latest.inventory,
       accountsReceivable: latest.accountsReceivable,
       accountsPayable: latest.accountsPayable,
+      accruedLiabilities: latest.accruedLiabilities,
+      deferredRevenue: latest.deferredRevenue,
+      propertyPlantEquipment: latest.propertyPlantEquipment,
+      goodwill: latest.goodwill,
+      intangibleAssets: latest.intangibleAssets,
+      operatingLeaseLiabilities: latest.operatingLeaseLiabilities,
+      financeLeaseLiabilities: latest.financeLeaseLiabilities,
+      leaseAdjustedDebt: latest.leaseAdjustedDebt,
+      leaseAdjustedNetDebt: latest.leaseAdjustedNetDebt,
       operatingCashFlow,
       capex,
       freeCashFlow,
       shareRepurchases,
       investingCashFlow,
       financingCashFlow,
+      debtIssued,
+      debtRepaid,
       grossMargin: pctCalc(grossProfit, revenue),
       operatingMargin: pctCalc(operatingIncome, revenue),
       netMargin: pctCalc(netIncome, revenue),
@@ -902,8 +1070,37 @@ async function buildWorkbookResponse({
       assetTurnover: latest.totalAssets != null && latest.totalAssets > 0 ? roundRatio((revenue ?? 0) / latest.totalAssets, 2) : latest.assetTurnover,
       inventoryTurnover: latest.inventory != null && latest.inventory > 0 ? roundRatio((costOfRevenue ?? 0) / latest.inventory, 1) : latest.inventoryTurnover,
       receivablesTurnover: latest.accountsReceivable != null && latest.accountsReceivable > 0 ? roundRatio((revenue ?? 0) / latest.accountsReceivable, 1) : latest.receivablesTurnover,
+      daysSalesOutstanding: daysMetric(latest.accountsReceivable, revenue, 365),
+      daysInventoryOutstanding: daysMetric(latest.inventory, costOfRevenue, 365),
+      daysPayableOutstanding: daysMetric(latest.accountsPayable, costOfRevenue, 365),
+      cashConversionCycle:
+        daysMetric(latest.accountsReceivable, revenue, 365) != null &&
+        daysMetric(latest.inventory, costOfRevenue, 365) != null &&
+        daysMetric(latest.accountsPayable, costOfRevenue, 365) != null
+          ? roundOne(
+              (daysMetric(latest.accountsReceivable, revenue, 365) ?? 0) +
+                (daysMetric(latest.inventory, costOfRevenue, 365) ?? 0) -
+                (daysMetric(latest.accountsPayable, costOfRevenue, 365) ?? 0),
+            )
+          : null,
       fcfConversion: pctCalc(freeCashFlow, netIncome),
       workingCapitalRatio: pctCalc(latest.workingCapital, revenue),
+      effectiveTaxRate: latest.effectiveTaxRate,
+      capexAsPercentRevenue: pctCalc(capex, revenue),
+      dividendPayoutRatio: pctCalc(dividendsPaid, netIncome),
+      buybackPayoutRatio: pctCalc(shareRepurchases, netIncome),
+      totalPayoutRatio: pctCalc(
+        dividendsPaid != null || shareRepurchases != null ? (dividendsPaid ?? 0) + (shareRepurchases ?? 0) : null,
+        netIncome,
+      ),
+      leaseAdjustedDebtToEbitda:
+        latest.leaseAdjustedDebt != null && ebitda != null && ebitda !== 0
+          ? roundRatio(latest.leaseAdjustedDebt / ebitda, 1)
+          : latest.leaseAdjustedDebtToEbitda,
+      leaseAdjustedNetDebtToEbitda:
+        latest.leaseAdjustedNetDebt != null && ebitda != null && ebitda !== 0
+          ? roundRatio(latest.leaseAdjustedNetDebt / ebitda, 1)
+          : latest.leaseAdjustedNetDebtToEbitda,
       sgaExpense,
       depreciation,
       ebit: operatingIncome,
@@ -912,6 +1109,8 @@ async function buildWorkbookResponse({
       interestExpense,
       epsBasic: null,
       epsDiluted: null,
+      weightedAverageSharesBasic: null,
+      weightedAverageSharesDiluted: null,
       shareBasedComp: sumN((row) => row.shareBasedComp),
       dividendsPaid,
       roe: pctCalc(netIncome, latest.totalEquity),

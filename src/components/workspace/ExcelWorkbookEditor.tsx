@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlignCenter,
   AlignLeft,
@@ -46,6 +46,10 @@ const NUMBER_FORMAT_OPTIONS: Array<{ value: "auto" | DataSourceWorkbookNumberFor
   { value: "thousands", label: "Thousands" },
 ];
 const HISTORY_LIMIT = 80;
+const FALLBACK_SHEET: EditableWorkbookSheet = {
+  name: "Sheet1",
+  cells: [[""]],
+};
 
 interface SelectionRange {
   startRow: number;
@@ -105,14 +109,95 @@ function buildGridWithDimensions(
   return ensureSheetSize(sheet, minRows, minCols);
 }
 
+function cellText(value: unknown): string {
+  return value == null ? "" : String(value);
+}
+
 function cloneWorkbook(workbook: EditableWorkbook): EditableWorkbook {
   return {
     sheets: workbook.sheets.map((sheet) => ({
       ...sheet,
-      cells: sheet.cells.map((row) => [...row]),
+      cells: sheet.cells.map((row) => row.map((cell) => cellText(cell))),
     })),
     styles: { ...workbook.styles },
   };
+}
+
+function columnLabelToIndex(label: string): number {
+  let value = 0;
+  for (const char of label.toUpperCase()) {
+    value = value * 26 + (char.charCodeAt(0) - 64);
+  }
+  return value - 1;
+}
+
+function parseCellAddress(address: string): { row: number; col: number } | null {
+  const match = /^([A-Z]+)(\d+)$/i.exec(address.trim());
+  if (!match) return null;
+  const row = Number(match[2]) - 1;
+  const col = columnLabelToIndex(match[1]);
+  if (row < 0 || col < 0) return null;
+  return { row, col };
+}
+
+function parseNumericInput(value: string): number {
+  const trimmed = value.trim();
+  if (!trimmed) return 0;
+  const negativeWrapped = trimmed.startsWith("(") && trimmed.endsWith(")");
+  const normalized = negativeWrapped ? `-${trimmed.slice(1, -1)}` : trimmed;
+  const parsed = Number(normalized.replace(/[$,%\s,]/g, ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function splitFormulaArgs(value: string): string[] {
+  const args: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (char === "(") depth += 1;
+    if (char === ")") depth -= 1;
+    if (char === "," && depth === 0) {
+      args.push(value.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  args.push(value.slice(start).trim());
+  return args.filter(Boolean);
+}
+
+function extractFormulaReferenceKeys(formula: string): Set<string> {
+  const refs = new Set<string>();
+  if (!formula.trim().startsWith("=")) return refs;
+  const rangeRegex = /\b([A-Z]+\d+)\s*:\s*([A-Z]+\d+)\b/gi;
+  let rangeMatch: RegExpExecArray | null;
+  while ((rangeMatch = rangeRegex.exec(formula)) !== null) {
+    const start = parseCellAddress(rangeMatch[1]);
+    const end = parseCellAddress(rangeMatch[2]);
+    if (!start || !end) continue;
+    for (let row = Math.min(start.row, end.row); row <= Math.max(start.row, end.row); row += 1) {
+      for (let col = Math.min(start.col, end.col); col <= Math.max(start.col, end.col); col += 1) {
+        refs.add(`${row}:${col}`);
+      }
+    }
+  }
+
+  const cellRegex = /\b([A-Z]+\d+)\b/gi;
+  let cellMatch: RegExpExecArray | null;
+  while ((cellMatch = cellRegex.exec(formula)) !== null) {
+    const parsed = parseCellAddress(cellMatch[1]);
+    if (parsed) refs.add(`${parsed.row}:${parsed.col}`);
+  }
+  return refs;
+}
+
+function formatFormulaResult(value: number | string): string {
+  if (typeof value === "string") return value;
+  if (!Number.isFinite(value)) return "#VALUE!";
+  if (Math.abs(value) >= 1000) {
+    return value.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  }
+  return String(Math.round(value * 10000) / 10000);
 }
 
 function ToolbarButton({
@@ -150,6 +235,7 @@ export function ExcelWorkbookEditor({
 }: ExcelWorkbookEditorProps) {
   const gridRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [activeSheetIndex, setActiveSheetIndex] = useState(0);
   const [selection, setSelection] = useState<SelectionRange>({
     startRow: 0,
@@ -167,9 +253,12 @@ export function ExcelWorkbookEditor({
   const [rowHeights, setRowHeights] = useState<Record<string, number>>({});
   const [undoStack, setUndoStack] = useState<EditableWorkbook[]>([]);
   const [redoStack, setRedoStack] = useState<EditableWorkbook[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchIndex, setSearchIndex] = useState(0);
 
-  const safeSheetIndex = clamp(activeSheetIndex, 0, Math.max(workbook.sheets.length - 1, 0));
-  const baseSheet = workbook.sheets[safeSheetIndex];
+  const safeSheets = workbook.sheets.length > 0 ? workbook.sheets : [FALLBACK_SHEET];
+  const safeSheetIndex = clamp(activeSheetIndex, 0, Math.max(safeSheets.length - 1, 0));
+  const baseSheet = safeSheets[safeSheetIndex];
   const activeSheet = useMemo(
     () => buildGridWithDimensions(baseSheet),
     [baseSheet]
@@ -191,6 +280,115 @@ export function ExcelWorkbookEditor({
     }
     return width;
   }, [colCount, columnWidths, safeSheetIndex]);
+  const formulaReferenceKeys = useMemo(() => {
+    const rawFormula = editingCell ? editDraft : formulaDraft;
+    return extractFormulaReferenceKeys(rawFormula);
+  }, [editDraft, editingCell, formulaDraft]);
+
+  const getEvaluatedCellValue = useCallback((row: number, col: number, visiting = new Set<string>()): string => {
+    const rawValue = cellText(activeSheet.cells[row]?.[col]);
+    if (!rawValue.trim().startsWith("=")) return rawValue;
+    const visitKey = `${row}:${col}`;
+    if (visiting.has(visitKey)) return "#CIRC!";
+    const nextVisiting = new Set(visiting);
+    nextVisiting.add(visitKey);
+
+    const evalExpression = (expressionInput: string): number | string => {
+      let expression = expressionInput.trim().replace(/^\s*=/, "");
+
+      const evaluateArg = (arg: string) => {
+        const result = evalExpression(arg);
+        return typeof result === "number" && Number.isFinite(result) ? result : parseNumericInput(String(result));
+      };
+
+      const expandRange = (range: string): number[] => {
+        const [left, right] = range.split(":");
+        const start = parseCellAddress(left);
+        const end = parseCellAddress(right);
+        if (!start || !end) return [];
+        const values: number[] = [];
+        for (let r = Math.min(start.row, end.row); r <= Math.max(start.row, end.row); r += 1) {
+          for (let c = Math.min(start.col, end.col); c <= Math.max(start.col, end.col); c += 1) {
+            values.push(parseNumericInput(getEvaluatedCellValue(r, c, nextVisiting)));
+          }
+        }
+        return values;
+      };
+
+      expression = expression.replace(/\b(SUM|AVERAGE|MIN|MAX)\(([^()]*)\)/gi, (_match, fn: string, body: string) => {
+        const values = splitFormulaArgs(body).flatMap((arg) =>
+          arg.includes(":") ? expandRange(arg) : [evaluateArg(arg)]
+        );
+        if (values.length === 0) return "0";
+        if (fn.toUpperCase() === "AVERAGE") return String(values.reduce((sum, value) => sum + value, 0) / values.length);
+        if (fn.toUpperCase() === "MIN") return String(Math.min(...values));
+        if (fn.toUpperCase() === "MAX") return String(Math.max(...values));
+        return String(values.reduce((sum, value) => sum + value, 0));
+      });
+
+      expression = expression.replace(/\bROUND\(([^()]*)\)/gi, (_match, body: string) => {
+        const [valueArg, digitsArg] = splitFormulaArgs(body);
+        const value = evaluateArg(valueArg ?? "0");
+        const digits = Math.max(0, Math.min(8, Math.round(evaluateArg(digitsArg ?? "0"))));
+        const factor = 10 ** digits;
+        return String(Math.round(value * factor) / factor);
+      });
+
+      expression = expression.replace(/\bIF\(([^()]*)\)/gi, (_match, body: string) => {
+        const [conditionArg, truthyArg, falsyArg] = splitFormulaArgs(body);
+        const condition = evalExpression(conditionArg ?? "0");
+        const isTruthy = typeof condition === "number" ? condition !== 0 : Boolean(condition);
+        return String(evaluateArg(isTruthy ? (truthyArg ?? "0") : (falsyArg ?? "0")));
+      });
+
+      expression = expression.replace(/\b([A-Z]+\d+)\b/gi, (ref) => {
+        const parsed = parseCellAddress(ref);
+        if (!parsed) return "0";
+        return String(parseNumericInput(getEvaluatedCellValue(parsed.row, parsed.col, nextVisiting)));
+      });
+
+      expression = expression.replace(/\^/g, "**");
+      if (!/^[\d+\-*/().,<>=!&|?:\s*]+$/.test(expression)) return "#VALUE!";
+      try {
+        const result = Function(`"use strict"; return (${expression});`)() as unknown;
+        if (typeof result === "boolean") return result ? 1 : 0;
+        return typeof result === "number" && Number.isFinite(result) ? result : "#VALUE!";
+      } catch {
+        return "#VALUE!";
+      }
+    };
+
+    return formatFormulaResult(evalExpression(rawValue));
+  }, [activeSheet]);
+  const searchMatches = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return [] as Array<{ row: number; col: number }>;
+    const matches: Array<{ row: number; col: number }> = [];
+    activeSheet.cells.forEach((row, rowIndex) => {
+      row.forEach((value, colIndex) => {
+        const rawText = cellText(value).toLowerCase();
+        const display = getEvaluatedCellValue(rowIndex, colIndex).toLowerCase();
+        if (rawText.includes(query) || display.includes(query)) {
+          matches.push({ row: rowIndex, col: colIndex });
+        }
+      });
+    });
+    return matches;
+  }, [activeSheet, getEvaluatedCellValue, searchQuery]);
+
+  function jumpToSearchMatch(direction: "next" | "previous" = "next") {
+    if (searchMatches.length === 0) return;
+    const nextIndex =
+      direction === "next"
+        ? (searchIndex + 1) % searchMatches.length
+        : (searchIndex - 1 + searchMatches.length) % searchMatches.length;
+    const match = searchMatches[nextIndex];
+    setSearchIndex(nextIndex);
+    setSelection({ startRow: match.row, endRow: match.row, startCol: match.col, endCol: match.col });
+    setEditingCell(null);
+    setContextMenu(null);
+    focusGrid();
+  }
 
   useEffect(() => {
     if (activeSheetIndex !== safeSheetIndex) {
@@ -222,7 +420,7 @@ export function ExcelWorkbookEditor({
 
   useEffect(() => {
     if (editingCell) return;
-    setFormulaDraft(activeSheet.cells[activeCell.row]?.[activeCell.col] ?? "");
+    setFormulaDraft(cellText(activeSheet.cells[activeCell.row]?.[activeCell.col]));
   }, [activeCell.col, activeCell.row, activeSheet, editingCell]);
 
   useEffect(() => {
@@ -298,7 +496,8 @@ export function ExcelWorkbookEditor({
     nextStyles = workbook.styles,
   ) {
     const nextSheet = updater(buildGridWithDimensions(baseSheet));
-    const nextSheets = workbook.sheets.map((sheet, sheetIndex) =>
+    const sourceSheets = workbook.sheets.length > 0 ? workbook.sheets : [baseSheet];
+    const nextSheets = sourceSheets.map((sheet, sheetIndex) =>
       sheetIndex === safeSheetIndex ? nextSheet : sheet
     );
     commitWorkbookChange({
@@ -384,7 +583,7 @@ export function ExcelWorkbookEditor({
   function beginEdit(row: number, col: number, seed?: string) {
     focusGrid();
     setSelection({ startRow: row, endRow: row, startCol: col, endCol: col });
-    const currentValue = activeSheet.cells[row]?.[col] ?? "";
+    const currentValue = cellText(activeSheet.cells[row]?.[col]);
     setEditDraft(seed ?? currentValue);
     setEditingCell({ row, col });
     setContextMenu(null);
@@ -517,6 +716,32 @@ export function ExcelWorkbookEditor({
     return nextStyles;
   }
 
+  function remapStylesForColumns(startCol: number, deletedCols: number, insertedCols: number) {
+    const nextStyles: Record<string, DataSourceWorkbookCellStyle | null> = {};
+
+    for (const [key, style] of Object.entries(workbook.styles)) {
+      if (!style) continue;
+
+      const [sheetPart, rowPart, colPart] = key.split(":").map(Number);
+      if (sheetPart !== safeSheetIndex) {
+        nextStyles[key] = style;
+        continue;
+      }
+
+      if (colPart < startCol) {
+        nextStyles[key] = style;
+        continue;
+      }
+
+      if (colPart >= startCol + deletedCols) {
+        const shiftedCol = colPart - deletedCols + insertedCols;
+        nextStyles[cellStyleKey(sheetPart, rowPart, shiftedCol)] = style;
+      }
+    }
+
+    return nextStyles;
+  }
+
   function insertRowAbove() {
     onError(null);
     const targetRow = normalizedSelection.startRow;
@@ -570,12 +795,57 @@ export function ExcelWorkbookEditor({
     });
   }
 
+  function insertColumnLeft() {
+    onError(null);
+    const targetCol = normalizedSelection.startCol;
+    const nextStyles = remapStylesForColumns(targetCol, 0, 1);
+
+    updateActiveSheet(
+      (sheet) => {
+        const expanded = buildGridWithDimensions(sheet);
+        const nextCells = expanded.cells.map((row) => [
+          ...row.slice(0, targetCol),
+          "",
+          ...row.slice(targetCol),
+        ]);
+        return { ...expanded, cells: nextCells };
+      },
+      nextStyles,
+    );
+
+    setSelection({ startRow: 0, endRow: 0, startCol: targetCol, endCol: targetCol });
+  }
+
+  function deleteSelectedColumns() {
+    onError(null);
+    const deleteCount = normalizedSelection.endCol - normalizedSelection.startCol + 1;
+    const nextStyles = remapStylesForColumns(normalizedSelection.startCol, deleteCount, 0);
+
+    updateActiveSheet(
+      (sheet) => {
+        const expanded = buildGridWithDimensions(sheet);
+        const nextCells = expanded.cells.map((row) => {
+          const nextRow = row.filter(
+            (_value, colIndex) =>
+              colIndex < normalizedSelection.startCol || colIndex > normalizedSelection.endCol
+          );
+          return nextRow.length > 0 ? nextRow : [""];
+        });
+        return { ...expanded, cells: nextCells };
+      },
+      nextStyles,
+    );
+
+    const nextCol = Math.max(normalizedSelection.startCol - 1, 0);
+    setSelection({ startRow: 0, endRow: 0, startCol: nextCol, endCol: nextCol });
+  }
+
   function selectionToText(): string {
     const lines: string[] = [];
     for (let row = normalizedSelection.startRow; row <= normalizedSelection.endRow; row += 1) {
       const values: string[] = [];
       for (let col = normalizedSelection.startCol; col <= normalizedSelection.endCol; col += 1) {
-        values.push(activeSheet.cells[row]?.[col] ?? "");
+        values.push(cellText(activeSheet.cells[row]?.[col]));
       }
       lines.push(values.join("\t"));
     }
@@ -690,6 +960,12 @@ export function ExcelWorkbookEditor({
     if (modifier && key === "a") {
       event.preventDefault();
       selectAllCells();
+      return;
+    }
+
+    if (modifier && key === "f") {
+      event.preventDefault();
+      searchInputRef.current?.focus();
       return;
     }
 
@@ -834,6 +1110,11 @@ export function ExcelWorkbookEditor({
       return;
     }
     if (event.key === "Enter") {
+      event.preventDefault();
+      beginEdit(activeCell.row, activeCell.col);
+      return;
+    }
+    if (event.key === "F2") {
       event.preventDefault();
       beginEdit(activeCell.row, activeCell.col);
       return;
@@ -1102,6 +1383,41 @@ export function ExcelWorkbookEditor({
             </ToolbarButton>
           </div>
         </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <input
+            ref={searchInputRef}
+            value={searchQuery}
+            onChange={(event) => {
+              setSearchQuery(event.target.value);
+              setSearchIndex(0);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                jumpToSearchMatch(event.shiftKey ? "previous" : "next");
+              }
+            }}
+            className="h-8 min-w-48 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:ring-1 focus:ring-primary/30"
+            placeholder="Find in workbook"
+          />
+          <button
+            type="button"
+            onClick={() => jumpToSearchMatch("previous")}
+            className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+          >
+            Prev
+          </button>
+          <button
+            type="button"
+            onClick={() => jumpToSearchMatch("next")}
+            className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+          >
+            Next
+          </button>
+          <span className="text-xs text-slate-500">
+            {searchQuery.trim() ? `${searchMatches.length} matches` : "Formula refs highlight while editing"}
+          </span>
+        </div>
       </div>
 
       <div
@@ -1209,8 +1525,13 @@ export function ExcelWorkbookEditor({
                   const active = activeCell.row === rowIndex && activeCell.col === colIndex;
                   const isEditing =
                     editingCell?.row === rowIndex && editingCell?.col === colIndex;
-                  const rawValue = row[colIndex] ?? "";
-                  const displayValue = formatWorkbookCellValue(rawValue, style);
+                  const rawValue = cellText(row[colIndex]);
+                  const evaluatedValue = rawValue.trim().startsWith("=")
+                    ? getEvaluatedCellValue(rowIndex, colIndex)
+                    : rawValue;
+                  const displayValue = formatWorkbookCellValue(evaluatedValue, style);
+                  const referenced = formulaReferenceKeys.has(`${rowIndex}:${colIndex}`);
+                  const searchMatched = searchMatches.some((match) => match.row === rowIndex && match.col === colIndex);
 
                   return (
                     <td
@@ -1257,13 +1578,16 @@ export function ExcelWorkbookEditor({
                       className={cn(
                         "border-b border-r border-slate-200 px-2.5 py-1.5 align-middle transition",
                         selected ? "bg-primary/[0.08]" : "bg-white hover:bg-slate-50/80",
+                        referenced && "bg-blue-50 shadow-[inset_0_0_0_2px_rgba(59,130,246,0.75)]",
+                        searchMatched && "bg-amber-50 shadow-[inset_0_0_0_2px_rgba(245,158,11,0.75)]",
                         active && "shadow-[inset_0_0_0_2px_rgba(43,124,255,0.7)]"
                       )}
                       style={{
                         width: getColumnWidth(colIndex),
                         height: getRowHeight(rowIndex),
                         color: style?.textColor ?? undefined,
-                        backgroundColor: selected ? undefined : style?.fillColor ?? undefined,
+                        backgroundColor:
+                          selected || referenced || searchMatched ? undefined : style?.fillColor ?? undefined,
                         fontFamily: style?.fontFamily ?? undefined,
                         fontSize: style?.fontSize ? `${style.fontSize}px` : undefined,
                         fontWeight: style?.bold ? 700 : undefined,
@@ -1361,6 +1685,17 @@ export function ExcelWorkbookEditor({
             <button
               type="button"
               onClick={() => {
+                insertColumnLeft();
+                setContextMenu(null);
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+            >
+              <Rows3 className="h-4 w-4 rotate-90" />
+              Insert column left
+            </button>
+            <button
+              type="button"
+              onClick={() => {
                 deleteSelectedRows();
                 setContextMenu(null);
               }}
@@ -1368,6 +1703,17 @@ export function ExcelWorkbookEditor({
             >
               <Trash2 className="h-4 w-4" />
               Delete row
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                deleteSelectedColumns();
+                setContextMenu(null);
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+            >
+              <Trash2 className="h-4 w-4 rotate-90" />
+              Delete column
             </button>
             <button
               type="button"
@@ -1442,8 +1788,32 @@ export function ExcelWorkbookEditor({
         ) : null}
       </div>
 
+      <div className="flex items-center gap-1 overflow-x-auto border-t border-slate-200 bg-slate-100/80 px-3 py-2">
+        {workbook.sheets.map((sheet, sheetIndex) => (
+          <button
+            key={`bottom-tab-${sheet.name}`}
+            type="button"
+            onClick={() => {
+              setActiveSheetIndex(sheetIndex);
+              setSelection({ startRow: 0, endRow: 0, startCol: 0, endCol: 0 });
+              setEditingCell(null);
+              setContextMenu(null);
+              focusGrid();
+            }}
+            className={cn(
+              "min-w-24 rounded-t-lg border border-b-0 px-3 py-1.5 text-xs font-semibold transition",
+              sheetIndex === safeSheetIndex
+                ? "border-slate-300 bg-white text-slate-900 shadow-sm"
+                : "border-transparent bg-slate-200/70 text-slate-600 hover:bg-white"
+            )}
+          >
+            {sheet.name}
+          </button>
+        ))}
+      </div>
+
       <div className="border-t border-slate-200 bg-slate-50/70 px-4 py-3 text-xs text-slate-500">
-        Right click for quick actions. Keyboard: Ctrl/Cmd+Z undo, Ctrl/Cmd+Y redo, Ctrl/Cmd+C/V/X copy-paste-cut, Ctrl/Cmd+A select all, Ctrl/Cmd+D/R fill down/right, Tab moves, Ctrl/Cmd +/- zooms.
+        Right click for quick actions. Keyboard: Ctrl/Cmd+Z undo, Ctrl/Cmd+Y redo, Ctrl/Cmd+C/V/X copy-paste-cut, Ctrl/Cmd+A select all, Ctrl/Cmd+F find, F2 edit, Ctrl/Cmd+D/R fill down/right, Tab moves, Ctrl/Cmd +/- zooms.
       </div>
     </div>
   );

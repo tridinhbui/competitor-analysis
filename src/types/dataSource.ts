@@ -33,12 +33,22 @@ export interface DataSourceRow {
   longTermDebt: number | null;
   netDebt: number | null;
   cashAndEquivalents: number | null;
+  shortTermInvestments: number | null;
   currentAssets: number | null;
   currentLiabilities: number | null;
   workingCapital: number | null;
   inventory: number | null;
   accountsReceivable: number | null;
   accountsPayable: number | null;
+  accruedLiabilities: number | null;
+  deferredRevenue: number | null;
+  propertyPlantEquipment: number | null;
+  goodwill: number | null;
+  intangibleAssets: number | null;
+  operatingLeaseLiabilities: number | null;
+  financeLeaseLiabilities: number | null;
+  leaseAdjustedDebt: number | null;
+  leaseAdjustedNetDebt: number | null;
   // -- Cash Flow --
   operatingCashFlow: number | null;
   capex: number | null;
@@ -46,6 +56,8 @@ export interface DataSourceRow {
   shareRepurchases: number | null;
   investingCashFlow: number | null;
   financingCashFlow: number | null;
+  debtIssued: number | null;
+  debtRepaid: number | null;
   // -- Margins --
   grossMargin: number | null;
   operatingMargin: number | null;
@@ -60,8 +72,19 @@ export interface DataSourceRow {
   assetTurnover: number | null;
   inventoryTurnover: number | null;
   receivablesTurnover: number | null;
+  daysSalesOutstanding: number | null;
+  daysInventoryOutstanding: number | null;
+  daysPayableOutstanding: number | null;
+  cashConversionCycle: number | null;
   fcfConversion: number | null;
   workingCapitalRatio: number | null;
+  effectiveTaxRate: number | null;
+  capexAsPercentRevenue: number | null;
+  dividendPayoutRatio: number | null;
+  buybackPayoutRatio: number | null;
+  totalPayoutRatio: number | null;
+  leaseAdjustedDebtToEbitda: number | null;
+  leaseAdjustedNetDebtToEbitda: number | null;
   // -- Other --
   sgaExpense: number | null;
   depreciation: number | null;
@@ -71,6 +94,8 @@ export interface DataSourceRow {
   interestExpense: number | null;
   epsBasic: number | null;
   epsDiluted: number | null;
+  weightedAverageSharesBasic: number | null;
+  weightedAverageSharesDiluted: number | null;
   shareBasedComp: number | null;
   dividendsPaid: number | null;
   roe: number | null;
@@ -144,18 +169,30 @@ export const METRIC_COLUMNS: MetricColumn[] = [
   { key: "longTermDebt", label: "Long-Term Debt", format: "currency" },
   { key: "netDebt", label: "Net Debt", format: "currency" },
   { key: "cashAndEquivalents", label: "Cash & Equiv.", format: "currency" },
+  { key: "shortTermInvestments", label: "Short-Term Inv.", format: "currency" },
   { key: "currentAssets", label: "Current Assets", format: "currency" },
   { key: "currentLiabilities", label: "Current Liab.", format: "currency" },
   { key: "workingCapital", label: "Working Capital", format: "currency" },
   { key: "inventory", label: "Inventory", format: "currency" },
   { key: "accountsReceivable", label: "A/R", format: "currency" },
   { key: "accountsPayable", label: "A/P", format: "currency" },
+  { key: "accruedLiabilities", label: "Accrued Liab.", format: "currency" },
+  { key: "deferredRevenue", label: "Deferred Revenue", format: "currency" },
+  { key: "propertyPlantEquipment", label: "PP&E", format: "currency" },
+  { key: "goodwill", label: "Goodwill", format: "currency" },
+  { key: "intangibleAssets", label: "Intangibles", format: "currency" },
+  { key: "operatingLeaseLiabilities", label: "Operating Leases", format: "currency" },
+  { key: "financeLeaseLiabilities", label: "Finance Leases", format: "currency" },
+  { key: "leaseAdjustedDebt", label: "Lease-Adj. Debt", format: "currency" },
+  { key: "leaseAdjustedNetDebt", label: "Lease-Adj. Net Debt", format: "currency" },
   { key: "operatingCashFlow", label: "Operating CF", format: "currency" },
   { key: "capex", label: "CapEx", format: "currency" },
   { key: "freeCashFlow", label: "Free Cash Flow", format: "currency" },
   { key: "shareRepurchases", label: "Buybacks", format: "currency" },
   { key: "investingCashFlow", label: "Investing CF", format: "currency" },
   { key: "financingCashFlow", label: "Financing CF", format: "currency" },
+  { key: "debtIssued", label: "Debt Issued", format: "currency" },
+  { key: "debtRepaid", label: "Debt Repaid", format: "currency" },
   { key: "grossMargin", label: "Gross Margin", format: "percent" },
   { key: "operatingMargin", label: "Operating Margin", format: "percent" },
   { key: "netMargin", label: "Net Margin", format: "percent" },
@@ -168,8 +205,19 @@ export const METRIC_COLUMNS: MetricColumn[] = [
   { key: "assetTurnover", label: "Asset Turnover", format: "ratio" },
   { key: "inventoryTurnover", label: "Inventory Turns", format: "ratio" },
   { key: "receivablesTurnover", label: "A/R Turns", format: "ratio" },
+  { key: "daysSalesOutstanding", label: "DSO", format: "number" },
+  { key: "daysInventoryOutstanding", label: "DIO", format: "number" },
+  { key: "daysPayableOutstanding", label: "DPO", format: "number" },
+  { key: "cashConversionCycle", label: "Cash Conv. Cycle", format: "number" },
   { key: "fcfConversion", label: "FCF Conversion", format: "percent" },
   { key: "workingCapitalRatio", label: "Working Cap. / Revenue", format: "percent" },
+  { key: "effectiveTaxRate", label: "Effective Tax Rate", format: "percent" },
+  { key: "capexAsPercentRevenue", label: "CapEx % Revenue", format: "percent" },
+  { key: "dividendPayoutRatio", label: "Dividend Payout", format: "percent" },
+  { key: "buybackPayoutRatio", label: "Buyback Payout", format: "percent" },
+  { key: "totalPayoutRatio", label: "Total Payout", format: "percent" },
+  { key: "leaseAdjustedDebtToEbitda", label: "Lease-Adj Debt/EBITDA", format: "ratio" },
+  { key: "leaseAdjustedNetDebtToEbitda", label: "Lease-Adj Net Debt/EBITDA", format: "ratio" },
   { key: "sgaExpense", label: "SG&A", format: "currency" },
   { key: "depreciation", label: "Depreciation", format: "currency" },
   { key: "ebit", label: "EBIT", format: "currency" },
@@ -178,6 +226,8 @@ export const METRIC_COLUMNS: MetricColumn[] = [
   { key: "interestExpense", label: "Interest Exp.", format: "currency" },
   { key: "epsBasic", label: "EPS (Basic)", format: "ratio" },
   { key: "epsDiluted", label: "EPS (Diluted)", format: "ratio" },
+  { key: "weightedAverageSharesBasic", label: "WA Shares Basic", format: "number" },
+  { key: "weightedAverageSharesDiluted", label: "WA Shares Diluted", format: "number" },
   { key: "shareBasedComp", label: "SBC", format: "currency" },
   { key: "dividendsPaid", label: "Dividends Paid", format: "currency" },
   { key: "roe", label: "ROE", format: "percent" },

@@ -97,11 +97,14 @@ type WorkbookSectionKey =
   | "credit"
   | "quality"
   | "returns"
+  | "scenario"
+  | "boardMemo"
   | "summary"
   | "segment"
   | "income"
   | "balance"
   | "cashflow"
+  | "dividends"
   | "analysis";
 type SortDirection = "asc" | "desc";
 
@@ -302,6 +305,22 @@ const FINANCIAL_WORKBOOK_SECTIONS: readonly WorkbookSectionConfig[] = [
     exportFields: [],
     isFinancialTemplate: true,
   },
+  {
+    key: "scenario",
+    title: "Scenario",
+    description: "Base, downside, and upside sensitivities for revenue, EBITDA, FCF, and leverage.",
+    accentClass: "border-amber-300 bg-amber-50 text-amber-800",
+    exportFields: [],
+    isFinancialTemplate: true,
+  },
+  {
+    key: "boardMemo",
+    title: "Board Memo",
+    description: "Board-ready memo points and investor Q&A prompts generated from extracted financials.",
+    accentClass: "border-rose-300 bg-rose-50 text-rose-800",
+    exportFields: [],
+    isFinancialTemplate: true,
+  },
 ] as const;
 const DATA_WORKBOOK_SECTIONS: readonly WorkbookSectionConfig[] = [
   {
@@ -410,7 +429,7 @@ const DATA_WORKBOOK_SECTIONS: readonly WorkbookSectionConfig[] = [
   {
     key: "cashflow",
     title: "Cash Flow",
-    description: "Operating cash flow, capital spending, dividends, and free cash flow metrics.",
+    description: "Operating cash flow, capital spending, and free cash flow metrics.",
     accentClass: "border-cyan-300 bg-cyan-50 text-cyan-700",
     exportFields: [
       "operatingCashFlow",
@@ -418,13 +437,30 @@ const DATA_WORKBOOK_SECTIONS: readonly WorkbookSectionConfig[] = [
       "freeCashFlow",
       "fcfMargin",
       "fcfConversion",
-      "dividendsPaid",
-      "shareRepurchases",
       "investingCashFlow",
       "financingCashFlow",
       "cashAndEquivalents",
     ],
     focusField: "operatingCashFlow",
+  },
+  {
+    key: "dividends",
+    title: "Dividends",
+    description: "Capital return fields and payout ratios matching the Extract dividend analysis tab.",
+    accentClass: "border-orange-300 bg-orange-50 text-orange-700",
+    exportFields: [
+      "dividendsPaid",
+      "shareRepurchases",
+      "netIncome",
+      "freeCashFlow",
+      "operatingCashFlow",
+      "cashAndEquivalents",
+      "dividendPayoutRatio",
+      "buybackPayoutRatio",
+      "totalPayoutRatio",
+      "fcfConversion",
+    ],
+    focusField: "dividendsPaid",
   },
   {
     key: "analysis",
@@ -458,6 +494,10 @@ const WORKBOOK_COLUMN_INDEX_BY_FIELD = new Map(
   WORKBOOK_COLUMNS.map((column, index) => [column.field, index]),
 );
 const CUSTOM_WORKBOOK_FIELD_PREFIX = "__custom_col__";
+const EMBEDDED_WORKBOOK_MIN_ROWS = 18;
+const EMBEDDED_WORKBOOK_MIN_COLS = 10;
+const EMBEDDED_WORKBOOK_EXTRA_ROWS = 8;
+const EMBEDDED_WORKBOOK_EXTRA_COLS = 4;
 
 function getWorkbookColumnsForSection(section: WorkbookSectionConfig) {
   const fieldSet = new Set<string>([...BASE_WORKBOOK_FIELDS, ...section.exportFields]);
@@ -512,6 +552,70 @@ function financialGridToEditableWorkbook(
       },
     ],
     styles,
+  };
+}
+
+function padEditableWorkbook(
+  workbook: EditableWorkbook,
+  minRows: number,
+  minCols: number,
+): EditableWorkbook {
+  return {
+    ...workbook,
+    sheets: workbook.sheets.map((sheet) => {
+      const currentRows = sheet.cells.length;
+      const currentCols = Math.max(0, ...sheet.cells.map((row) => row.length));
+      const rowCount = Math.max(currentRows, minRows, 1);
+      const colCount = Math.max(currentCols, minCols, 1);
+
+      return {
+        ...sheet,
+        cells: Array.from({ length: rowCount }, (_, rowIndex) =>
+          Array.from({ length: colCount }, (_, colIndex) => String(sheet.cells[rowIndex]?.[colIndex] ?? "")),
+        ),
+      };
+    }),
+  };
+}
+
+function applyCustomCellsToEditableWorkbook(
+  workbook: EditableWorkbook,
+  customCells: Record<string, string> | undefined,
+): EditableWorkbook {
+  if (!customCells || Object.keys(customCells).length === 0) return workbook;
+
+  const sheet = workbook.sheets[0];
+  if (!sheet) return workbook;
+
+  const parsedEntries = Object.entries(customCells).flatMap(([key, value]) => {
+    const [rowPart, colPart] = key.split(":").map(Number);
+    if (!Number.isInteger(rowPart) || !Number.isInteger(colPart) || rowPart < 0 || colPart < 0) return [];
+    return [{ row: rowPart, col: colPart, value }];
+  });
+  if (parsedEntries.length === 0) return workbook;
+
+  const rowCount = Math.max(sheet.cells.length, ...parsedEntries.map((entry) => entry.row + 1));
+  const colCount = Math.max(
+    Math.max(0, ...sheet.cells.map((row) => row.length)),
+    ...parsedEntries.map((entry) => entry.col + 1),
+  );
+  const nextCells = Array.from({ length: rowCount }, (_, rowIndex) =>
+    Array.from({ length: colCount }, (_, colIndex) => String(sheet.cells[rowIndex]?.[colIndex] ?? "")),
+  );
+
+  for (const entry of parsedEntries) {
+    nextCells[entry.row][entry.col] = entry.value;
+  }
+
+  return {
+    ...workbook,
+    sheets: [
+      {
+        ...sheet,
+        cells: nextCells,
+      },
+      ...workbook.sheets.slice(1),
+    ],
   };
 }
 
@@ -587,11 +691,18 @@ function getWorkbookDerivedFormula(
   field: string,
   rowNumber: number,
 ): string | null {
+  return getWorkbookDerivedFormulaWithRef(row, field, (targetField) => getWorkbookFieldReference(targetField, rowNumber));
+}
+
+function getWorkbookDerivedFormulaWithRef(
+  row: DataSourceRow,
+  field: string,
+  ref: (targetField: string) => string | null,
+): string | null {
   if (row.periodEnd === "TTM") return null;
 
-  const ref = (targetField: string) => getWorkbookFieldReference(targetField, rowNumber);
-
   const revenueRef = ref("revenue");
+  const costOfRevenueRef = ref("costOfRevenue");
   const grossProfitRef = ref("grossProfit");
   const operatingIncomeRef = ref("operatingIncome");
   const netIncomeRef = ref("netIncome");
@@ -599,11 +710,28 @@ function getWorkbookDerivedFormula(
   const totalLiabilitiesRef = ref("totalLiabilities");
   const totalEquityRef = ref("totalEquity");
   const totalDebtRef = ref("totalDebt");
+  const shortTermDebtRef = ref("shortTermDebt");
+  const longTermDebtRef = ref("longTermDebt");
+  const netDebtRef = ref("netDebt");
+  const cashAndEquivalentsRef = ref("cashAndEquivalents");
+  const shortTermInvestmentsRef = ref("shortTermInvestments");
+  const currentAssetsRef = ref("currentAssets");
+  const currentLiabilitiesRef = ref("currentLiabilities");
+  const workingCapitalRef = ref("workingCapital");
+  const inventoryRef = ref("inventory");
+  const accountsReceivableRef = ref("accountsReceivable");
+  const accountsPayableRef = ref("accountsPayable");
+  const operatingLeaseLiabilitiesRef = ref("operatingLeaseLiabilities");
+  const financeLeaseLiabilitiesRef = ref("financeLeaseLiabilities");
+  const leaseAdjustedDebtRef = ref("leaseAdjustedDebt");
+  const leaseAdjustedNetDebtRef = ref("leaseAdjustedNetDebt");
   const operatingCashFlowRef = ref("operatingCashFlow");
   const capexRef = ref("capex");
   const depreciationRef = ref("depreciation");
   const ebitdaRef = ref("ebitda");
   const freeCashFlowRef = ref("freeCashFlow");
+  const dividendsPaidRef = ref("dividendsPaid");
+  const shareRepurchasesRef = ref("shareRepurchases");
   const volumeHeadsRef = ref("volumeHeads");
   const volumeLbsRef = ref("volumeLbs");
   const volumeCwtRef = ref("volumeCwt");
@@ -613,14 +741,28 @@ function getWorkbookDerivedFormula(
   const corporateAllocationAdjustmentRef = ref("corporateAllocationAdjustment");
   const adjustedOperatingIncomeRef = ref("adjustedOperatingIncome");
   const sgaExpenseRef = ref("sgaExpense");
+  const interestExpenseRef = ref("interestExpense");
+  const incomeTaxRef = ref("incomeTax");
 
   switch (field) {
+    case "grossProfit":
+      return revenueRef && costOfRevenueRef ? `=${revenueRef}-${costOfRevenueRef}` : null;
     case "totalAssets":
       return totalLiabilitiesRef && totalEquityRef ? `=${totalLiabilitiesRef}+${totalEquityRef}` : null;
     case "totalLiabilities":
       return totalAssetsRef && totalEquityRef ? `=${totalAssetsRef}-${totalEquityRef}` : null;
     case "totalEquity":
       return totalAssetsRef && totalLiabilitiesRef ? `=${totalAssetsRef}-${totalLiabilitiesRef}` : null;
+    case "totalDebt":
+      return shortTermDebtRef && longTermDebtRef ? `=${shortTermDebtRef}+${longTermDebtRef}` : null;
+    case "netDebt":
+      return totalDebtRef && cashAndEquivalentsRef && shortTermInvestmentsRef
+        ? `=${totalDebtRef}-${cashAndEquivalentsRef}-${shortTermInvestmentsRef}`
+        : totalDebtRef && cashAndEquivalentsRef
+          ? `=${totalDebtRef}-${cashAndEquivalentsRef}`
+          : null;
+    case "workingCapital":
+      return currentAssetsRef && currentLiabilitiesRef ? `=${currentAssetsRef}-${currentLiabilitiesRef}` : null;
     case "grossMargin":
       return revenueRef && grossProfitRef ? `=${grossProfitRef}/${revenueRef}*100` : null;
     case "operatingMargin":
@@ -637,12 +779,72 @@ function getWorkbookDerivedFormula(
       return revenueRef && ebitdaRef ? `=${ebitdaRef}/${revenueRef}*100` : null;
     case "debtToEquity":
       return totalDebtRef && totalEquityRef ? `=${totalDebtRef}/${totalEquityRef}` : null;
+    case "debtToCapital":
+      return totalDebtRef && totalEquityRef ? `=${totalDebtRef}/(${totalDebtRef}+${totalEquityRef})*100` : null;
+    case "netDebtToEbitda":
+      return netDebtRef && ebitdaRef ? `=${netDebtRef}/${ebitdaRef}` : null;
+    case "leaseAdjustedDebt":
+      return totalDebtRef && operatingLeaseLiabilitiesRef && financeLeaseLiabilitiesRef
+        ? `=${totalDebtRef}+${operatingLeaseLiabilitiesRef}+${financeLeaseLiabilitiesRef}`
+        : totalDebtRef && operatingLeaseLiabilitiesRef
+          ? `=${totalDebtRef}+${operatingLeaseLiabilitiesRef}`
+          : null;
+    case "leaseAdjustedNetDebt":
+      return leaseAdjustedDebtRef && cashAndEquivalentsRef && shortTermInvestmentsRef
+        ? `=${leaseAdjustedDebtRef}-${cashAndEquivalentsRef}-${shortTermInvestmentsRef}`
+        : leaseAdjustedDebtRef && cashAndEquivalentsRef
+          ? `=${leaseAdjustedDebtRef}-${cashAndEquivalentsRef}`
+          : null;
+    case "leaseAdjustedDebtToEbitda":
+      return leaseAdjustedDebtRef && ebitdaRef ? `=${leaseAdjustedDebtRef}/${ebitdaRef}` : null;
+    case "leaseAdjustedNetDebtToEbitda":
+      return leaseAdjustedNetDebtRef && ebitdaRef ? `=${leaseAdjustedNetDebtRef}/${ebitdaRef}` : null;
+    case "interestCoverage":
+      return operatingIncomeRef && interestExpenseRef ? `=${operatingIncomeRef}/${interestExpenseRef}` : null;
+    case "currentRatio":
+      return currentAssetsRef && currentLiabilitiesRef ? `=${currentAssetsRef}/${currentLiabilitiesRef}` : null;
     case "roe":
       return netIncomeRef && totalEquityRef ? `=${netIncomeRef}/${totalEquityRef}*100` : null;
     case "roa":
       return netIncomeRef && totalAssetsRef ? `=${netIncomeRef}/${totalAssetsRef}*100` : null;
+    case "roic":
+      return freeCashFlowRef && totalDebtRef && totalEquityRef ? `=${freeCashFlowRef}/(${totalDebtRef}+${totalEquityRef})*100` : null;
+    case "assetTurnover":
+      return revenueRef && totalAssetsRef ? `=${revenueRef}/${totalAssetsRef}` : null;
+    case "inventoryTurnover":
+      return costOfRevenueRef && inventoryRef ? `=${costOfRevenueRef}/${inventoryRef}` : null;
+    case "receivablesTurnover":
+      return revenueRef && accountsReceivableRef ? `=${revenueRef}/${accountsReceivableRef}` : null;
+    case "daysSalesOutstanding":
+      return accountsReceivableRef && revenueRef ? `=${accountsReceivableRef}/${revenueRef}*365` : null;
+    case "daysInventoryOutstanding":
+      return inventoryRef && costOfRevenueRef ? `=${inventoryRef}/${costOfRevenueRef}*365` : null;
+    case "daysPayableOutstanding":
+      return accountsPayableRef && costOfRevenueRef ? `=${accountsPayableRef}/${costOfRevenueRef}*365` : null;
+    case "cashConversionCycle": {
+      const dsoRef = ref("daysSalesOutstanding");
+      const dioRef = ref("daysInventoryOutstanding");
+      const dpoRef = ref("daysPayableOutstanding");
+      return dsoRef && dioRef && dpoRef ? `=${dsoRef}+${dioRef}-${dpoRef}` : null;
+    }
     case "fcfMargin":
       return revenueRef && freeCashFlowRef ? `=${freeCashFlowRef}/${revenueRef}*100` : null;
+    case "fcfConversion":
+      return freeCashFlowRef && netIncomeRef ? `=${freeCashFlowRef}/${netIncomeRef}*100` : null;
+    case "workingCapitalRatio":
+      return workingCapitalRef && revenueRef ? `=${workingCapitalRef}/${revenueRef}*100` : null;
+    case "effectiveTaxRate":
+      return incomeTaxRef && netIncomeRef ? `=${incomeTaxRef}/(${netIncomeRef}+${incomeTaxRef})*100` : null;
+    case "capexAsPercentRevenue":
+      return capexRef && revenueRef ? `=${capexRef}/${revenueRef}*100` : null;
+    case "dividendPayoutRatio":
+      return dividendsPaidRef && netIncomeRef ? `=${dividendsPaidRef}/${netIncomeRef}*100` : null;
+    case "buybackPayoutRatio":
+      return shareRepurchasesRef && netIncomeRef ? `=${shareRepurchasesRef}/${netIncomeRef}*100` : null;
+    case "totalPayoutRatio":
+      return dividendsPaidRef && shareRepurchasesRef && netIncomeRef
+        ? `=(${dividendsPaidRef}+${shareRepurchasesRef})/${netIncomeRef}*100`
+        : null;
     case "volumeCwt":
       return volumeLbsRef ? `=${volumeLbsRef}/100` : null;
     case "opPerHead":
@@ -1446,6 +1648,9 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
   const [embeddedExcelStylesBySheet, setEmbeddedExcelStylesBySheet] = useState<
     Partial<Record<WorkbookSectionKey, Record<string, DataSourceWorkbookCellStyle | null>>>
   >({});
+  const [embeddedCustomCellsBySheet, setEmbeddedCustomCellsBySheet] = useState<
+    Partial<Record<WorkbookSectionKey, Record<string, string>>>
+  >({});
   const [numericOverrides, setNumericOverrides] = useState<WorkbookNumericOverrideMap>({});
   const [editLog, setEditLog] = useState<DataSourceEditLogEntry[]>([]);
   const [companyOptions, setCompanyOptions] = useState<CompanyWorkbookOption[]>([]);
@@ -1459,7 +1664,7 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
   const [saving, setSaving] = useState(false);
   const [navigatorLoading, setNavigatorLoading] = useState(true);
   const [creatingThreadTicker, setCreatingThreadTicker] = useState<string | null>(null);
-  const [activeSheet, setActiveSheet] = useState<WorkbookSectionKey>("underwriting");
+  const [activeSheet, setActiveSheet] = useState<WorkbookSectionKey>("summary");
   const [financialScrollTarget, setFinancialScrollTarget] = useState<string | null>(null);
   const [ribbonTab, setRibbonTab] = useState<"home" | "insert" | "review" | "view">("home");
   const [zoomLevel, setZoomLevel] = useState(100);
@@ -2374,6 +2579,10 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
       companyTicker: companyTickerFromQuery,
     });
   }, [fetchData]);
+
+  useEffect(() => {
+    setEmbeddedCustomCellsBySheet({});
+  }, [selectedCompanyTicker, selectedThreadId]);
 
   const pushHistory = useCallback(() => {
     const snapshot: HistorySnapshot = {
@@ -3792,20 +4001,40 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
         financialModelContext,
       );
 
-      return {
+      const styledWorkbook = {
         ...financialWorkbook,
         styles: {
           ...financialWorkbook.styles,
           ...sheetStyles,
         },
       };
+
+      return applyCustomCellsToEditableWorkbook(
+        padEditableWorkbook(
+          styledWorkbook,
+          Math.max(EMBEDDED_WORKBOOK_MIN_ROWS, (styledWorkbook.sheets[0]?.cells.length ?? 0) + 2),
+          Math.max(EMBEDDED_WORKBOOK_MIN_COLS, Math.max(0, ...(styledWorkbook.sheets[0]?.cells ?? []).map((row) => row.length)) + 1),
+        ),
+        embeddedCustomCellsBySheet[activeSheet],
+      );
     }
 
     const headerRow = visibleColumns.map((column) => column.label);
-    const dataRows = visibleRows.map((row) =>
+    const visibleColumnIndexByField = new Map(visibleColumns.map((column, index) => [column.field, index]));
+    const dataRows = visibleRows.map((row, rowIndex) =>
       visibleColumns.map((column) => {
         const cellState = getWorkbookStateForCell(workbookCells, row.id, column.field);
         if (cellState?.formula) return cellState.formula;
+        const derivedFormula = getWorkbookDerivedFormulaWithRef(
+          row,
+          column.field,
+          (targetField) => {
+            const localColumnIndex = visibleColumnIndexByField.get(targetField);
+            if (typeof localColumnIndex !== "number") return null;
+            return `${columnIndexToLetter(localColumnIndex)}${rowIndex + 2}`;
+          },
+        );
+        if (derivedFormula) return derivedFormula;
         const value = getRowFieldValue(row, column.field);
         return value == null ? "" : String(value);
       }),
@@ -3820,7 +4049,7 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
       };
     });
 
-    return {
+    const sourceWorkbook: EditableWorkbook = {
       sheets: [
         {
           name: activeSheetConfig.title,
@@ -3832,9 +4061,19 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
         ...sheetStyles,
       },
     };
+
+    return applyCustomCellsToEditableWorkbook(
+      padEditableWorkbook(
+        sourceWorkbook,
+        Math.max(EMBEDDED_WORKBOOK_MIN_ROWS, dataRows.length + 1 + EMBEDDED_WORKBOOK_EXTRA_ROWS),
+        Math.max(EMBEDDED_WORKBOOK_MIN_COLS, headerRow.length + EMBEDDED_WORKBOOK_EXTRA_COLS),
+      ),
+      embeddedCustomCellsBySheet[activeSheet],
+    );
   }, [
     activeSheet,
     activeSheetConfig.title,
+    embeddedCustomCellsBySheet,
     embeddedExcelStylesBySheet,
     financialModelContext,
     isFinancialTemplateSheet,
@@ -3850,24 +4089,55 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
         [activeSheet]: nextWorkbook.styles,
       }));
 
-      if (isFinancialTemplateSheet) {
-        return;
-      }
-
       const previousCells = embeddedExcelWorkbook.sheets[0]?.cells ?? [];
       const nextCells = nextWorkbook.sheets[0]?.cells ?? [];
+      const sourceRowCount = isFinancialTemplateSheet ? 0 : visibleRows.length + 1;
+      const sourceColCount = isFinancialTemplateSheet ? 0 : visibleColumns.length;
+
+      setEmbeddedCustomCellsBySheet((current) => {
+        const nextCustomCells = { ...(current[activeSheet] ?? {}) };
+        let changed = false;
+
+        for (let rowIndex = 0; rowIndex < nextCells.length; rowIndex += 1) {
+          for (let colIndex = 0; colIndex < (nextCells[rowIndex]?.length ?? 0); colIndex += 1) {
+            const isSourceCell =
+              rowIndex < sourceRowCount &&
+              colIndex < sourceColCount;
+            if (isSourceCell) continue;
+
+            const nextValue = String(nextCells[rowIndex]?.[colIndex] ?? "");
+            const previousValue = String(previousCells[rowIndex]?.[colIndex] ?? "");
+            if (nextValue === previousValue) continue;
+
+            const key = `${rowIndex}:${colIndex}`;
+            if (nextValue) {
+              nextCustomCells[key] = nextValue;
+            } else {
+              delete nextCustomCells[key];
+            }
+            changed = true;
+          }
+        }
+
+        if (!changed) return current;
+        return {
+          ...current,
+          [activeSheet]: nextCustomCells,
+        };
+      });
+
       let changeIndex = 0;
 
-      for (let rowIndex = 1; rowIndex < nextCells.length; rowIndex += 1) {
+      for (let rowIndex = 1; rowIndex < sourceRowCount; rowIndex += 1) {
         const sourceRow = visibleRows[rowIndex - 1];
         if (!sourceRow) continue;
 
-        for (let colIndex = 0; colIndex < (nextCells[rowIndex]?.length ?? 0); colIndex += 1) {
+        for (let colIndex = 0; colIndex < sourceColCount; colIndex += 1) {
           const column = visibleColumns[colIndex];
           if (!column) continue;
 
-          const nextValue = nextCells[rowIndex]?.[colIndex] ?? "";
-          const previousValue = previousCells[rowIndex]?.[colIndex] ?? "";
+          const nextValue = String(nextCells[rowIndex]?.[colIndex] ?? "");
+          const previousValue = String(previousCells[rowIndex]?.[colIndex] ?? "");
           if (nextValue === previousValue) continue;
 
           commitCellInput(sourceRow, column.field, nextValue, changeIndex === 0);
@@ -3941,7 +4211,105 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
       <RequireAuth>
         <div className="w-full px-0 py-0">
           {editConfirmDialog}
-          <div className="rounded-[24px] border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
+          <div className="grid gap-4 xl:grid-cols-[270px_minmax(0,1fr)]">
+            <aside className="rounded-[24px] border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#cc521d]">
+                    Workbook tree
+                  </p>
+                  <h3 className="mt-1 text-sm font-bold text-slate-900">Historical analytics</h3>
+                </div>
+                {navigatorLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+                ) : (
+                  <FileSpreadsheet className="h-4 w-4 text-slate-400" />
+                )}
+              </div>
+
+              <div className="mt-4 max-h-[calc(100dvh-16rem)] space-y-2 overflow-auto pr-1">
+                {companyRailOptions.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-3 py-5 text-xs leading-5 text-slate-500">
+                    Extract a filing first. Each saved company workbook will appear here.
+                  </div>
+                ) : (
+                  companyRailOptions.map((company) => {
+                    const companyThreads = threadsByCompany.get(company.ticker) ?? [];
+                    const isCompanyActive = company.ticker === selectedCompanyTicker;
+
+                    return (
+                      <div
+                        key={company.ticker}
+                        className={`rounded-2xl border p-2 transition ${
+                          isCompanyActive
+                            ? "border-[#217346]/25 bg-[#eef6f0]"
+                            : "border-slate-200 bg-white"
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => void selectCompanyThread(company)}
+                          className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-2 text-left transition hover:bg-white/80"
+                        >
+                          <span className="min-w-0">
+                            <span className="block text-sm font-bold text-slate-900">{company.ticker}</span>
+                            <span className="block truncate text-xs text-slate-500">{company.companyName}</span>
+                          </span>
+                          <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-bold text-slate-500 shadow-sm">
+                            {companyThreads.length}
+                          </span>
+                        </button>
+
+                        {companyThreads.length > 0 ? (
+                          <div className="mt-1 space-y-1 border-l border-slate-200 pl-3">
+                            {companyThreads.map((thread) => {
+                              const isThreadActive = thread.id === selectedThreadId;
+                              return (
+                                <button
+                                  key={thread.id}
+                                  type="button"
+                                  onClick={() => void selectCompanyThread(company, thread.id)}
+                                  className={`block w-full rounded-xl px-3 py-2 text-left transition ${
+                                    isThreadActive
+                                      ? "bg-white text-[#217346] shadow-sm"
+                                      : "text-slate-600 hover:bg-white/80"
+                                  }`}
+                                >
+                                  <span className="block truncate text-xs font-bold">{thread.title}</span>
+                                  <span className="mt-0.5 block text-[11px] text-slate-400">
+                                    {formatHistoryTimestamp(thread.updatedAt)}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="px-2 pb-2 text-[11px] leading-4 text-slate-400">
+                            No saved workbook thread yet.
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => void handleCreateThreadForSelectedCompany()}
+                disabled={!threadSchemaReady || !selectedCompany || creatingThreadTicker === selectedCompany.ticker}
+                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {creatingThreadTicker === selectedCompany?.ticker ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Plus className="h-3.5 w-3.5" />
+                )}
+                New workbook thread
+              </button>
+            </aside>
+
+            <div className="rounded-[24px] border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
             <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#cc521d]">
@@ -3984,6 +4352,33 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                   {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                   Save workbook
                 </button>
+              </div>
+            </div>
+
+            <div className="mb-3 overflow-x-auto border-b border-slate-200">
+              <div className="flex min-w-max items-center gap-1 px-1">
+                {DATA_WORKBOOK_SECTIONS.map((sheet) => {
+                  const isActive = activeSheet === sheet.key;
+                  return (
+                    <button
+                      key={`embedded-tab-${sheet.key}`}
+                      type="button"
+                      onClick={() => setActiveSheet(sheet.key)}
+                      className={`relative px-4 py-3 text-xs font-bold transition ${
+                        isActive
+                          ? "text-slate-950"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                    >
+                      {sheet.title}
+                      <span
+                        className={`absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-slate-950 transition ${
+                          isActive ? "scale-x-100 opacity-100" : "scale-x-0 opacity-0"
+                        }`}
+                      />
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -4034,6 +4429,7 @@ export default function DataSourcePage({ embedded = false }: { embedded?: boolea
                 }}
               />
             )}
+            </div>
           </div>
         </div>
       </RequireAuth>

@@ -78,6 +78,10 @@ export interface DebtStructure {
   longTermDebt: number;
   totalDebt: number;
   netDebt: number;
+  operatingLeaseLiabilities: number | null;
+  financeLeaseLiabilities: number | null;
+  leaseAdjustedDebt: number | null;
+  leaseAdjustedNetDebt: number | null;
   items: BSItem[];
 }
 
@@ -90,6 +94,8 @@ export interface CashFlowData {
   shareRepurchases: number | null;
   investingCashFlow: number | null;
   financingCashFlow: number | null;
+  debtIssued: number | null;
+  debtRepaid: number | null;
 }
 
 /** Income statement summary (derived from cfItems) */
@@ -115,6 +121,8 @@ export interface IncomeStatement {
   netMargin: number | null;
   epsBasic: number | null;
   epsDiluted: number | null;
+  weightedAverageSharesBasic: number | null;
+  weightedAverageSharesDiluted: number | null;
 }
 
 /** Enhanced financial ratios */
@@ -137,9 +145,21 @@ export interface Ratios {
   assetTurnover: number | null;
   inventoryTurnover: number | null;
   receivablesTurnover: number | null;
+  daysSalesOutstanding: number | null;
+  daysInventoryOutstanding: number | null;
+  daysPayableOutstanding: number | null;
+  cashConversionCycle: number | null;
   // Cash
   fcfYield: number | null;
   fcfConversion: number | null;
+  capexAsPercentRevenue: number | null;
+  dividendPayoutRatio: number | null;
+  buybackPayoutRatio: number | null;
+  totalPayoutRatio: number | null;
+  // Tax / lease-adjusted credit
+  effectiveTaxRate: number | null;
+  leaseAdjustedDebtToEbitda: number | null;
+  leaseAdjustedNetDebtToEbitda: number | null;
   // Working capital
   workingCapital: number | null;
   workingCapitalRatio: number | null;

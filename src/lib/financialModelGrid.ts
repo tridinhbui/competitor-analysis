@@ -274,6 +274,8 @@ export function buildFinancialGrid(sheetKey: FinancialModelSheetKey, ctx: Financ
   if (sheetKey === "annualCf") return buildAnnualCfGrid(ctx);
   if (sheetKey === "credit") return buildCreditGrid(ctx);
   if (sheetKey === "quality") return buildQualityGrid(ctx);
+  if (sheetKey === "scenario") return buildScenarioGrid(ctx);
+  if (sheetKey === "boardMemo") return buildBoardMemoGrid(ctx);
   return buildReturnsGrid(ctx);
 }
 
@@ -563,9 +565,12 @@ function buildCreditGrid(ctx: FinancialModelContext): FinancialGridModel {
       title: "Liquidity",
       rows: [
         ["Cash & equivalents", fmtCurrency(ctx.cashM), "Immediate liquidity buffer before working-capital needs."],
+        ["Short-term investments", fmtCurrency(ctx.shortTermInvestmentsM), "Near-cash liquidity that can supplement cash coverage."],
         ["Current ratio", fmtRatio(ctx.currentRatio), "Short-term asset coverage versus current liabilities."],
         ["Working capital", fmtCurrency(ctx.workingCapitalM), "Operating liquidity available after current obligations."],
         ["Working capital / revenue", fmtPercent(ctx.workingCapitalRatioPct), "Scale of working capital relative to sales."],
+        ["Deferred revenue", fmtCurrency(ctx.deferredRevenueM), "Customer funding / future revenue obligation embedded in current liabilities."],
+        ["Accrued liabilities", fmtCurrency(ctx.accruedLiabilitiesM), "Near-term obligations that may pressure cash conversion."],
       ],
     },
     {
@@ -573,8 +578,12 @@ function buildCreditGrid(ctx: FinancialModelContext): FinancialGridModel {
       rows: [
         ["Total debt", fmtCurrency(ctx.totalDebtM), "Gross debt load before cash offsets."],
         ["Net debt", fmtCurrency(ctx.netDebtM), "Debt after cash; primary balance-sheet risk metric."],
+        ["Operating lease liabilities", fmtCurrency(ctx.operatingLeaseLiabilitiesM), "Off-balance-sheet-like operating obligation now capitalized for credit review."],
+        ["Finance lease liabilities", fmtCurrency(ctx.financeLeaseLiabilitiesM), "Lease debt component with debt-like repayment burden."],
+        ["Lease-adjusted debt", fmtCurrency(ctx.leaseAdjustedDebtM), "Debt plus lease obligations for fuller creditor view."],
         ["Debt / capital", fmtPercent(ctx.debtToCapitalPct), "Capital structure leverage mix."],
         ["Net debt / EBITDA", fmtRatio(ctx.netDebtToEbitda), "Debt paydown burden versus recurring earnings power."],
+        ["Lease-adjusted net debt / EBITDA", fmtRatio(ctx.leaseAdjustedNetDebtToEbitda), "Credit risk after operating lease obligations."],
         ["Interest coverage", fmtRatio(ctx.interestCoverage), "Ability to cover interest from operating earnings."],
       ],
     },
@@ -599,8 +608,11 @@ function buildQualityGrid(ctx: FinancialModelContext): FinancialGridModel {
         ["Capital expenditures", fmtCurrency(ctx.capexM != null ? Math.abs(ctx.capexM) : null), "Reinvestment requirement to sustain operations."],
         ["Free cash flow", fmtCurrency(ctx.freeCashFlowM), "Cash available after reinvestment."],
         ["FCF conversion", fmtPercent(ctx.fcfConversionPct), "Free cash flow as a percentage of net income."],
+        ["CapEx / revenue", fmtPercent(ctx.capexAsPercentRevenuePct), "Capital intensity required to support the revenue base."],
+        ["Effective tax rate", fmtPercent(ctx.effectiveTaxRatePct), "Tax drag on pretax earnings and NOPAT quality."],
         ["Dividends paid", fmtCurrency(ctx.dividendsPaidM), "Recurring capital return to shareholders."],
         ["Share repurchases", fmtCurrency(ctx.shareRepurchasesM), "Discretionary capital return and EPS support."],
+        ["Total payout ratio", fmtPercent(ctx.totalPayoutRatioPct), "Dividends plus buybacks relative to earnings power."],
       ],
     },
   ]);
@@ -622,8 +634,99 @@ function buildReturnsGrid(ctx: FinancialModelContext): FinancialGridModel {
         ["Asset turnover", fmtRatio(ctx.assetTurnover), "Revenue generated per dollar of assets."],
         ["Inventory turns", fmtRatio(ctx.inventoryTurnover), "Inventory velocity and operating efficiency."],
         ["A/R turns", fmtRatio(ctx.receivablesTurnover), "Collection speed and customer credit discipline."],
+        ["DSO", ctx.daysSalesOutstanding != null ? `${ctx.daysSalesOutstanding.toFixed(1)} days` : "", "Receivable collection speed in days."],
+        ["DIO", ctx.daysInventoryOutstanding != null ? `${ctx.daysInventoryOutstanding.toFixed(1)} days` : "", "Inventory cash tied up in days."],
+        ["DPO", ctx.daysPayableOutstanding != null ? `${ctx.daysPayableOutstanding.toFixed(1)} days` : "", "Supplier financing / payable timing in days."],
+        ["Cash conversion cycle", ctx.cashConversionCycle != null ? `${ctx.cashConversionCycle.toFixed(1)} days` : "", "Net working-capital days required to convert spend into cash."],
         ["Gross margin", fmtPercent(ctx.grossMarginPct), "Pricing power and production efficiency."],
         ["Operating margin", fmtPercent(ctx.operatingMarginPct), "Core operating leverage after overhead."],
+      ],
+    },
+  ]);
+}
+
+function buildScenarioGrid(ctx: FinancialModelContext): FinancialGridModel {
+  return buildAnalystScheduleGrid("scenario", "SCENARIO & SENSITIVITY MODEL", ctx, [
+    {
+      title: "Revenue and EBITDA cases",
+      rows: [
+        ["Base revenue", fmtCurrency(ctx.revenueM), "Latest extracted revenue baseline used as the operating case anchor."],
+        [
+          "Downside revenue (-5%)",
+          fmtCurrency(ctx.revenueM != null ? ctx.revenueM * 0.95 : null),
+          "Stress case for softer demand, price compression, or delayed customer orders.",
+        ],
+        [
+          "Upside revenue (+5%)",
+          fmtCurrency(ctx.revenueM != null ? ctx.revenueM * 1.05 : null),
+          "Upside case for volume recovery, price realization, or share gain.",
+        ],
+        ["Base EBITDA", fmtCurrency(ctx.ebitdaM), "Current EBITDA baseline before sensitivity adjustments."],
+        [
+          "Downside EBITDA (-10%)",
+          fmtCurrency(ctx.ebitdaM != null ? ctx.ebitdaM * 0.9 : null),
+          "Stress case for operating deleverage or gross margin pressure.",
+        ],
+        [
+          "Upside EBITDA (+10%)",
+          fmtCurrency(ctx.ebitdaM != null ? ctx.ebitdaM * 1.1 : null),
+          "Upside case for operating leverage and SG&A absorption.",
+        ],
+      ],
+    },
+    {
+      title: "Cash and credit sensitivity",
+      rows: [
+        ["Base free cash flow", fmtCurrency(ctx.freeCashFlowM), "Extracted free cash flow baseline after capital expenditures."],
+        [
+          "Downside FCF (-15%)",
+          fmtCurrency(ctx.freeCashFlowM != null ? ctx.freeCashFlowM * 0.85 : null),
+          "Stress case for lower cash conversion, higher working capital, or higher capex.",
+        ],
+        [
+          "Upside FCF (+15%)",
+          fmtCurrency(ctx.freeCashFlowM != null ? ctx.freeCashFlowM * 1.15 : null),
+          "Upside case for stronger collections, lower capex, or margin flow-through.",
+        ],
+        ["Net debt / EBITDA", fmtRatio(ctx.netDebtToEbitda), "Baseline balance-sheet pressure versus earnings power."],
+        ["Lease-adjusted net debt / EBITDA", fmtRatio(ctx.leaseAdjustedNetDebtToEbitda), "Stress view after lease obligations."],
+        [
+          "Stress net debt / EBITDA",
+          ctx.netDebtM != null && ctx.ebitdaM != null && ctx.ebitdaM !== 0
+            ? fmtRatio(ctx.netDebtM / (ctx.ebitdaM * 0.9))
+            : "",
+          "Leverage if EBITDA falls 10% while net debt remains unchanged.",
+        ],
+        ["Interest coverage", fmtRatio(ctx.interestCoverage), "Ability to absorb rate pressure or earnings volatility."],
+        ["Cash conversion cycle", ctx.cashConversionCycle != null ? `${ctx.cashConversionCycle.toFixed(1)} days` : "", "Working-capital sensitivity that can absorb or release cash."],
+      ],
+    },
+  ]);
+}
+
+function buildBoardMemoGrid(ctx: FinancialModelContext): FinancialGridModel {
+  return buildAnalystScheduleGrid("boardMemo", "BOARD MEMO & INVESTOR Q&A", ctx, [
+    {
+      title: "Board memo bullets",
+      rows: [
+        ["Scale", fmtCurrency(ctx.revenueM), "Frame the size of the business and whether the quarter changes the growth narrative."],
+        ["Profitability", fmtPercent(ctx.ebitdaMarginPct), "Explain whether margin performance reflects structural improvement or temporary mix/cost effects."],
+        ["Cash generation", fmtPercent(ctx.fcfConversionPct), "Assess whether reported earnings are backed by free cash flow."],
+        ["Balance-sheet risk", fmtRatio(ctx.netDebtToEbitda), "Summarize leverage risk, lender sensitivity, and capacity for buybacks or M&A."],
+        ["Lease-adjusted leverage", fmtRatio(ctx.leaseAdjustedNetDebtToEbitda), "Address creditor view after lease obligations."],
+        ["Capital efficiency", fmtPercent(ctx.roicPct), "Evaluate whether incremental capital is creating value above the cost of capital."],
+        ["Cash cycle", ctx.cashConversionCycle != null ? `${ctx.cashConversionCycle.toFixed(1)} days` : "", "Explain whether growth is consuming or releasing working capital."],
+      ],
+    },
+    {
+      title: "Investor Q&A prompts",
+      rows: [
+        ["Growth bridge", fmtCurrency(ctx.revenueM), "What portion of growth came from price, volume, mix, acquisitions, and FX?"],
+        ["Margin bridge", fmtPercent(ctx.operatingMarginPct), "Which cost lines drove margin change, and how much is sustainable next quarter?"],
+        ["Cash bridge", fmtCurrency(ctx.operatingCashFlowM), "What working-capital items explain the gap between earnings and cash flow?"],
+        ["Capex intensity", fmtCurrency(ctx.capexM != null ? Math.abs(ctx.capexM) : null), "Is capex maintenance, growth, compliance, or capacity expansion?"],
+        ["Capital allocation", fmtCurrency(ctx.dividendsPaidM), "How should management rank dividends, repurchases, debt reduction, and M&A?"],
+        ["Share count", ctx.weightedAverageSharesDilutedM != null ? `${ctx.weightedAverageSharesDilutedM.toFixed(1)}M` : "", "How much do buybacks offset dilution or support EPS?"],
       ],
     },
   ]);

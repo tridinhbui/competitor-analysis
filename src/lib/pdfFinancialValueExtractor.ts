@@ -6,6 +6,7 @@ export type PdfFinancialMetric =
   | "sgaExpense"
   | "totalAssets"
   | "cashAndEquivalents"
+  | "shortTermInvestments"
   | "operatingIncome"
   | "operatingCashFlow"
   | "capitalExpenditures"
@@ -29,6 +30,13 @@ export type PdfFinancialMetric =
   | "retainedEarnings"
   | "goodwill"
   | "accountsPayable"
+  | "accruedLiabilities"
+  | "deferredRevenue"
+  | "intangibleAssets"
+  | "operatingLeaseLiabilitiesCurrent"
+  | "operatingLeaseLiabilitiesNoncurrent"
+  | "financeLeaseLiabilitiesCurrent"
+  | "financeLeaseLiabilitiesNoncurrent"
   /** Supplemental tables (Other Key Financial Measures, debt footnotes) */
   | "ebitda"
   | "grossDebt"
@@ -201,6 +209,19 @@ const METRICS: Record<PdfFinancialMetric, MetricConfig> = {
     fallbackSections: ["cash_flow"],
     reject:
       /\b(beginning\s+of\s+(?:period|year)|net\s+(?:increase|decrease)|provided\s+by|used\s+in|operating\s+activities|investing\s+activities|financing\s+activities|effect\s+of\s+exchange|supplemental)\b/i,
+  },
+  shortTermInvestments: {
+    tag: "ShortTermInvestments",
+    label: "Short-term investments",
+    patterns: [
+      /^short[-\s]term\s+investments\b/i,
+      /^marketable\s+securities\b/i,
+      /^cash\s+equivalents\s+and\s+short[-\s]term\s+investments\b/i,
+    ],
+    exactLabel: /^(?:short[-\s]term\s+investments|marketable\s+securities)$/i,
+    preferredSections: ["balance_sheet"],
+    reject: /\b(long[-\s]term|proceeds|sale|gain|loss|maturity|available[-\s]for[-\s]sale)\b/i,
+    abs: true,
   },
   operatingIncome: {
     tag: "OperatingIncomeLoss",
@@ -479,6 +500,72 @@ const METRICS: Record<PdfFinancialMetric, MetricConfig> = {
     preferredSections: ["balance_sheet"],
     reject:
       /\b(increase|decrease|change\s+in|turnover|days|segment|accrued\s+expense)\b/i,
+    abs: true,
+  },
+  accruedLiabilities: {
+    tag: "AccruedLiabilitiesCurrent",
+    label: "Accrued liabilities",
+    patterns: [
+      /^accrued\s+(?:expenses|liabilities)\b/i,
+      /^accrued\s+expenses\s+and\s+other\s+current\s+liabilities\b/i,
+    ],
+    exactLabel: /^accrued\s+(?:expenses|liabilities)(?:\s+and\s+other\s+current\s+liabilities)?$/i,
+    preferredSections: ["balance_sheet"],
+    reject: /\b(change\s+in|increase|decrease|cash\s+flow|segment)\b/i,
+    abs: true,
+  },
+  deferredRevenue: {
+    tag: "DeferredRevenueCurrent",
+    label: "Deferred revenue",
+    patterns: [/^deferred\s+revenue\b/i, /^contract\s+liabilities\b/i],
+    exactLabel: /^(?:deferred\s+revenue|contract\s+liabilities)$/i,
+    preferredSections: ["balance_sheet"],
+    reject: /\b(revenue\s+recognized|remaining|performance\s+obligations|rollforward|noncurrent)\b/i,
+    abs: true,
+  },
+  intangibleAssets: {
+    tag: "IntangibleAssetsNet",
+    label: "Intangible assets, net",
+    patterns: [/^intangible\s+assets\b/i, /^other\s+intangible\s+assets\b/i],
+    exactLabel: /^(?:other\s+)?intangible\s+assets(?:,\s*net)?$/i,
+    preferredSections: ["balance_sheet"],
+    reject: /\b(amortization|impairment|rollforward|addition|acquisition)\b/i,
+    abs: true,
+  },
+  operatingLeaseLiabilitiesCurrent: {
+    tag: "OperatingLeaseLiabilityCurrent",
+    label: "Operating lease liabilities, current",
+    patterns: [/^operating\s+lease\s+liabilit(?:y|ies).*\bcurrent\b/i, /^current\s+operating\s+lease\s+liabilit(?:y|ies)\b/i],
+    exactLabel: /^(?:current\s+)?operating\s+lease\s+liabilit(?:y|ies)(?:,\s*current)?$/i,
+    preferredSections: ["balance_sheet"],
+    reject: /\b(noncurrent|non-current|expense|cash\s+flow|maturity|commitment)\b/i,
+    abs: true,
+  },
+  operatingLeaseLiabilitiesNoncurrent: {
+    tag: "OperatingLeaseLiabilityNoncurrent",
+    label: "Operating lease liabilities, non-current",
+    patterns: [/^operating\s+lease\s+liabilit(?:y|ies).*\bnon[-\s]?current\b/i, /^non[-\s]?current\s+operating\s+lease\s+liabilit(?:y|ies)\b/i],
+    exactLabel: /^(?:non[-\s]?current\s+)?operating\s+lease\s+liabilit(?:y|ies)(?:,\s*non[-\s]?current)?$/i,
+    preferredSections: ["balance_sheet"],
+    reject: /\b(current\s+portion|expense|cash\s+flow|maturity|commitment)\b/i,
+    abs: true,
+  },
+  financeLeaseLiabilitiesCurrent: {
+    tag: "FinanceLeaseLiabilityCurrent",
+    label: "Finance lease liabilities, current",
+    patterns: [/^finance\s+lease\s+liabilit(?:y|ies).*\bcurrent\b/i, /^current\s+finance\s+lease\s+liabilit(?:y|ies)\b/i],
+    exactLabel: /^(?:current\s+)?finance\s+lease\s+liabilit(?:y|ies)(?:,\s*current)?$/i,
+    preferredSections: ["balance_sheet"],
+    reject: /\b(noncurrent|non-current|expense|cash\s+flow|maturity|commitment)\b/i,
+    abs: true,
+  },
+  financeLeaseLiabilitiesNoncurrent: {
+    tag: "FinanceLeaseLiabilityNoncurrent",
+    label: "Finance lease liabilities, non-current",
+    patterns: [/^finance\s+lease\s+liabilit(?:y|ies).*\bnon[-\s]?current\b/i, /^non[-\s]?current\s+finance\s+lease\s+liabilit(?:y|ies)\b/i],
+    exactLabel: /^(?:non[-\s]?current\s+)?finance\s+lease\s+liabilit(?:y|ies)(?:,\s*non[-\s]?current)?$/i,
+    preferredSections: ["balance_sheet"],
+    reject: /\b(current\s+portion|expense|cash\s+flow|maturity|commitment)\b/i,
     abs: true,
   },
   ebitda: {

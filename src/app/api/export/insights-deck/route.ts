@@ -112,6 +112,12 @@ export async function POST(request: Request) {
       const inventory = findItem(a, "InventoryNet", "Inventory");
       const accountsReceivable = findItem(a, "AccountsReceivableNetCurrent", "AccountsReceivableNet");
       const accountsPayable = findItem(a, "AccountsPayableCurrent", "AccountsPayable");
+      const shortTermInvestments = findItem(a, "ShortTermInvestments");
+      const accruedLiabilities = findItem(a, "AccruedLiabilitiesCurrent");
+      const deferredRevenue = findItem(a, "DeferredRevenueCurrent");
+      const propertyPlantEquipment = findItem(a, "PropertyPlantAndEquipmentNet");
+      const goodwill = findItem(a, "Goodwill");
+      const intangibleAssets = findItem(a, "IntangibleAssetsNet");
 
       allRows.push({
         id: f.id, workflowOrigin: a.meta.workflowOrigin === "competitor" ? "competitor" : "analyze", ticker: f.ticker, companyName: company?.name ?? f.ticker,
@@ -126,11 +132,19 @@ export async function POST(request: Request) {
         longTermDebt: a.debtStructure?.longTermDebt ?? null,
         netDebt: m.netDebt ?? a.debtStructure?.netDebt ?? null,
         cashAndEquivalents: m.cash,
+        shortTermInvestments,
         currentAssets, currentLiabilities, workingCapital, inventory, accountsReceivable, accountsPayable,
+        accruedLiabilities, deferredRevenue, propertyPlantEquipment, goodwill, intangibleAssets,
+        operatingLeaseLiabilities: a.debtStructure?.operatingLeaseLiabilities ?? null,
+        financeLeaseLiabilities: a.debtStructure?.financeLeaseLiabilities ?? null,
+        leaseAdjustedDebt: a.debtStructure?.leaseAdjustedDebt ?? null,
+        leaseAdjustedNetDebt: a.debtStructure?.leaseAdjustedNetDebt ?? null,
         operatingCashFlow: m.operatingCashFlow, capex: m.capex, freeCashFlow: m.freeCashFlow,
         shareRepurchases: a.cashFlow?.shareRepurchases ?? null,
         investingCashFlow: a.cashFlow?.investingCashFlow ?? null,
         financingCashFlow: a.cashFlow?.financingCashFlow ?? null,
+        debtIssued: a.cashFlow?.debtIssued ?? null,
+        debtRepaid: a.cashFlow?.debtRepaid ?? null,
         grossMargin: m.grossMargin, operatingMargin: m.operatingMargin, netMargin: m.netMargin,
         debtToEquity: m.debtToEquity,
         debtToCapital: a.ratios?.debtToCapital ?? null,
@@ -141,14 +155,32 @@ export async function POST(request: Request) {
         assetTurnover: a.ratios?.assetTurnover ?? null,
         inventoryTurnover: a.ratios?.inventoryTurnover ?? null,
         receivablesTurnover: a.ratios?.receivablesTurnover ?? null,
+        daysSalesOutstanding: a.ratios?.daysSalesOutstanding ?? null,
+        daysInventoryOutstanding: a.ratios?.daysInventoryOutstanding ?? null,
+        daysPayableOutstanding: a.ratios?.daysPayableOutstanding ?? null,
+        cashConversionCycle: a.ratios?.cashConversionCycle ?? null,
         fcfConversion: a.ratios?.fcfConversion ?? pct(m.freeCashFlow, m.netIncome),
         workingCapitalRatio: a.ratios?.workingCapitalRatio ?? pct(workingCapital, m.revenue),
+        effectiveTaxRate: a.ratios?.effectiveTaxRate ?? null,
+        capexAsPercentRevenue: a.ratios?.capexAsPercentRevenue ?? pct(m.capex, m.revenue),
+        dividendPayoutRatio: a.ratios?.dividendPayoutRatio ?? pct(m.dividendsPaid, m.netIncome),
+        buybackPayoutRatio: a.ratios?.buybackPayoutRatio ?? pct(a.cashFlow?.shareRepurchases ?? null, m.netIncome),
+        totalPayoutRatio: a.ratios?.totalPayoutRatio ?? pct(
+          m.dividendsPaid != null || a.cashFlow?.shareRepurchases != null
+            ? (m.dividendsPaid ?? 0) + (a.cashFlow?.shareRepurchases ?? 0)
+            : null,
+          m.netIncome,
+        ),
+        leaseAdjustedDebtToEbitda: a.ratios?.leaseAdjustedDebtToEbitda ?? null,
+        leaseAdjustedNetDebtToEbitda: a.ratios?.leaseAdjustedNetDebtToEbitda ?? null,
         sgaExpense: m.sgaExpense, depreciation: depItem?.value ?? null,
         ebit, ebitda,
         ebitdaMargin: ebitda != null && m.revenue ? parseFloat(((ebitda / m.revenue) * 100).toFixed(1)) : null,
         interestExpense: a.incomeStatement?.interestExpense ?? null,
         epsBasic: a.incomeStatement?.epsBasic ?? null,
         epsDiluted: a.incomeStatement?.epsDiluted ?? null,
+        weightedAverageSharesBasic: a.incomeStatement?.weightedAverageSharesBasic ?? null,
+        weightedAverageSharesDiluted: a.incomeStatement?.weightedAverageSharesDiluted ?? null,
         shareBasedComp: cfItems.find(i => i.tag === "ShareBasedCompensation")?.value ?? null,
         dividendsPaid: m.dividendsPaid, roe: m.roe, roa: m.roa,
         fcfMargin: m.fcfMargin,

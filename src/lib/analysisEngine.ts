@@ -185,6 +185,12 @@ export function buildDebtStructure(bs: BSItem[]): DebtStructure {
   }
 
   const financeLease = find(bs, "FinanceLeaseLiabilityNoncurrent");
+  const operatingLease =
+    find(bs, "OperatingLeaseLiabilityCurrent") +
+    find(bs, "OperatingLeaseLiabilityNoncurrent");
+  const financeLeaseTotal =
+    find(bs, "FinanceLeaseLiabilityCurrent") +
+    find(bs, "FinanceLeaseLiabilityNoncurrent");
   const computedGross = stDebt + ltDebt + financeLease;
 
   const cashForDebt =
@@ -247,14 +253,26 @@ export function buildDebtStructure(bs: BSItem[]): DebtStructure {
       "DebtCurrent",
       "ShortTermBorrowings",
       "FinanceLeaseLiabilityNoncurrent",
+      "FinanceLeaseLiabilityCurrent",
+      "OperatingLeaseLiabilityCurrent",
+      "OperatingLeaseLiabilityNoncurrent",
     ].includes(i.tag)
   );
+
+  const financeLeaseCurrent = find(bs, "FinanceLeaseLiabilityCurrent");
+  const leaseDebt = Math.abs(operatingLease) + Math.abs(financeLeaseCurrent);
+  const leaseAdjustedDebt = total + leaseDebt;
+  const leaseAdjustedNetDebt = netDebt + leaseDebt;
 
   return {
     shortTermDebt: stDebt,
     longTermDebt: ltDebt,
     totalDebt: total,
     netDebt,
+    operatingLeaseLiabilities: operatingLease > 0 ? Math.abs(operatingLease) : null,
+    financeLeaseLiabilities: financeLeaseTotal > 0 ? Math.abs(financeLeaseTotal) : null,
+    leaseAdjustedDebt: leaseAdjustedDebt > total ? leaseAdjustedDebt : null,
+    leaseAdjustedNetDebt: leaseAdjustedNetDebt > netDebt ? leaseAdjustedNetDebt : null,
     items,
   };
 }
@@ -379,6 +397,13 @@ export function buildCashFlow(cf: BSItem[]): CashFlowData {
     shareRepurchases: shareRepurchases != null ? Math.abs(shareRepurchases) : null,
     investingCashFlow,
     financingCashFlow,
+    debtIssued: debtIssuance != null ? Math.abs(debtIssuance) : null,
+    debtRepaid:
+      ltDebtRepayments != null || debtRepaymentsMixed != null || stDebtRepayments != null
+        ? Math.abs(ltDebtRepayments ?? 0) +
+          Math.abs(debtRepaymentsMixed ?? 0) +
+          Math.abs(stDebtRepayments ?? 0)
+        : null,
   };
 }
 
@@ -444,6 +469,8 @@ export function buildIncomeStatement(cf: BSItem[], bs: BSItem[]): IncomeStatemen
   const netIncome = findOrNull(cf, "NetIncomeLoss");
   const epsBasic = findOrNull(cf, "EarningsPerShareBasic");
   const epsDiluted = findOrNull(cf, "EarningsPerShareDiluted");
+  const weightedAverageSharesBasic = findOrNull(cf, "WeightedAverageSharesBasic");
+  const weightedAverageSharesDiluted = findOrNull(cf, "WeightedAverageSharesDiluted");
 
   const pretax = findOrNull(
     cf,
@@ -547,6 +574,8 @@ export function buildIncomeStatement(cf: BSItem[], bs: BSItem[]): IncomeStatemen
     netMargin: margin(netIncome, revenue),
     epsBasic,
     epsDiluted,
+    weightedAverageSharesBasic,
+    weightedAverageSharesDiluted,
   };
 }
 
@@ -583,6 +612,8 @@ export function buildRatiosFull(
   const ebitdaFinal = ebitda;
 
   const netDebtToEbitda = ratio(debt.netDebt, ebitdaFinal);
+  const leaseAdjustedDebtToEbitda = ratio(debt.leaseAdjustedDebt, ebitdaFinal);
+  const leaseAdjustedNetDebtToEbitda = ratio(debt.leaseAdjustedNetDebt, ebitdaFinal);
   let interestCoverage = ratio(operatingIncome, interestExpense);
   if (
     interestCoverage == null &&
@@ -678,11 +709,35 @@ export function buildRatiosFull(
     findOrNull(allItems, "AccountsReceivableNetCurrent") ??
     findOrNull(allItems, "AccountsReceivableNet");
   const receivablesTurnover = ratio(revenue, receivables);
+  const payables =
+    findOrNull(allItems, "AccountsPayableCurrent") ??
+    findOrNull(allItems, "AccountsPayable");
+  const daysSalesOutstanding = ratio(receivables, revenue);
+  const daysInventoryOutstanding = ratio(inventory, cogs);
+  const daysPayableOutstanding = ratio(payables, cogs);
+  const dsoDays = daysSalesOutstanding != null ? daysSalesOutstanding * 90 : null;
+  const dioDays = daysInventoryOutstanding != null ? daysInventoryOutstanding * 90 : null;
+  const dpoDays = daysPayableOutstanding != null ? daysPayableOutstanding * 90 : null;
+  const cashConversionCycle =
+    dsoDays != null && dioDays != null && dpoDays != null ? dsoDays + dioDays - dpoDays : null;
 
   // Cash
   const fcfYield = cf.freeCashFlow != null && bs.totalEquity > 0
     ? cf.freeCashFlow / (bs.totalEquity + debt.totalDebt) : null;
   const fcfConversion = ratio(cf.freeCashFlow, netIncome);
+  const capexAsPercentRevenue = ratio(cf.capitalExpenditures, revenue);
+  const dividendPayoutRatio = ratio(cf.dividendsPaid, netIncome);
+  const buybackPayoutRatio = ratio(cf.shareRepurchases, netIncome);
+  const totalPayoutRatio = ratio(
+    cf.dividendsPaid != null || cf.shareRepurchases != null
+      ? (cf.dividendsPaid ?? 0) + (cf.shareRepurchases ?? 0)
+      : null,
+    netIncome,
+  );
+  const effectiveTaxRate =
+    pretaxForRoic != null && Math.abs(pretaxForRoic) > 1e-6 && incomeTaxForRoic != null
+      ? Math.abs(incomeTaxForRoic) / Math.abs(pretaxForRoic)
+      : null;
 
   // Working capital
   const wc = currentAssets != null && currentLiab != null ? currentAssets - currentLiab : null;
@@ -707,8 +762,19 @@ export function buildRatiosFull(
     assetTurnover: r1(assetTurnover),
     inventoryTurnover: r10(inventoryTurnover),
     receivablesTurnover: r10(receivablesTurnover),
+    daysSalesOutstanding: r1(dsoDays),
+    daysInventoryOutstanding: r1(dioDays),
+    daysPayableOutstanding: r1(dpoDays),
+    cashConversionCycle: r1(cashConversionCycle),
     fcfYield: fcfYield != null ? Math.round(fcfYield * 1000) / 10 : null,
     fcfConversion: fcfConversion != null ? Math.round(fcfConversion * 1000) / 10 : null,
+    capexAsPercentRevenue: capexAsPercentRevenue != null ? Math.round(capexAsPercentRevenue * 1000) / 10 : null,
+    dividendPayoutRatio: dividendPayoutRatio != null ? Math.round(dividendPayoutRatio * 1000) / 10 : null,
+    buybackPayoutRatio: buybackPayoutRatio != null ? Math.round(buybackPayoutRatio * 1000) / 10 : null,
+    totalPayoutRatio: totalPayoutRatio != null ? Math.round(totalPayoutRatio * 1000) / 10 : null,
+    effectiveTaxRate: effectiveTaxRate != null ? Math.round(effectiveTaxRate * 1000) / 10 : null,
+    leaseAdjustedDebtToEbitda: r10(leaseAdjustedDebtToEbitda),
+    leaseAdjustedNetDebtToEbitda: r10(leaseAdjustedNetDebtToEbitda),
     workingCapital: wc,
     workingCapitalRatio: wcRatio != null ? Math.round(wcRatio * 1000) / 10 : null,
   };

@@ -7,7 +7,14 @@ import {
 } from "@/lib/financialModelFromFiling";
 import type { DataSourceRow } from "@/types/dataSource";
 
-export type FinancialModelSheetKey = "underwriting" | "annualCf" | "credit" | "quality" | "returns";
+export type FinancialModelSheetKey =
+  | "underwriting"
+  | "annualCf"
+  | "credit"
+  | "quality"
+  | "returns"
+  | "scenario"
+  | "boardMemo";
 
 export interface FinancialModelContext {
   companyName: string;
@@ -25,7 +32,14 @@ export interface FinancialModelContext {
   totalDebtM: number | null;
   netDebtM: number | null;
   cashM: number | null;
+  shortTermInvestmentsM: number | null;
   workingCapitalM: number | null;
+  deferredRevenueM: number | null;
+  accruedLiabilitiesM: number | null;
+  operatingLeaseLiabilitiesM: number | null;
+  financeLeaseLiabilitiesM: number | null;
+  leaseAdjustedDebtM: number | null;
+  leaseAdjustedNetDebtM: number | null;
   ebitdaM: number | null;
   interestExpenseM: number | null;
   dividendsPaidM: number | null;
@@ -46,6 +60,18 @@ export interface FinancialModelContext {
   assetTurnover: number | null;
   inventoryTurnover: number | null;
   receivablesTurnover: number | null;
+  daysSalesOutstanding: number | null;
+  daysInventoryOutstanding: number | null;
+  daysPayableOutstanding: number | null;
+  cashConversionCycle: number | null;
+  effectiveTaxRatePct: number | null;
+  capexAsPercentRevenuePct: number | null;
+  dividendPayoutRatioPct: number | null;
+  buybackPayoutRatioPct: number | null;
+  totalPayoutRatioPct: number | null;
+  leaseAdjustedDebtToEbitda: number | null;
+  leaseAdjustedNetDebtToEbitda: number | null;
+  weightedAverageSharesDilutedM: number | null;
   /** Populated from PDF-derived workbook rows (per company). */
   derived: FilingDerivedFinancialModel;
 }
@@ -145,7 +171,14 @@ export function buildFinancialModelContext(
     totalDebtM: pick("totalDebt"),
     netDebtM: pick("netDebt"),
     cashM: pick("cashAndEquivalents"),
+    shortTermInvestmentsM: pick("shortTermInvestments"),
     workingCapitalM: pick("workingCapital"),
+    deferredRevenueM: pick("deferredRevenue"),
+    accruedLiabilitiesM: pick("accruedLiabilities"),
+    operatingLeaseLiabilitiesM: pick("operatingLeaseLiabilities"),
+    financeLeaseLiabilitiesM: pick("financeLeaseLiabilities"),
+    leaseAdjustedDebtM: pick("leaseAdjustedDebt"),
+    leaseAdjustedNetDebtM: pick("leaseAdjustedNetDebt"),
     ebitdaM: pick("ebitda"),
     interestExpenseM: pick("interestExpense"),
     dividendsPaidM: pick("dividendsPaid"),
@@ -166,6 +199,18 @@ export function buildFinancialModelContext(
     assetTurnover: pick("assetTurnover"),
     inventoryTurnover: pick("inventoryTurnover"),
     receivablesTurnover: pick("receivablesTurnover"),
+    daysSalesOutstanding: pick("daysSalesOutstanding"),
+    daysInventoryOutstanding: pick("daysInventoryOutstanding"),
+    daysPayableOutstanding: pick("daysPayableOutstanding"),
+    cashConversionCycle: pick("cashConversionCycle"),
+    effectiveTaxRatePct: pick("effectiveTaxRate"),
+    capexAsPercentRevenuePct: pick("capexAsPercentRevenue"),
+    dividendPayoutRatioPct: pick("dividendPayoutRatio"),
+    buybackPayoutRatioPct: pick("buybackPayoutRatio"),
+    totalPayoutRatioPct: pick("totalPayoutRatio"),
+    leaseAdjustedDebtToEbitda: pick("leaseAdjustedDebtToEbitda"),
+    leaseAdjustedNetDebtToEbitda: pick("leaseAdjustedNetDebtToEbitda"),
+    weightedAverageSharesDilutedM: pick("weightedAverageSharesDiluted"),
     derived,
   };
 }
@@ -457,5 +502,13 @@ export function appendFinancialModelSheets(
 }
 
 export function isFinancialModelSheetKey(key: string): key is FinancialModelSheetKey {
-  return key === "underwriting" || key === "annualCf" || key === "credit" || key === "quality" || key === "returns";
+  return (
+    key === "underwriting" ||
+    key === "annualCf" ||
+    key === "credit" ||
+    key === "quality" ||
+    key === "returns" ||
+    key === "scenario" ||
+    key === "boardMemo"
+  );
 }

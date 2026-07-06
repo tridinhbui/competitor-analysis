@@ -89,7 +89,9 @@ Items MUST use ONLY these EXACT tags (do not output income or cash flow tags in 
 - GrossDebt -> Total debt (GROSS carrying amount per debt footnote — all borrowings; NOT the same as "Total long-term debt" alone)
 - TotalNetDebtSupplemental -> "Total net debt" line from Key Financial Measures / supplemental tables only (not a ratio); used with cash to cross-check gross debt downstream
 - Do NOT tag GrossDebt from lines that say only "Long-term debt", "Total long-term debt", or "Long-term debt, net" — those belong on LongTermDebtNoncurrent / LongTermDebt, not gross consolidated debt.
+- OperatingLeaseLiabilityCurrent -> Operating lease liabilities (current)
 - OperatingLeaseLiabilityNoncurrent -> Operating lease liabilities (non-current)
+- FinanceLeaseLiabilityCurrent -> Finance lease obligations (current portion)
 - FinanceLeaseLiabilityNoncurrent -> Finance lease obligations (non-current portion)
 - PensionAndOtherPostretirementDefinedBenefitPlansLiabilitiesNoncurrent -> Pension / OPEB obligations (non-current)
 - RedeemableNoncontrollingInterestEquityCarryingAmount -> Redeemable noncontrolling interests (mezzanine)
@@ -424,8 +426,8 @@ const BS_TAG_SET = new Set([
   "OtherAssetsNoncurrent", "DeferredIncomeTaxAssetsNet", "Liabilities", "LiabilitiesCurrent", "LiabilitiesNoncurrent",
   "AccountsPayable", "AccountsPayableCurrent", "AccruedLiabilitiesCurrent", "DeferredRevenueCurrent", "DebtCurrent", "LongTermDebtNoncurrent",
   "LongTermDebt", "ShortTermBorrowings", "LongTermDebtCurrent", "GrossDebt", "TotalNetDebtSupplemental",
-  "OperatingLeaseLiabilityNoncurrent",
-  "FinanceLeaseLiabilityNoncurrent", "PensionAndOtherPostretirementDefinedBenefitPlansLiabilitiesNoncurrent",
+  "OperatingLeaseLiabilityCurrent", "OperatingLeaseLiabilityNoncurrent",
+  "FinanceLeaseLiabilityCurrent", "FinanceLeaseLiabilityNoncurrent", "PensionAndOtherPostretirementDefinedBenefitPlansLiabilitiesNoncurrent",
   "RedeemableNoncontrollingInterestEquityCarryingAmount", "StockholdersEquity", "CommonStockValue",
   "AdditionalPaidInCapital", "RetainedEarningsAccumulatedDeficit", "TreasuryStockValue",
   "AccumulatedOtherComprehensiveIncomeLoss", "LiabilitiesAndStockholdersEquity", "MinorityInterest",
@@ -1561,6 +1563,7 @@ export async function POST(request: Request) {
     for (const metric of [
       "totalAssets",
       "cashAndEquivalents",
+      "shortTermInvestments",
       "totalCurrentAssets",
       "totalCurrentLiabilities",
       "longTermDebtNoncurrent",
@@ -1574,6 +1577,13 @@ export async function POST(request: Request) {
       "retainedEarnings",
       "goodwill",
       "accountsPayable",
+      "accruedLiabilities",
+      "deferredRevenue",
+      "intangibleAssets",
+      "operatingLeaseLiabilitiesCurrent",
+      "operatingLeaseLiabilitiesNoncurrent",
+      "financeLeaseLiabilitiesCurrent",
+      "financeLeaseLiabilitiesNoncurrent",
     ] as const) {
       repairCriticalFinancialValue(bsItems, metric, filingText, scaleForHeuristics, period);
     }

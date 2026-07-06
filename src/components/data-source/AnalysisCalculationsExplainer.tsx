@@ -20,6 +20,13 @@ export function AnalysisCalculationsExplainer() {
         <strong>Supabase</strong> when configured. Dollar amounts are in <strong>$ millions</strong> unless noted.
         Edits you save here override stored values for that ticker and period where applicable.
       </p>
+      <p className="mt-2 text-xs text-slate-600">
+        The workbook tabs mirror the Extract tabs: <strong>Executive Summary</strong>, <strong>Segment</strong>,{" "}
+        <strong>Income &amp; Margins</strong>, <strong>Balance Sheet</strong>, <strong>Cash Flow</strong>,{" "}
+        <strong>Dividends</strong>, and <strong>Analysis</strong>. Direct filing lines stay as values; calculated
+        metrics are surfaced as workbook formulas so downstream Analyze, memo, and export outputs can be audited
+        from the spreadsheet layer.
+      </p>
 
       <div className="mt-4 grid gap-4 text-xs text-slate-700 md:grid-cols-2">
         <div>
@@ -55,6 +62,24 @@ export function AnalysisCalculationsExplainer() {
             </li>
             <li>
               Operating CF and CapEx are taken from the cash flow statement lines in the extracted filing.
+            </li>
+          </ul>
+        </div>
+
+        <div>
+          <h3 className="font-semibold text-slate-800">Dividends &amp; payout</h3>
+          <ul className="mt-1 list-inside list-disc space-y-0.5 text-slate-600">
+            <li>
+              <strong>Dividend payout</strong> = Dividends paid ÷ Net income × 100
+            </li>
+            <li>
+              <strong>Buyback payout</strong> = Share repurchases ÷ Net income × 100
+            </li>
+            <li>
+              <strong>Total payout</strong> = (Dividends paid + Share repurchases) ÷ Net income × 100
+            </li>
+            <li>
+              <strong>FCF conversion</strong> = Free cash flow ÷ Net income × 100
             </li>
           </ul>
         </div>
