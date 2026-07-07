@@ -177,6 +177,12 @@ export function AnalysisChatPanel({ analysis, inline, disableAutoSummary = false
   const [fabReady, setFabReady] = useState(false);
   const [fabPos, setFabPos] = useState<FabPosition>({ x: 0, y: 0 });
   const [isDraggingFab, setIsDraggingFab] = useState(false);
+  // Full-width pill only fits comfortably on tall/wide viewports. On a shorter
+  // desktop screen (short window, external monitor at low res, etc.) the fixed
+  // bottom-right pill can land on top of page controls (Review workbook, Export)
+  // because "bottom of a short viewport" is much closer to the top of the page.
+  // Collapse to an icon-only button below that height too, not just narrow width.
+  const [isCompactFab, setIsCompactFab] = useState(false);
   const bootInjectedRef = useRef<string>("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const prevAnalysisRef = useRef<FullAnalysis | null>(null);
@@ -200,6 +206,13 @@ export function AnalysisChatPanel({ analysis, inline, disableAutoSummary = false
 
   const hasContext = Boolean(analysis);
 
+  // Short viewport (e.g. a smaller/lower-res desktop monitor, not just mobile width)
+  // needs the same icon-only treatment as narrow width, or the pill's bottom-right
+  // resting spot lands on top of page action buttons instead of empty space.
+  const isShortViewport = useCallback(() => {
+    return typeof window !== "undefined" && window.innerHeight < 700;
+  }, []);
+
   const getFabSize = useCallback(() => {
     if (fabRef.current) {
       return {
@@ -208,8 +221,10 @@ export function AnalysisChatPanel({ analysis, inline, disableAutoSummary = false
       };
     }
     if (typeof window === "undefined") return { width: 280, height: 56 };
-    return window.innerWidth >= 640 ? { width: 280, height: 56 } : { width: 48, height: 48 };
-  }, []);
+    return window.innerWidth >= 640 && !isShortViewport()
+      ? { width: 280, height: 56 }
+      : { width: 48, height: 48 };
+  }, [isShortViewport]);
 
   const clampFabPos = useCallback((pos: FabPosition): FabPosition => {
     if (typeof window === "undefined") return pos;
@@ -255,6 +270,14 @@ export function AnalysisChatPanel({ analysis, inline, disableAutoSummary = false
       setFabReady(true);
     }
   }, [inline, getDefaultFabPos, clampFabPos]);
+
+  useEffect(() => {
+    if (inline || typeof window === "undefined") return;
+    const updateCompact = () => setIsCompactFab(window.innerWidth < 640 || isShortViewport());
+    updateCompact();
+    window.addEventListener("resize", updateCompact);
+    return () => window.removeEventListener("resize", updateCompact);
+  }, [inline, isShortViewport]);
 
   useEffect(() => {
     if (inline || !fabReady || typeof window === "undefined") return;
@@ -570,7 +593,8 @@ export function AnalysisChatPanel({ analysis, inline, disableAutoSummary = false
           onPointerUp={handleFabPointerUp}
           onPointerCancel={handleFabPointerCancel}
           className={cn(
-            "group fixed z-40 flex h-12 touch-none items-center gap-2 rounded-full pl-3 pr-4 shadow-float sm:h-14 sm:pl-4 sm:pr-5",
+            "group fixed z-40 flex touch-none items-center gap-2 rounded-full shadow-float",
+            isCompactFab ? "h-12 w-12 justify-center p-0" : "h-14 pl-4 pr-5",
             "bg-primary text-white",
             "ring-2 ring-white/80 ring-offset-2 ring-offset-transparent hover:scale-[1.03] hover:shadow-lg",
             isDraggingFab ? "transition-none" : "transition-[transform,box-shadow] duration-200 ease-out",
@@ -585,15 +609,17 @@ export function AnalysisChatPanel({ analysis, inline, disableAutoSummary = false
           }}
           aria-label="Open AI analyst chat"
         >
-          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 sm:h-9 sm:w-9">
-            <BrainCircuit className="h-4 w-4 sm:h-5 sm:w-5" />
+          <span className={cn("flex items-center justify-center rounded-full bg-white/20", isCompactFab ? "h-8 w-8" : "h-9 w-9")}>
+            <BrainCircuit className={isCompactFab ? "h-4 w-4" : "h-5 w-5"} />
           </span>
-          <span className="hidden text-left sm:block">
-            <span className="block text-[10px] font-medium uppercase tracking-wider text-white/80">
-              {cfoCtx ? `CFO · ${cfoCtx.title}` : "CFO Copilot"}
+          {!isCompactFab && (
+            <span className="text-left">
+              <span className="block text-[10px] font-medium uppercase tracking-wider text-white/80">
+                {cfoCtx ? `CFO · ${cfoCtx.title}` : "CFO Copilot"}
+              </span>
+              <span className="text-sm font-semibold leading-tight">{hasContext ? "Report attached" : "Ask anything"}</span>
             </span>
-            <span className="text-xs font-semibold leading-tight sm:text-sm">{hasContext ? "Report attached" : "Ask anything"}</span>
-          </span>
+          )}
           {hasContext && messages.some(m => m.isAutoSummary) && (
             <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[9px] font-bold text-white ring-2 ring-white sm:h-5 sm:w-5 sm:text-[10px]">✓</span>
           )}
