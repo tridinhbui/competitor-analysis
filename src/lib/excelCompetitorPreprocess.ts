@@ -1491,6 +1491,9 @@ function buildExcelDerivedAnalysis(
       totalEquity: nullNumber(),
       cashAndEquivalents: nullNumber(),
       retainedEarnings: null,
+      originalTotalLiabilities: null,
+      originalTotalEquity: null,
+      unexplainedGap: null,
       items: [],
     },
     debtStructure: {
@@ -1533,6 +1536,8 @@ function buildExcelDerivedAnalysis(
       amortization: null,
       ebitda: null,
       ebitdaMargin: null,
+      ebitdaGaap: null,
+      ebitdaAdjusted: null,
       interestExpense: null,
       incomeTax: null,
       netIncome: null,

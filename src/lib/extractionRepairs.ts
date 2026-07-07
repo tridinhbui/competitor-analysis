@@ -636,6 +636,7 @@ export function deriveEbitdaIfMissing(
         ...inc,
         ebitda,
         ebitdaMargin: margin,
+        ebitdaGaap: inc.ebitdaGaap ?? ebitda,
       };
     }
   }
@@ -677,6 +678,7 @@ export function deriveEbitdaIfMissing(
     ...inc,
     ebitda,
     ebitdaMargin: margin,
+    ebitdaGaap: inc.ebitdaGaap ?? ebitda,
   };
 }
 

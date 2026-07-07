@@ -693,15 +693,26 @@ IMPORTANT:
 - Do NOT include recurring items (regular D&A, stock-based comp unless it's unusual).
 - If no non-recurring items found, return {"items": []}.`;
 
+export interface NonRecurringExtractionUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+export interface NonRecurringExtractionResult {
+  items: NonRecurringItem[];
+  usage: NonRecurringExtractionUsage | null;
+}
+
 export async function extractNonRecurringItems(
   text: string,
   apiKey: string,
   model: string
-): Promise<NonRecurringItem[]> {
+): Promise<NonRecurringExtractionResult> {
   const adjustmentText = extractAdjustmentSections(text);
 
   if (!adjustmentText || adjustmentText.length < 500) {
-    return [];
+    return { items: [], usage: null };
   }
 
   try {
@@ -726,11 +737,19 @@ export async function extractNonRecurringItems(
       signal: AbortSignal.timeout(60_000),
     });
 
-    if (!res.ok) return [];
+    if (!res.ok) return { items: [], usage: null };
 
     const data = (await res.json()) as {
       choices?: Array<{ message?: { content?: string } }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
     };
+    const usage: NonRecurringExtractionUsage | null = data.usage
+      ? {
+          promptTokens: data.usage.prompt_tokens ?? 0,
+          completionTokens: data.usage.completion_tokens ?? 0,
+          totalTokens: data.usage.total_tokens ?? 0,
+        }
+      : null;
     const content = data.choices?.[0]?.message?.content ?? "{}";
     const parsed = JSON.parse(content) as {
       items?: Array<{
@@ -746,14 +765,14 @@ export async function extractNonRecurringItems(
       }>;
     };
 
-    if (!parsed.items || !Array.isArray(parsed.items)) return [];
+    if (!parsed.items || !Array.isArray(parsed.items)) return { items: [], usage };
 
     const validLines = new Set(["operatingIncome", "netIncome", "revenue", "cogs", "sga", "other"]);
     const validCategories = new Set(["legal", "restructuring", "impairment", "gain-loss-disposal", "tax-adjustment", "insurance", "erc", "acquisition", "other"]);
     const validDirections = new Set(["add-back", "subtract"]);
     const validConfidence = new Set(["high", "medium", "low"]);
 
-    return parsed.items
+    const items = parsed.items
       .filter(item => item.label && item.amount != null && Math.abs(item.amount) >= 1)
       .map((item, i) => ({
         id: `nr-${i + 1}-${item.category ?? "other"}`,
@@ -767,7 +786,8 @@ export async function extractNonRecurringItems(
         confidence: (validConfidence.has(item.confidence ?? "") ? item.confidence : "medium") as NonRecurringItem["confidence"],
         sourceRef: item.sourceRef || "",
       }));
+    return { items, usage };
   } catch {
-    return [];
+    return { items: [], usage: null };
   }
 }

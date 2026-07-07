@@ -345,6 +345,38 @@ export function AnalysisDashboard({ result, onExport, onOpenWorkbook, onTraceMet
       : confidenceLabel === "low"
       ? "Review critical line items against the source PDF."
       : "Extraction confidence not available.";
+  const extractionIssues = meta.extractionIssues ?? [];
+  const criticalIssueCount = extractionIssues.filter((issue) => issue.severity === "error").length;
+  const warningIssueCount = extractionIssues.filter((issue) => issue.severity === "warning").length;
+
+  // Per-line confidence breakdown — the "high/medium/low confidence" badge alone doesn't
+  // tell the analyst WHICH numbers to double-check. Compute an actual % from the extracted
+  // line items themselves (not just the overall meta.confidence label) and let them drill in.
+  const confidenceBreakdown = useMemo(() => {
+    const allItems = [...bs.items, ...cfItems];
+    let high = 0;
+    let medium = 0;
+    let low = 0;
+    const unsureItems: BSItem[] = [];
+    for (const item of allItems) {
+      const isHeuristic = /^heuristic:/i.test(item.source ?? "");
+      if (item.confidence === "high" && !isHeuristic) {
+        high++;
+      } else if (item.confidence === "low" || isHeuristic) {
+        low++;
+        unsureItems.push(item);
+      } else {
+        // Unrated or "medium" — extracted, but not explicitly confirmed high-confidence.
+        medium++;
+        unsureItems.push(item);
+      }
+    }
+    const total = allItems.length;
+    const percent = total > 0 ? Math.round((high / total) * 100) : 0;
+    return { percent, high, medium, low, total, unsureItems };
+  }, [bs.items, cfItems]);
+
+  const [showConfidenceDetail, setShowConfidenceDetail] = useState(false);
 
   // Detect missing critical data
   const missingFields: string[] = [];
@@ -437,6 +469,24 @@ export function AnalysisDashboard({ result, onExport, onOpenWorkbook, onTraceMet
       )}
       </header>
 
+      {(meta.extractionMethod === "pdf-heuristic" || meta.extractionMethod === "pdf-ai-partial") && (
+        <div className="mb-4 flex items-start gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 shadow-sm">
+          <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" aria-hidden />
+          <div>
+            <p className="text-sm font-bold text-amber-900">
+              {meta.extractionMethod === "pdf-heuristic"
+                ? "AI extraction was unavailable — this analysis is pattern-matching only"
+                : "AI extraction was incomplete — this analysis is partial"}
+            </p>
+            <p className="mt-1 text-xs leading-relaxed text-amber-800">
+              {meta.extractionMethod === "pdf-heuristic"
+                ? "The AI step failed or was skipped (e.g. API quota/outage), so every number below comes from lower-confidence pattern matching against the raw PDF text, not AI-reviewed extraction. Treat every figure as unverified until you check it against the source filing."
+                : "The AI extraction didn't return full coverage for this filing, so some sections fell back to pattern matching. Treat figures without a clear source trace as unverified until you check them against the source filing."}
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="mb-4 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:flex sm:items-center sm:justify-between">
         <div className="space-y-2">
           <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500">Data quality</p>
@@ -444,8 +494,92 @@ export function AnalysisDashboard({ result, onExport, onOpenWorkbook, onTraceMet
             <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${confidenceClass}`}>
               {confidenceLabel} confidence
             </span>
+            {confidenceBreakdown.total > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowConfidenceDetail((v) => !v)}
+                className={cn(
+                  "flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-semibold transition",
+                  confidenceBreakdown.percent >= 80
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                    : confidenceBreakdown.percent >= 50
+                      ? "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                      : "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+                )}
+                aria-expanded={showConfidenceDetail}
+              >
+                {confidenceBreakdown.percent}% high-confidence
+                <ChevronDown className={cn("h-3 w-3 transition-transform", showConfidenceDetail && "rotate-180")} />
+              </button>
+            )}
             <span className="text-xs text-slate-500">{confidenceNote}</span>
+            {extractionIssues.length > 0 && (
+              <span className={cn(
+                "rounded-full border px-2.5 py-1 text-xs font-semibold",
+                criticalIssueCount > 0
+                  ? "border-red-200 bg-red-50 text-red-700"
+                  : warningIssueCount > 0
+                    ? "border-amber-200 bg-amber-50 text-amber-700"
+                    : "border-blue-200 bg-blue-50 text-blue-700"
+              )}>
+                {criticalIssueCount > 0
+                  ? `${criticalIssueCount} critical`
+                  : warningIssueCount > 0
+                    ? `${warningIssueCount} warning${warningIssueCount === 1 ? "" : "s"}`
+                    : `${extractionIssues.length} note${extractionIssues.length === 1 ? "" : "s"}`}
+              </span>
+            )}
           </div>
+          {extractionIssues.length > 0 && (
+            <div className="mt-2 grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
+              {extractionIssues.slice(0, 4).map((issue) => (
+                <div
+                  key={`${issue.severity}-${issue.field}-${issue.type}`}
+                  className={cn(
+                    "rounded-2xl border px-3 py-2",
+                    issue.severity === "error"
+                      ? "border-red-100 bg-red-50/70"
+                      : issue.severity === "warning"
+                        ? "border-amber-100 bg-amber-50/70"
+                        : "border-slate-100 bg-slate-50"
+                  )}
+                >
+                  <p className="font-semibold text-slate-800">{issue.field.replaceAll(".", " ")}</p>
+                  <p className="mt-0.5 leading-relaxed">{issue.message}</p>
+                </div>
+              ))}
+            </div>
+          )}
+          {showConfidenceDetail && (
+            <div className="mt-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+              <p className="mb-2 text-[11px] font-semibold text-slate-600">
+                {confidenceBreakdown.high} high · {confidenceBreakdown.medium} unverified · {confidenceBreakdown.low} low-confidence line item{confidenceBreakdown.total === 1 ? "" : "s"}
+              </p>
+              {confidenceBreakdown.unsureItems.length === 0 ? (
+                <p className="text-xs text-slate-500">Every extracted line item is high-confidence.</p>
+              ) : (
+                <div className="max-h-64 space-y-1.5 overflow-y-auto">
+                  {confidenceBreakdown.unsureItems.map((item, i) => (
+                    <div
+                      key={`${item.tag}-${i}`}
+                      className={cn(
+                        "flex items-center justify-between gap-3 rounded-xl border px-3 py-1.5 text-xs",
+                        item.confidence === "low" || /^heuristic:/i.test(item.source ?? "")
+                          ? "border-red-100 bg-red-50/60"
+                          : "border-amber-100 bg-amber-50/60"
+                      )}
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-slate-800">{item.label}</p>
+                        <p className="truncate text-slate-500">{item.source}</p>
+                      </div>
+                      <span className="shrink-0 font-mono font-semibold text-slate-700">{fmt(item.value)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="rounded-full border px-3 py-1 text-xs font-semibold text-slate-700 bg-slate-50">
@@ -530,7 +664,19 @@ export function AnalysisDashboard({ result, onExport, onOpenWorkbook, onTraceMet
                     { label: "SG&A Expense", value: fmt(inc.sgaExpense), dim: true, traceable: true },
                     { label: "R&D Expense", value: fmt(inc.rdExpense), dim: true, traceable: true },
                     { label: "Operating Income", value: fmt(inc.operatingIncome), bold: true, sub: fmtPct(inc.operatingMargin), traceable: true },
-                    { label: "EBITDA", value: fmt(inc.ebitda), bold: true, sub: fmtPct(inc.ebitdaMargin), traceable: true },
+                    {
+                      label:
+                        inc.ebitdaAdjusted != null && inc.ebitdaGaap != null
+                          ? "EBITDA (Adjusted, company)"
+                          : "EBITDA",
+                      value: fmt(inc.ebitda),
+                      bold: true,
+                      sub: fmtPct(inc.ebitdaMargin),
+                      traceable: true,
+                    },
+                    ...(inc.ebitdaAdjusted != null && inc.ebitdaGaap != null
+                      ? [{ label: "EBITDA (GAAP: OI + D&A)", value: fmt(inc.ebitdaGaap), dim: true, traceable: false }]
+                      : []),
                     { label: "Net Income", value: fmt(inc.netIncome), bold: true, sub: fmtPct(inc.netMargin), traceable: true },
                   ]}
                 />
@@ -2638,7 +2784,7 @@ function InsightsTab({
                   importantFootnotes.map((fn, idx) => (
                     <div key={fn.id || `${fn.title}-${idx}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                       <p className="text-[11px] font-semibold text-slate-700">{fn.title}</p>
-                      <p className="mt-1 text-xs italic leading-relaxed text-slate-600">"{fn.summary}"</p>
+                      <p className="mt-1 text-xs italic leading-relaxed text-slate-600">&ldquo;{fn.summary}&rdquo;</p>
                     </div>
                   ))
                 ) : (

@@ -158,7 +158,7 @@ export function AppShellChrome() {
             {/* Auth / user menu */}
             {!authLoading && (
               <Link
-                href="/competitor-dashboard"
+                href="/earnings-calendar"
                 className="hidden items-center gap-1.5 rounded-full border border-border/80 bg-white px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-[#d2d5d8] hover:bg-secondary sm:inline-flex"
               >
                 <CalendarDays className="h-4 w-4 text-primary" aria-hidden />
@@ -275,7 +275,7 @@ export function AppShellChrome() {
                 })}
               {showAppNav && (
                 <Link
-                  href="/competitor-dashboard"
+                  href="/earnings-calendar"
                   onClick={() => setMobileOpen(false)}
                   className="mt-1 inline-flex items-center justify-between rounded-xl border border-border bg-white px-4 py-3 text-sm font-medium text-foreground transition hover:bg-secondary"
                 >

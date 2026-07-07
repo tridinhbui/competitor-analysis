@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { X, Loader2, Mail, Lock } from "lucide-react";
 import { FinbudProLogo } from "@/components/branding/FinbudProLogo";
@@ -22,13 +22,24 @@ function friendlyAuthError(message: string) {
 
 export function AuthModal({ onClose }: AuthModalProps) {
   const router = useRouter();
-  const { signIn, signInWithGoogle, signUp, resetPassword } = useAuth();
+  const { user, signIn, signInWithGoogle, signUp, resetPassword } = useAuth();
   const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  // Some Supabase projects skip email confirmation, so signUp can return an
+  // active session immediately. Close the modal as soon as a session shows
+  // up instead of leaving it stuck on the "check your email" message.
+  useEffect(() => {
+    if (user) {
+      onClose();
+      router.replace("/analyze?tab=extract");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

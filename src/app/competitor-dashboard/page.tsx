@@ -1,10 +1,5 @@
-import { RequireAuth } from "@/components/auth/RequireAuth";
-import { CompetitorDashboard } from "@/components/competitor-dashboard/CompetitorDashboard";
+import { redirect } from "next/navigation";
 
-export default function CompetitorDashboardPage() {
-  return (
-    <RequireAuth>
-      <CompetitorDashboard />
-    </RequireAuth>
-  );
+export default function CompetitorDashboardRedirect() {
+  redirect("/earnings-calendar");
 }

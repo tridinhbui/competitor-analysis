@@ -21,6 +21,7 @@ import {
   deriveEbitdaIfMissing,
   pickDisclosedEbitdaValue,
 } from "@/lib/extractionRepairs";
+import { buildExtractionValidationIssues } from "@/lib/financialExtractionValidation";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -158,6 +159,10 @@ export function buildBalanceSheet(bs: BSItem[]): BalanceSheet {
     totalEquity,
     cashAndEquivalents: cash,
     retainedEarnings: retained,
+    // Set by enforceAccountingIdentity if/when it patches these totals.
+    originalTotalLiabilities: null,
+    originalTotalEquity: null,
+    unexplainedGap: null,
     items: bs,
   };
 }
@@ -236,7 +241,6 @@ export function buildDebtStructure(bs: BSItem[]): DebtStructure {
     if (impliedSt > 0) stDebt = impliedSt;
   }
 
-  const cash = cashForDebt;
   const netDebt =
     netDebtSupplemental != null && Math.abs(netDebtSupplemental) > 1
       ? Math.abs(netDebtSupplemental)
@@ -524,12 +528,23 @@ export function buildIncomeStatement(cf: BSItem[], bs: BSItem[]): IncomeStatemen
         : null;
   // Prefer company-disclosed EBITDA (e.g. "Other Key Financial Measures") over OI + D&A when tagged or coalesced.
   const disclosedEbitda = pickDisclosedEbitdaValue(allItems, revenue);
-  let ebitda: number | null =
+  // Always compute the GAAP-consistent figure (OI + D&A) — this is the one
+  // that's safe to compare across companies/periods, since it isn't affected
+  // by whatever a given company chooses to exclude in its "Adjusted" number.
+  const ebitdaGaap: number | null =
+    ebit != null && totalDA != null ? Math.round((ebit + totalDA) * 100) / 100 : null;
+  // Company-disclosed "Adjusted EBITDA" — only set when the filing actually
+  // reports one and it's not just OI+D&A shown a second time under a
+  // different label (that case would misleadingly imply a real adjustment).
+  const ebitdaAdjusted: number | null =
+    disclosedEbitda != null &&
+    (ebitdaGaap == null || Math.abs(disclosedEbitda - ebitdaGaap) > Math.max(1, Math.abs(ebitdaGaap) * 0.005))
+      ? Math.round(disclosedEbitda * 100) / 100
+      : null;
+  const ebitda: number | null =
     disclosedEbitda != null
       ? Math.round(disclosedEbitda * 100) / 100
-      : ebit != null && totalDA != null
-        ? Math.round((ebit + totalDA) * 100) / 100
-        : null;
+      : ebitdaGaap;
 
   if (
     interestExpense == null &&
@@ -568,6 +583,8 @@ export function buildIncomeStatement(cf: BSItem[], bs: BSItem[]): IncomeStatemen
     amortization: amort != null ? Math.abs(amort) : null,
     ebitda,
     ebitdaMargin: margin(ebitda, revenue),
+    ebitdaGaap,
+    ebitdaAdjusted,
     interestExpense: interestExpense != null ? Math.abs(interestExpense) : null,
     incomeTax: incomeTax != null ? Math.abs(incomeTax) : null,
     netIncome,
@@ -588,8 +605,14 @@ export function buildRatiosFull(
   debt: DebtStructure,
   cf: CashFlowData,
   allItems: BSItem[],
-  income?: IncomeStatement
+  income?: IncomeStatement,
+  filingType?: "10-K" | "10-Q"
 ): Ratios {
+  // Days-outstanding ratios (DSO/DIO/DPO) annualize a period average against a
+  // flow metric (revenue/COGS). A 10-K's revenue/COGS is a full fiscal year,
+  // not a quarter, so it must be divided out over 365 days, not 90 — otherwise
+  // DSO/DIO/DPO come out ~4x too low for every annual filing.
+  const periodDays = filingType === "10-K" ? 365 : 90;
   const debtToEquity = ratio(debt.totalDebt, bs.totalEquity);
   const debtToCapital = ratio(
     debt.totalDebt,
@@ -715,13 +738,16 @@ export function buildRatiosFull(
   const daysSalesOutstanding = ratio(receivables, revenue);
   const daysInventoryOutstanding = ratio(inventory, cogs);
   const daysPayableOutstanding = ratio(payables, cogs);
-  const dsoDays = daysSalesOutstanding != null ? daysSalesOutstanding * 90 : null;
-  const dioDays = daysInventoryOutstanding != null ? daysInventoryOutstanding * 90 : null;
-  const dpoDays = daysPayableOutstanding != null ? daysPayableOutstanding * 90 : null;
+  const dsoDays = daysSalesOutstanding != null ? daysSalesOutstanding * periodDays : null;
+  const dioDays = daysInventoryOutstanding != null ? daysInventoryOutstanding * periodDays : null;
+  const dpoDays = daysPayableOutstanding != null ? daysPayableOutstanding * periodDays : null;
   const cashConversionCycle =
     dsoDays != null && dioDays != null && dpoDays != null ? dsoDays + dioDays - dpoDays : null;
 
   // Cash
+  // NOTE: this is FCF / Invested Capital (book equity + debt), not the market-cap-based
+  // "FCF yield" investors usually mean — there's no market cap input available here.
+  // Kept as `fcfYield` for API/UI compatibility; treat it as a capital-efficiency ratio.
   const fcfYield = cf.freeCashFlow != null && bs.totalEquity > 0
     ? cf.freeCashFlow / (bs.totalEquity + debt.totalDebt) : null;
   const fcfConversion = ratio(cf.freeCashFlow, netIncome);
@@ -956,7 +982,8 @@ export function buildValidation(
   bs: BalanceSheet,
   debt: DebtStructure,
   cf: CashFlowData,
-  allItems: BSItem[]
+  allItems: BSItem[],
+  issues: FullAnalysis["meta"]["extractionIssues"] = []
 ): { passed: boolean; checks: ValidationCheck[] } {
   const checks: ValidationCheck[] = [];
 
@@ -1037,8 +1064,21 @@ export function buildValidation(
     note: `${totalItems} lines${totalItems < 10 ? " — low count; PDF parsing may be weak" : ""}`,
   });
 
+  const criticalIssues = issues.filter((issue) => issue.severity === "error").length;
+  const warningIssues = issues.filter((issue) => issue.severity === "warning").length;
+  checks.push({
+    name: "Extraction quality flags",
+    passed: criticalIssues === 0 && warningIssues <= 2,
+    note:
+      criticalIssues > 0
+        ? `${criticalIssues} critical issue${criticalIssues === 1 ? "" : "s"} need review`
+        : warningIssues > 0
+          ? `${warningIssues} warning${warningIssues === 1 ? "" : "s"} — review workbook before publishing`
+          : "No critical extraction quality flags",
+  });
+
   return {
-    passed: checks.filter((c) => !c.passed).length <= 2,
+    passed: criticalIssues === 0 && checks.filter((c) => !c.passed).length <= 2,
     checks,
   };
 }
@@ -1068,15 +1108,36 @@ export function assembleAnalysis(
   const cashFlow = buildCashFlow(cfRep);
   let incomeStatement = buildIncomeStatement(cfRep, bsRep);
   incomeStatement = deriveEbitdaIfMissing(incomeStatement, cfRep);
-  const ratios = buildRatiosFull(balanceSheet, debtStructure, cashFlow, allItems, incomeStatement);
+  const ratios = buildRatiosFull(balanceSheet, debtStructure, cashFlow, allItems, incomeStatement, metaMerged.filingType);
   const dividendAnalysis = buildDividendAnalysis(
     balanceSheet,
     debtStructure,
     cashFlow,
     allItems
   );
-  const validation = buildValidation(balanceSheet, debtStructure, cashFlow, allItems);
   const reconcile = buildReconcile(balanceSheet);
+  const extractionIssues = buildExtractionValidationIssues({
+    meta: metaMerged,
+    balanceSheet,
+    debtStructure,
+    cashFlow,
+    incomeStatement,
+    ratios,
+    reconcile,
+    allItems,
+  });
+  if (extractionIssues.length > 0) {
+    metaMerged.extractionIssues = extractionIssues;
+    if (extractionIssues.some((issue) => issue.severity === "error")) {
+      metaMerged.confidence = "low";
+    } else if (
+      metaMerged.confidence === "high" &&
+      extractionIssues.some((issue) => issue.severity === "warning")
+    ) {
+      metaMerged.confidence = "medium";
+    }
+  }
+  const validation = buildValidation(balanceSheet, debtStructure, cashFlow, allItems, extractionIssues);
 
   return {
     meta: metaMerged,

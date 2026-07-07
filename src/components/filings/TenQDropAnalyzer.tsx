@@ -11,6 +11,7 @@ import { PdfViewer, type TraceTarget } from "./PdfViewer";
 import { AnalyzeExtractPanel } from "./AnalyzeExtractPanel";
 import { InvestorWorkspacePanel } from "./InvestorWorkspacePanel";
 import { analyzePdf } from "@/lib/pdfAnalysis";
+import type { PdfExtractionProfile } from "@/lib/pdfAnalysis";
 import {
   isFullAnalysisPayload,
   isStepEventPayload,
@@ -182,6 +183,12 @@ export function TenQDropAnalyzer() {
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [showPdf, setShowPdf] = useState(true);
   const [pdfWidthPct, setPdfWidthPct] = useState(50);
+  const [extractionProfile, setExtractionProfile] = useState<PdfExtractionProfile>({
+    businessType: "general",
+    periodPreference: "auto",
+    scaleOverride: "auto",
+    strictConsolidatedOnly: true,
+  });
   const [persistNotice, setPersistNotice] = useState<{
     kind: "ok" | "warn";
     text: string;
@@ -270,7 +277,7 @@ export function TenQDropAnalyzer() {
         // Ignore broken local cache and start fresh.
       }
     })();
-  }, []);
+  }, [restoreHistoryId]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -441,6 +448,7 @@ export function TenQDropAnalyzer() {
           onPartial: (partial) => {
             setResult(resolveAnalysisMeta(partial));
           },
+          extractionProfile,
         }
       );
 
@@ -461,7 +469,7 @@ export function TenQDropAnalyzer() {
       setError(err instanceof Error ? err.message : String(err));
       setPhase("error");
     }
-  }, [events, persistNotice]);
+  }, [aiEnabled, events, extractionProfile, persistNotice]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -511,6 +519,8 @@ export function TenQDropAnalyzer() {
         handleDrop={handleDrop}
         handleFileInput={handleFileInput}
         inputRef={inputRef}
+        extractionProfile={extractionProfile}
+        onExtractionProfileChange={setExtractionProfile}
       />
     );
   }

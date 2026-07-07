@@ -226,7 +226,7 @@ function ProfilePageContent() {
       setSaveError(err);
     } else {
       setSaveStatus("success");
-      router.replace("/analyze");
+      setTimeout(() => router.replace("/analyze"), 1200);
     }
   };
 

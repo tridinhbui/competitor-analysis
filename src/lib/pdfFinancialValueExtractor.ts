@@ -396,8 +396,14 @@ const METRICS: Record<PdfFinancialMetric, MetricConfig> = {
       /^long[-\s]term\s+debt,?\s+less\s+current\s+maturities\b/i,
       /^long[-\s]term\s+debt,?\s+net\s+of\s+current\b/i,
       /^long[-\s]term\s+portion\s+of\s+debt\b/i,
+      // Some filers (e.g. Apple) label BOTH the current AND non-current debt line
+      // just "Term debt" with no "long-term" qualifier. A bare match here can't
+      // reliably tell which occurrence is non-current vs current from regex alone
+      // (that needs section context), but capturing the non-current figure at all
+      // beats silently reporting $0 for a company's largest debt line.
+      /^term\s+debt\b/i,
     ],
-    exactLabel: /^long[-\s]term\s+debt(?:\s+less\s+current\s+maturities)?$/i,
+    exactLabel: /^(?:long[-\s]term\s+debt(?:\s+less\s+current\s+maturities)?|term\s+debt)$/i,
     preferredSections: ["balance_sheet"],
     reject:
       /\b(interest\s+expense|fair\s+value|derivative|weighted|average|rate|current\s+maturities\s+of|current\s+portion\s+of)\b/i,
@@ -702,8 +708,21 @@ function detectScaleMultiplier(text: string, scaleNote?: string): number {
   if (/in\s+billions|\(billions\)|amounts?\s+in\s+billions/i.test(sample)) {
     return 1000;
   }
+  // Check millions before the bare "in thousands" pattern: filings routinely say
+  // "(In millions, except number of shares, which are reflected in thousands, ...)"
+  // — that "in thousands" describes the SHARE COUNT, not the dollar scale. Checking
+  // thousands first (as this used to) misreads a millions-scale filing as thousands
+  // and divides every dollar value by 1000x (confirmed against Apple's own 10-Q,
+  // which uses exactly this phrasing).
   if (
-    /dollars?\s+in\s+thousands|in\s+thousands|\(thousands\)|amounts?\s+in\s+thousands|thousands,\s*except\s+per\s+share|\(in\s+thousands[^)]{0,120}except\s+per\s+share/i.test(
+    /in\s+millions|\(millions\)|amounts?\s+in\s+millions|millions\s+of\s+dollars|dollars?\s+in\s+millions|in\s+millions,\s*except\s+per\s+share/i.test(
+      sample
+    )
+  ) {
+    return 1;
+  }
+  if (
+    /dollars?\s+in\s+thousands|\(thousands\)|amounts?\s+in\s+thousands|thousands,\s*except\s+per\s+share|\(in\s+thousands[^)]{0,120}except\s+per\s+share/i.test(
       sample
     )
   ) {

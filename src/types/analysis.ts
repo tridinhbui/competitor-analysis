@@ -70,6 +70,23 @@ export interface BalanceSheet {
   cashAndEquivalents: number;
   /** Null when no retained-earnings line was matched (distinct from a real $0 balance). */
   retainedEarnings: number | null;
+  /**
+   * Liabilities/Equity as originally extracted, before any A = L + E
+   * reconciliation patch. Null when no patch was applied (extracted values
+   * already balanced). Use these — not totalLiabilities/totalEquity — when
+   * you need to show the analyst what was actually found in the filing.
+   */
+  originalTotalLiabilities: number | null;
+  originalTotalEquity: number | null;
+  /**
+   * |Assets - (original Liabilities + original Equity)| in $M, computed
+   * BEFORE the reconciliation patch. A nonzero value here means one of
+   * totalLiabilities/totalEquity was silently adjusted to force the
+   * accounting identity — often legitimate (noncontrolling interest,
+   * redeemable equity) rather than an extraction error. Surface this to
+   * the user instead of only showing the post-patch (near-zero) gap.
+   */
+  unexplainedGap: number | null;
   items: BSItem[];
 }
 
@@ -113,8 +130,13 @@ export interface IncomeStatement {
   ebitMargin: number | null;
   depreciation: number | null;
   amortization: number | null;
+  /** Best-guess EBITDA (prefers company-disclosed/adjusted when available). Kept for back-compat. */
   ebitda: number | null;
   ebitdaMargin: number | null;
+  /** Always calculated as Operating Income + D&A — a consistent GAAP-based figure, comparable across companies. */
+  ebitdaGaap: number | null;
+  /** Company-disclosed "Adjusted EBITDA" (excludes stock comp, restructuring, one-offs, etc.) when the filing reports one. Null if not disclosed. */
+  ebitdaAdjusted: number | null;
   interestExpense: number | null;
   incomeTax: number | null;
   netIncome: number | null;
@@ -198,6 +220,16 @@ export interface ValidationCheck {
   note: string;
 }
 
+export type ExtractionValidationSeverity = "error" | "warning" | "info";
+
+export interface ExtractionValidationIssue {
+  severity: ExtractionValidationSeverity;
+  field: string;
+  type: string;
+  message: string;
+  suggestedAction?: string;
+}
+
 export type DataConfidence = "high" | "medium" | "low";
 
 export type ReconcileStatus = "ok" | "warning" | "fail";
@@ -240,6 +272,16 @@ export interface FullAnalysis {
       | "pdf-heuristic";
     /** Human-readable post-processing steps (derived equity, suppressed outliers, etc.) */
     extractionRepairs?: string[];
+    /** Machine-readable quality flags for analyst review before publishing. */
+    extractionIssues?: ExtractionValidationIssue[];
+    /** Business-aware extraction assumptions used by PDF/AI parsing. */
+    extractionProfile?: {
+      businessType?: "general" | "manufacturing" | "retail" | "software" | "financial" | "insurance" | "real-estate" | "energy" | "healthcare";
+      periodPreference?: "quarter" | "ytd" | "annual" | "auto";
+      scaleOverride?: "thousands" | "millions" | "billions" | "auto";
+      strictConsolidatedOnly?: boolean;
+      detectedReasons?: string[];
+    };
     /**
      * Manual fields from the Data Source grid that are not rebuilt from XBRL line tags
      * (volumes, per-unit metrics, non-GAAP adjustment inputs). Kept on the filing so linked

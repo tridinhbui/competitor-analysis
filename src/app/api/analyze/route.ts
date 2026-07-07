@@ -305,7 +305,7 @@ export async function GET(request: Request) {
               } else {
                 const model = process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini";
                 // Run all 4 AI extractions in parallel
-                const [footnotesResult, earningsNarrative, segments, nonRecurring] =
+                const [footnotesResult, earningsNarrative, segments, nonRecurringResult] =
                   await Promise.all([
                     extractFootnotesAndAdjusted(filingDoc.text, apiKey, model),
                     extractEarningsNarrative(filingDoc.text, ticker, apiKey, model),
@@ -313,6 +313,7 @@ export async function GET(request: Request) {
                     extractNonRecurringItems(filingDoc.text, apiKey, model),
                   ]);
                 const { footnotes, adjustedMetrics } = footnotesResult;
+                const nonRecurring = nonRecurringResult.items;
                 result.footnotes = footnotes;
                 result.adjustedMetrics = adjustedMetrics;
                 result.earningsNarrative = earningsNarrative ?? undefined;

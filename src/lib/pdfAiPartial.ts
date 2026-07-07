@@ -325,9 +325,15 @@ export function buildFinancialsPartial(
   return assembleAnalysis(bsItems, cfItems, baseMeta(body, filingText, period, bsParsed.meta.companyName));
 }
 
+export type PdfAnalyzeStreamUsage = {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+};
+
 export type PdfAnalyzeStreamEvent =
   | { event: "partial"; stage: "balance_sheet" | "financials"; analysis: FullAnalysis }
-  | { event: "result"; analysis: FullAnalysis; degraded?: boolean; warning?: string }
+  | { event: "result"; analysis: FullAnalysis; degraded?: boolean; warning?: string; usage?: PdfAnalyzeStreamUsage }
   | { event: "error"; message: string };
 
 export function encodePdfAnalyzeSse(payload: PdfAnalyzeStreamEvent): Uint8Array {

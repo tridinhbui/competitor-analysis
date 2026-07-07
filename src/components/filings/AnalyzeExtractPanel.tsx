@@ -6,8 +6,9 @@
  */
 
 import type { RefObject } from "react";
-import { FileUp, CheckCircle2, Sparkles, FileScan, ChartColumnBig } from "lucide-react";
+import { FileUp, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { PdfExtractionProfile } from "@/lib/pdfAnalysis";
 
 interface AnalyzeExtractPanelProps {
   dragOver: boolean;
@@ -17,6 +18,8 @@ interface AnalyzeExtractPanelProps {
   inputRef: RefObject<HTMLInputElement | null>;
   aiEnabled?: boolean;
   onToggleAi?: () => void;
+  extractionProfile?: PdfExtractionProfile;
+  onExtractionProfileChange?: (profile: PdfExtractionProfile) => void;
 }
 
 export function AnalyzeExtractPanel({
@@ -27,7 +30,19 @@ export function AnalyzeExtractPanel({
   inputRef,
   aiEnabled = true,
   onToggleAi,
+  extractionProfile,
+  onExtractionProfileChange,
 }: AnalyzeExtractPanelProps) {
+  const updateProfile = (patch: PdfExtractionProfile) => {
+    onExtractionProfileChange?.({
+      businessType: extractionProfile?.businessType ?? "general",
+      periodPreference: extractionProfile?.periodPreference ?? "auto",
+      scaleOverride: extractionProfile?.scaleOverride ?? "auto",
+      strictConsolidatedOnly: extractionProfile?.strictConsolidatedOnly ?? true,
+      ...patch,
+    });
+  };
+
   return (
     <div className="mx-auto w-full max-w-[1600px] px-2 py-8 sm:px-4 sm:py-10">
       <div className="mb-6 text-center">
@@ -110,6 +125,85 @@ export function AnalyzeExtractPanel({
             <p>Upload the filing, verify the extraction, then continue into the workbook.</p>
             <p className="rounded-xl border border-[#e7c7b7]/80 bg-white p-3 text-sm text-[#cc521d]">Use PDF for exact filings and Data Source for SEC history.</p>
           </div>
+          {extractionProfile && onExtractionProfileChange ? (
+            <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">
+                Extraction profile
+              </p>
+              <p className="mt-1 text-xs leading-5 text-slate-500">
+                Tune parsing for the business model before upload. Auto works for most filings; override when numbers look off.
+              </p>
+
+              <div className="mt-4 space-y-3">
+                <label className="block text-xs font-semibold text-slate-700">
+                  Business type
+                  <select
+                    value={extractionProfile.businessType ?? "general"}
+                    onChange={(event) =>
+                      updateProfile({ businessType: event.target.value as PdfExtractionProfile["businessType"] })
+                    }
+                    className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-[#cc521d]/15"
+                  >
+                    <option value="general">Auto / general</option>
+                    <option value="manufacturing">Manufacturing / CPG</option>
+                    <option value="retail">Retail</option>
+                    <option value="software">Software / SaaS</option>
+                    <option value="financial">Bank / financial</option>
+                    <option value="insurance">Insurance</option>
+                    <option value="real-estate">Real estate / REIT</option>
+                    <option value="energy">Energy</option>
+                    <option value="healthcare">Healthcare</option>
+                  </select>
+                </label>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Period
+                    <select
+                      value={extractionProfile.periodPreference ?? "auto"}
+                      onChange={(event) =>
+                        updateProfile({ periodPreference: event.target.value as PdfExtractionProfile["periodPreference"] })
+                      }
+                      className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-[#cc521d]/15"
+                    >
+                      <option value="auto">Auto</option>
+                      <option value="quarter">Quarter</option>
+                      <option value="ytd">YTD</option>
+                      <option value="annual">Annual</option>
+                    </select>
+                  </label>
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Scale
+                    <select
+                      value={extractionProfile.scaleOverride ?? "auto"}
+                      onChange={(event) =>
+                        updateProfile({ scaleOverride: event.target.value as PdfExtractionProfile["scaleOverride"] })
+                      }
+                      className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-[#cc521d]/15"
+                    >
+                      <option value="auto">Auto</option>
+                      <option value="thousands">Thousands</option>
+                      <option value="millions">Millions</option>
+                      <option value="billions">Billions</option>
+                    </select>
+                  </label>
+                </div>
+
+                <label className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={extractionProfile.strictConsolidatedOnly !== false}
+                    onChange={(event) => updateProfile({ strictConsolidatedOnly: event.target.checked })}
+                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[#cc521d]"
+                  />
+                  <span>
+                    <span className="block font-semibold text-slate-800">Prefer consolidated totals</span>
+                    Avoid segment, adjusted, percentage, per-share, and non-GAAP rows unless that metric explicitly asks for them.
+                  </span>
+                </label>
+              </div>
+            </div>
+          ) : null}
         </aside>
       </div>
     </div>

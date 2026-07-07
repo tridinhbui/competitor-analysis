@@ -20,6 +20,7 @@ import {
   mergeRebuiltAnalysisWithSupplementals,
 } from "./analysisMerge";
 import { parseSseBlock, isFullAnalysisPayload } from "./sseClient";
+import { trackTokenUsage } from "./tokenUsageTracker";
 import {
   buildHeuristicPdfProvenance,
   extractPdfFinancialValue,
@@ -168,6 +169,13 @@ export async function extractPdfLines(
 // 2. AI-powered extraction via /api/analyze-pdf (3 parallel calls)
 // ===========================================================================
 
+export interface PdfExtractionProfile {
+  businessType?: "general" | "manufacturing" | "retail" | "software" | "financial" | "insurance" | "real-estate" | "energy" | "healthcare";
+  periodPreference?: "quarter" | "ytd" | "annual" | "auto";
+  scaleOverride?: "thousands" | "millions" | "billions" | "auto";
+  strictConsolidatedOnly?: boolean;
+}
+
 type AnalyzeWithAIResult = {
   analysis: FullAnalysis;
   degraded: boolean;
@@ -221,6 +229,7 @@ async function consumeAnalyzePdfStream(
         message?: string;
         degraded?: boolean;
         warning?: string;
+        usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
       };
 
       if (evt.event === "error") {
@@ -239,6 +248,7 @@ async function consumeAnalyzePdfStream(
           degraded: Boolean(evt.degraded),
           warning: evt.warning,
         };
+        if (evt.usage) trackTokenUsage(evt.usage);
       }
     }
   }
@@ -254,12 +264,13 @@ async function analyzeWithAI(
   fileName: string,
   pages: number,
   chars: number,
-  onPartial?: (analysis: FullAnalysis) => void
+  onPartial?: (analysis: FullAnalysis) => void,
+  extractionProfile?: PdfExtractionProfile
 ): Promise<AnalyzeWithAIResult> {
   const resp = await fetchWithAuth("/api/analyze-pdf", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text: fullText, fileName, pages, chars, stream: true }),
+    body: JSON.stringify({ text: fullText, fileName, pages, chars, stream: true, extractionProfile }),
   });
 
   if (!resp.ok) {
@@ -283,6 +294,7 @@ async function analyzeWithAI(
     message?: string;
     degraded?: boolean;
     warning?: string;
+    usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
   };
   if (!data.analysis) {
     const msg =
@@ -292,6 +304,7 @@ async function analyzeWithAI(
     throw new Error(msg);
   }
   onPartial?.(data.analysis);
+  if (data.usage) trackTokenUsage(data.usage);
   return {
     analysis: data.analysis,
     degraded: Boolean(data.degraded),
@@ -310,11 +323,19 @@ function detectScale(lines: PdfLine[]): Scale {
   // Do not match bare "except per share" — it appears with BOTH thousands and millions.
   const MILLIONS =
     /in\s+millions|\(millions\)|amounts?\s+in\s+millions|millions\s+of\s+dollars|dollars?\s+in\s+millions|presented\s+in\s+millions|in\s+millions,\s*except\s+per\s+share/i;
+  // NOTE: deliberately excludes a bare "in thousands" — SEC filings routinely say
+  // "(In millions, except number of shares, which are reflected in thousands, ...)",
+  // where "in thousands" describes the SHARE COUNT, not the dollar scale. A bare
+  // match there would misread a millions-scale filing as thousands (seen verbatim
+  // on Apple's own 10-Q balance sheet header) and silently understate every dollar
+  // figure by 1000x. Only match THOUSANDS when it's explicitly about dollars/amounts.
   const THOUSANDS =
-    /dollars?\s+in\s+thousands|in\s+thousands|\(thousands\)|amounts?\s+in\s+thousands|thousands,\s*except\s+per\s+share|\(in\s+thousands[^)]{0,120}except\s+per\s+share/i;
+    /dollars?\s+in\s+thousands|\(thousands\)|amounts?\s+in\s+thousands|thousands,\s*except\s+per\s+share|\(in\s+thousands[^)]{0,120}except\s+per\s+share/i;
 
   // First pass: find scale indicators near financial section headers (most accurate).
   // Scale notes like "(in millions)" typically appear within a few lines of the statement title.
+  // Check MILLIONS before THOUSANDS: when a header mentions both (e.g. dollar amounts
+  // in millions, share counts in thousands), the dollar-scale statement wins.
   for (let i = 0; i < lines.length; i++) {
     if (/balance\s+sheet|statement.*(?:income|operations?|cash\s+flow)|cash\s+flow\s+statement/i.test(lines[i].text)) {
       const ctx = lines
@@ -322,22 +343,22 @@ function detectScale(lines: PdfLine[]): Scale {
         .map((l) => l.text)
         .join(" ");
       if (BILLIONS.test(ctx)) return 1_000_000_000;
-      if (THOUSANDS.test(ctx)) return 1_000;
       if (MILLIONS.test(ctx)) return 1_000_000;
+      if (THOUSANDS.test(ctx)) return 1_000;
     }
   }
 
   // Second pass: scan the entire document as a fallback.
   const fullSample = lines.map((l) => l.text).join(" ");
   if (BILLIONS.test(fullSample)) return 1_000_000_000;
-  if (THOUSANDS.test(fullSample)) return 1_000;
   if (MILLIONS.test(fullSample)) return 1_000_000;
+  if (THOUSANDS.test(fullSample)) return 1_000;
 
   // Third pass: SEC large-cap 10-Q/K tables are almost always stated in millions even when
   // the "(in millions)" line is split across PDF text runs and missed by pdf.js row join.
   const head = lines.slice(0, Math.min(lines.length, 200)).map((l) => l.text).join(" ");
-  if (THOUSANDS.test(head)) return 1_000;
   if (MILLIONS.test(head)) return 1_000_000;
+  if (THOUSANDS.test(head)) return 1_000;
 
   return 1;
 }
@@ -693,7 +714,10 @@ function heuristicExtract(lines: PdfLine[]): { bs: BSItem[]; cf: BSItem[] } {
   if (scale === 1) scale = inferScaleFromMagnitude(lines);
   const repairScaleNote = scaleToScaleNote(scale);
   const sections = detectSections(lines);
-  const periodLabel = detectPeriod(lines);
+  // BSItem.period is a required string, so line items always get a tag —
+  // but it's an explicit "unknown" sentinel, never a fake date, when the
+  // cover page's period-end couldn't be detected.
+  const periodLabel = detectPeriod(lines) ?? "unknown";
   const parsed = lines.map((l, i) => parseLine(l, i));
 
   function sectionOf(lineIdx: number): Section {
@@ -1086,11 +1110,23 @@ function heuristicExtract(lines: PdfLine[]): { bs: BSItem[]; cf: BSItem[] } {
   return { bs, cf };
 }
 
-function detectPeriod(lines: PdfLine[]): string {
-  const sample = lines.slice(0, 80).map((l) => l.text).join(" ");
+/**
+ * Best-effort period-end detection from cover-page text. Returns undefined
+ * (never "today") when nothing is found — silently defaulting to the
+ * current date is worse than no date, since it looks like a real filing
+ * date to the analyst instead of a clear "unknown, please verify" signal.
+ */
+function detectPeriod(lines: PdfLine[]): string | undefined {
+  // Scan a larger window — the period-end statement is almost always on the
+  // cover page, but table-of-contents/legal boilerplate before it can push
+  // it past the first ~80 lines on longer cover pages.
+  const sample = lines.slice(0, 200).map((l) => l.text).join(" ");
   const datePatterns = [
-    /(?:as\s+of|ended)\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s+(\d{4})/i,
-    /(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s+(\d{4})/i,
+    // "\s*,?\s*" (not "\s+") because PDF table/column extraction frequently
+    // renders "March 28,2026" with no space after the comma (seen verbatim
+    // in this filing's own balance sheet column headers).
+    /(?:as\s+of|ended)\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})\s*,?\s*(\d{4})/i,
+    /(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})\s*,?\s*(\d{4})/i,
     /(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/,
   ];
   for (const re of datePatterns) {
@@ -1102,7 +1138,7 @@ function detectPeriod(lines: PdfLine[]): string {
       } catch { /* fall through */ }
     }
   }
-  return new Date().toISOString().slice(0, 10);
+  return undefined;
 }
 
 // ===========================================================================
@@ -1148,6 +1184,7 @@ export async function analyzePdf(
     onExtractedText?: (text: string) => void;
     /** Called as soon as heuristic or streamed AI data is available. */
     onPartial?: (analysis: FullAnalysis) => void;
+    extractionProfile?: PdfExtractionProfile;
   }
 ): Promise<FullAnalysis> {
   const useAI = options?.useAI !== false; // default true
@@ -1253,7 +1290,8 @@ export async function analyzePdf(
       file.name,
       pages,
       rawChars,
-      options?.onPartial
+      options?.onPartial,
+      options?.extractionProfile
     );
     analysis = aiResult.analysis;
     usedAI = true;

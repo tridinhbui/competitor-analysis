@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAuthedUser } from "@/lib/serverAuth";
+import { checkRateLimit, rateLimitResponse } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 
@@ -59,6 +60,9 @@ const CFO_PAGE_FRAMING: Record<string, string> = {
 export async function POST(request: Request) {
   const authResult = await requireAuthedUser(request);
   if (authResult instanceof NextResponse) return authResult;
+
+  const rl = checkRateLimit(`chat:${authResult.userId}`, 20, 60_000);
+  if (!rl.allowed) return rateLimitResponse(rl);
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey?.trim()) {

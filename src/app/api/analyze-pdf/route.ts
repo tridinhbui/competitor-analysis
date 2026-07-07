@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { assembleAnalysis } from "@/lib/analysisEngine";
 import { extractNonRecurringItems } from "@/lib/filingTextExtractor";
 import { shouldRunExtraction } from "@/lib/llmExtractionGuards";
+import { type OpenAiCallUsage, sumUsage } from "@/lib/openAiUsage";
 import {
   buildHeuristicPdfProvenance,
   extractPdfFinancialValue,
@@ -24,6 +25,7 @@ import {
   type PdfAnalyzeStreamEvent,
 } from "@/lib/pdfAiPartial";
 import { requireAuthedUser } from "@/lib/serverAuth";
+import { checkRateLimit, rateLimitResponse } from "@/lib/rateLimit";
 import {
   classifySegmentType,
   extractSegmentsHeuristic as extractSegmentsHeuristicShared,
@@ -81,8 +83,8 @@ Items MUST use ONLY these EXACT tags (do not output income or cash flow tags in 
 - AccountsPayableCurrent -> Accounts payable current (use if filer tags current AP separately; else use AccountsPayable)
 - AccruedLiabilitiesCurrent -> Accrued expenses / accrued liabilities
 - DeferredRevenueCurrent -> Deferred revenue (current)
-- DebtCurrent -> Current portion of long-term debt / short-term borrowings / notes payable current; also match "Current portion of debt and finance leases", "Current maturities of debt", "Current portion of long-term debt and finance lease obligations"
-- LongTermDebtNoncurrent -> Long-term debt (non-current portion); also match "Long-term Debt Less Current Maturities", "Long-term debt, less current maturities", "Long-term debt, net of current portion", "Long-term portion of debt", "Debt and finance leases, net of current portion", "Long-term debt and finance lease obligations, net of current portion"
+- DebtCurrent -> Current portion of long-term debt / short-term borrowings / notes payable current; also match "Current portion of debt and finance leases", "Current maturities of debt", "Current portion of long-term debt and finance lease obligations", and "Term debt" WHEN it appears in the Current liabilities section (e.g. Apple's 10-Q lists "Term debt" under both Current liabilities and Non-current liabilities with no other qualifier — use the section it's listed under, not the bare label, to decide DebtCurrent vs LongTermDebtNoncurrent)
+- LongTermDebtNoncurrent -> Long-term debt (non-current portion); also match "Long-term Debt Less Current Maturities", "Long-term debt, less current maturities", "Long-term debt, net of current portion", "Long-term portion of debt", "Debt and finance leases, net of current portion", "Long-term debt and finance lease obligations, net of current portion", and "Term debt" WHEN it appears in the Non-current liabilities section
 - LongTermDebt -> Long-term debt (if only one debt line is shown)
 - ShortTermBorrowings -> Short-term borrowings / revolving credit (if separate from current portion of LT debt)
 - LongTermDebtCurrent -> Current maturities of long-term debt (if shown as separate line from DebtCurrent)
@@ -105,6 +107,7 @@ Items MUST use ONLY these EXACT tags (do not output income or cash flow tags in 
 - MinorityInterest -> Noncontrolling interests inside total equity
 
 Balance-sheet rules:
+- CRITICAL — do not skip debt lines labeled ONLY "Term debt" (no "long-term" qualifier): some filers (e.g. Apple) label BOTH the current and non-current debt line items simply "Term debt" with no other distinguishing text. You MUST still emit BOTH as separate items — the one under "Current liabilities" as DebtCurrent, the one under "Non-current liabilities" as LongTermDebtNoncurrent — using the section header each row appears under, never skip either just because the bare label doesn't say "long-term".
 - Extract the most recent balance sheet column (latest "As of" / rightmost data column if clearly labeled).
 - For every item set statementType to "balance_sheet".
 - periodBasis: use "unknown" for typical point-in-time balances unless clearly fiscal year-end only.
@@ -281,6 +284,151 @@ interface ExtractionMeta {
   filingType?: string | null;
   scaleNote?: string;
   confidence?: string;
+}
+
+type ExtractionBusinessType =
+  | "general"
+  | "manufacturing"
+  | "retail"
+  | "software"
+  | "financial"
+  | "insurance"
+  | "real-estate"
+  | "energy"
+  | "healthcare";
+
+interface ExtractionProfile {
+  businessType: ExtractionBusinessType;
+  periodPreference: "quarter" | "ytd" | "annual" | "auto";
+  scaleOverride: "thousands" | "millions" | "billions" | "auto";
+  strictConsolidatedOnly: boolean;
+  detectedReasons: string[];
+}
+
+const BUSINESS_TYPES = new Set<ExtractionBusinessType>([
+  "general",
+  "manufacturing",
+  "retail",
+  "software",
+  "financial",
+  "insurance",
+  "real-estate",
+  "energy",
+  "healthcare",
+]);
+
+function normalizeBusinessType(value: unknown): ExtractionBusinessType | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase().replace(/_/g, "-");
+  if (BUSINESS_TYPES.has(normalized as ExtractionBusinessType)) return normalized as ExtractionBusinessType;
+  if (["bank", "banks", "banking", "fintech", "asset-management"].includes(normalized)) return "financial";
+  if (["saas", "tech", "technology"].includes(normalized)) return "software";
+  if (["consumer", "cpg", "food", "industrial"].includes(normalized)) return "manufacturing";
+  if (["reit", "property"].includes(normalized)) return "real-estate";
+  if (["oil-gas", "utilities", "utility"].includes(normalized)) return "energy";
+  return null;
+}
+
+function normalizeChoice<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  if (typeof value !== "string") return fallback;
+  const normalized = value.trim().toLowerCase();
+  return allowed.includes(normalized as T) ? (normalized as T) : fallback;
+}
+
+function detectExtractionProfile(text: string, rawProfile: unknown): ExtractionProfile {
+  const raw = rawProfile && typeof rawProfile === "object" ? (rawProfile as Record<string, unknown>) : {};
+  const lower = text.slice(0, 250_000).toLowerCase();
+  const detectedReasons: string[] = [];
+
+  let businessType = normalizeBusinessType(raw.businessType) ?? "general";
+  if (businessType === "general") {
+    if (/\b(bank|banking|deposits?|loans?|net interest income|provision for credit losses|assets under management)\b/i.test(lower)) {
+      businessType = "financial";
+      detectedReasons.push("Detected financial-services terms: deposits/loans/net interest income.");
+    } else if (/\b(premiums?|underwriting income|claims?|policyholder|loss ratio|combined ratio)\b/i.test(lower)) {
+      businessType = "insurance";
+      detectedReasons.push("Detected insurance terms: premiums/claims/loss ratio.");
+    } else if (/\b(arr|annual recurring revenue|subscription revenue|remaining performance obligations|rpo|deferred revenue|cloud|software)\b/i.test(lower)) {
+      businessType = "software";
+      detectedReasons.push("Detected software/SaaS terms: ARR/subscription/RPO/deferred revenue.");
+    } else if (/\b(same-store sales|comparable sales|store count|merchandise|inventory shrink|retail)\b/i.test(lower)) {
+      businessType = "retail";
+      detectedReasons.push("Detected retail terms: comparable sales/store/inventory.");
+    } else if (/\b(oil|gas|barrel|boe|proved reserves|production volumes|upstream|midstream|refinery)\b/i.test(lower)) {
+      businessType = "energy";
+      detectedReasons.push("Detected energy terms: BOE/reserves/production.");
+    } else if (/\b(real estate|rental income|same property|noi|funds from operations|ffo|occupancy)\b/i.test(lower)) {
+      businessType = "real-estate";
+      detectedReasons.push("Detected real-estate/REIT terms: NOI/FFO/occupancy.");
+    } else if (/\b(cost of goods sold|inventory|gross profit|manufacturing|plant|production|volume|units sold)\b/i.test(lower)) {
+      businessType = "manufacturing";
+      detectedReasons.push("Detected manufacturing/consumer terms: COGS/inventory/production volume.");
+    }
+  } else {
+    detectedReasons.push(`User-selected businessType=${businessType}.`);
+  }
+
+  const periodPreference = normalizeChoice(
+    raw.periodPreference,
+    ["quarter", "ytd", "annual", "auto"] as const,
+    "auto",
+  );
+  const scaleOverride = normalizeChoice(
+    raw.scaleOverride,
+    ["thousands", "millions", "billions", "auto"] as const,
+    "auto",
+  );
+
+  return {
+    businessType,
+    periodPreference,
+    scaleOverride,
+    strictConsolidatedOnly: raw.strictConsolidatedOnly !== false,
+    detectedReasons,
+  };
+}
+
+function buildExtractionProfilePrompt(profile: ExtractionProfile): string {
+  const industryRules: Record<ExtractionBusinessType, string> = {
+    general: "Use generic SEC financial-statement semantics. Do not apply industry-only metrics unless explicitly disclosed.",
+    manufacturing:
+      "Manufacturing/consumer: Revenue may be sales/net sales. COGS and inventory are expected. Segment volumes may be units/lbs/head/cases, but do not force volume if absent.",
+    retail:
+      "Retail: Prefer net sales/revenue, COGS/cost of sales, inventory, store/comparable-sales metrics when explicit. Do not treat store counts as dollars.",
+    software:
+      "Software/SaaS: Revenue may split subscription/license/professional services. Deferred revenue/RPO are operating metrics, not revenue. COGS may be cost of revenue. SBC is important but do not add it to EBITDA unless in a disclosed non-GAAP reconciliation.",
+    financial:
+      "Financial services/banks: Net interest income and noninterest income are not generic product revenue. Deposits and loans are balance-sheet operating lines, not debt in the industrial sense. Do not force COGS/gross profit/FCF-style manufacturing ratios when absent.",
+    insurance:
+      "Insurance: Premiums, claims/losses, loss ratio, combined ratio are primary. Do not map claims to generic COGS unless the filing labels them as benefits/losses incurred.",
+    "real-estate":
+      "Real estate/REIT: Rental revenue, NOI, FFO/AFFO, occupancy, same-property metrics matter. Debt is real estate financing; do not confuse property additions with operating CapEx unless labeled.",
+    energy:
+      "Energy: Production volumes, reserves, DD&A, exploration, commodity prices and proved reserves matter. CapEx may be property additions/development costs; keep production units separate from dollars.",
+    healthcare:
+      "Healthcare: Revenue may be product/service/patient revenue. R&D and regulatory milestones may be material. Do not confuse patient counts/doses with dollar values.",
+  };
+
+  const periodRule =
+    profile.periodPreference === "auto"
+      ? "For 10-Q prefer quarter columns for income/cash-flow metrics when available; for 10-K prefer annual. If only YTD is available, label periodBasis='ytd'."
+      : `User period preference is ${profile.periodPreference}; prefer that period basis when the table provides multiple columns.`;
+  const scaleRule =
+    profile.scaleOverride === "auto"
+      ? `Detect scale from table headers independently per section when possible (thousands/millions/billions), and state scaleNote.
+  CRITICAL scaleNote trap: many filers write a header like "(In millions, except number of shares, which are reflected in thousands, and par value)". That "in thousands" describes the SHARE COUNT column, not the dollar amounts. If you see "in millions" anywhere in the header — even alongside a mention of thousands for shares — set scaleNote to "millions", NEVER "thousands". Only set scaleNote to "thousands" when the header is about DOLLAR amounts being in thousands (e.g. "(Dollar amounts in thousands, except per share data)") with no "in millions" mention for the financial statement dollar figures.`
+      : `User scale override is ${profile.scaleOverride}; normalize extracted dollar values to USD millions using that scale unless the line is per-share or shares.`;
+
+  return `
+EXTRACTION PROFILE:
+- businessType: ${profile.businessType}
+- strictConsolidatedOnly: ${profile.strictConsolidatedOnly ? "true" : "false"}
+- ${periodRule}
+- ${scaleRule}
+- ${industryRules[profile.businessType]}
+- Always prefer consolidated company totals over segment rows, non-GAAP reconciliations, parenthetical footnote amounts, per-share rows, percentage/rate rows, and roll-forward beginning/ending balances unless the requested tag explicitly asks for that supplemental metric.
+- If a metric is industry-inapplicable or absent, return null/omit it; do not backfill from unrelated labels.
+`;
 }
 
 /** AI row with optional provenance (strict schema) or legacy { tag, label, value }. */
@@ -589,9 +737,14 @@ function dedupeByTagPreferPdf(items: BSItem[]): BSItem[] {
 function normalizeScaleNote(s: string | undefined): string | undefined {
   if (!s) return undefined;
   const l = s.toLowerCase();
-  if (l.includes("thousand")) return "thousands";
+  // Check "million"/"billion" before "thousand": filings routinely say
+  // "in millions, except shares which are reflected in thousands" — if the
+  // model echoes that phrasing back as scaleNote, an includes("thousand")
+  // check-first would misread a millions-scale filing as thousands and
+  // silently divide every dollar figure by 1000x.
   if (l.includes("billion")) return "billions";
   if (l.includes("million")) return "millions";
+  if (l.includes("thousand")) return "thousands";
   return undefined;
 }
 
@@ -610,6 +763,29 @@ function detectScaleFromText(text: string): string | undefined {
   if (/dollars?\s+in\s+millions/i.test(normalized)) return "millions";
   if (/in\s+billions?\b/i.test(normalized) || /\(\s*in\s+billions?\s*\)/i.test(normalized)) {
     return "billions";
+  }
+  return undefined;
+}
+
+/**
+ * Cover-page fallback for the fiscal period-end date when the AI extraction
+ * didn't return one. Never falls back to "today" — a wrong-but-plausible
+ * date (e.g. the request's own timestamp) is worse than none, since it reads
+ * as a real filing date to the analyst instead of a clear "not detected".
+ */
+function detectPeriodEndFromText(text: string): string | undefined {
+  const sample = text.slice(0, 6000);
+  const datePatterns = [
+    /(?:as\s+of|ended)\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})\s*,?\s*(\d{4})/i,
+    /(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})\s*,?\s*(\d{4})/i,
+    /(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/,
+  ];
+  for (const re of datePatterns) {
+    const m = sample.match(re);
+    if (m) {
+      const d = new Date(m[0].replace(/^(as\s+of|ended)\s+/i, ""));
+      if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+    }
   }
   return undefined;
 }
@@ -804,7 +980,7 @@ async function callOpenAI(
   systemPrompt: string,
   userContent: string,
   maxTokens: number
-): Promise<{ content: string | null; error: string | null; status: number | null }> {
+): Promise<{ content: string | null; error: string | null; status: number | null; usage: OpenAiCallUsage | null }> {
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -832,26 +1008,37 @@ async function callOpenAI(
         content: null,
         error: `OpenAI ${res.status}${compactErr ? `: ${compactErr}` : ""}`,
         status: res.status,
+        usage: null,
       };
     }
 
     const data = (await res.json()) as {
       choices?: { message?: { content?: string } }[];
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
     };
     const content = data.choices?.[0]?.message?.content?.trim() ?? null;
+    const usage: OpenAiCallUsage | null = data.usage
+      ? {
+          promptTokens: data.usage.prompt_tokens ?? 0,
+          completionTokens: data.usage.completion_tokens ?? 0,
+          totalTokens: data.usage.total_tokens ?? 0,
+        }
+      : null;
     if (!content) {
       return {
         content: null,
         error: "OpenAI returned empty content",
         status: res.status,
+        usage,
       };
     }
-    return { content, error: null, status: res.status };
+    return { content, error: null, status: res.status, usage };
   } catch (err) {
     return {
       content: null,
       error: err instanceof Error ? err.message : "OpenAI request failed",
       status: null,
+      usage: null,
     };
   }
 }
@@ -891,6 +1078,7 @@ async function detectFilingIdentity(
   ticker: string | null;
   filingType: CanonicalFilingType | null;
   error: string | null;
+  usage: OpenAiCallUsage | null;
 }> {
   const empty = {
     companyName: null as string | null,
@@ -902,10 +1090,10 @@ async function detectFilingIdentity(
   const user = `File name: ${fileName?.trim() || "(none)"}\n\n---\n${snippet}`;
   const res = await callOpenAI(apiKey, model, FILING_IDENTITY_PROMPT, user, 500);
   if (res.error) {
-    return { ...empty, error: res.error };
+    return { ...empty, error: res.error, usage: res.usage };
   }
   if (!res.content) {
-    return { ...empty, error: "empty identity response" };
+    return { ...empty, error: "empty identity response", usage: res.usage };
   }
   try {
     const o = JSON.parse(res.content) as Record<string, unknown>;
@@ -926,9 +1114,10 @@ async function detectFilingIdentity(
       ticker,
       filingType: filingType ?? null,
       error: null,
+      usage: res.usage,
     };
   } catch {
-    return { ...empty, error: "identity JSON parse failed" };
+    return { ...empty, error: "identity JSON parse failed", usage: res.usage };
   }
 }
 
@@ -1023,16 +1212,35 @@ function repairCriticalFinancialValue(
   metric: PdfFinancialMetric,
   text: string,
   scaleNote: string | undefined,
-  period: string
+  period: string,
+  profile: ExtractionProfile
 ): void {
   const repaired = extractPdfFinancialValue(text, metric, scaleNote);
   if (!repaired || Math.abs(repaired.value) <= 1) return;
+
+  const rawContext = `${repaired.raw} ${repaired.matchedRowLabel ?? ""}`.toLowerCase();
+  const disallowedSupplementalRow =
+    profile.strictConsolidatedOnly &&
+    !["ebitda", "grossDebt", "supplementalNetDebt"].includes(metric) &&
+    /\b(segment|adjusted|non-gaap|reconciliation|pro forma|constant currency|per share|percentage|margin|ratio)\b/i.test(rawContext);
+  if (disallowedSupplementalRow) {
+    debugLog("[analyze-pdf:repair-skip-supplemental]", {
+      metric,
+      confidence: repaired.confidence,
+      raw: repaired.raw,
+    });
+    return;
+  }
 
   const existing = items.find((item) => item.tag === repaired.tag);
   const existingValue = existing?.value ?? null;
   const existingIsAi = existing?.source?.startsWith("AI:") ?? false;
   const heuristicOverridesWrongAi =
     REPAIR_OVERRIDE_METRICS.has(metric) && existingIsAi;
+
+  if (existingValue != null && repaired.confidence === "low" && !heuristicOverridesWrongAi) {
+    return;
+  }
 
   // Safeguard: if the AI value is 100x+ LARGER than the heuristic, treat it as a unit
   // error (e.g. AI returned raw dollars when filing uses millions) and override with the
@@ -1101,6 +1309,7 @@ function repairCriticalFinancialValue(
     existing.value = repaired.value;
     existing.label = repaired.label;
     existing.source = buildHeuristicPdfProvenance(repaired, text);
+    existing.confidence = repaired.confidence;
   } else {
     debugLog("[analyze-pdf:repair]", {
       metric,
@@ -1115,6 +1324,7 @@ function repairCriticalFinancialValue(
       value: repaired.value,
       period,
       source: buildHeuristicPdfProvenance(repaired, text),
+      confidence: repaired.confidence,
     });
   }
 }
@@ -1260,6 +1470,11 @@ export async function POST(request: Request) {
   const authResult = await requireAuthedUser(request);
   if (authResult instanceof NextResponse) return authResult;
 
+  // Each upload fans out to 5 parallel OpenAI calls, so this route is the
+  // biggest single cost/DoS surface — cap it per user.
+  const rl = checkRateLimit(`analyze-pdf:${authResult.userId}`, 5, 60_000);
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey?.trim()) {
     return NextResponse.json(
@@ -1274,6 +1489,12 @@ export async function POST(request: Request) {
     pages?: number;
     chars?: number;
     stream?: boolean;
+    extractionProfile?: {
+      businessType?: string;
+      periodPreference?: string;
+      scaleOverride?: string;
+      strictConsolidatedOnly?: boolean;
+    };
   };
   try {
     body = await request.json();
@@ -1288,6 +1509,8 @@ export async function POST(request: Request) {
 
   const wantStream = body.stream === true;
   const model = process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini";
+  const extractionProfile = detectExtractionProfile(filingText, body.extractionProfile);
+  const profilePrompt = buildExtractionProfilePrompt(extractionProfile);
 
   // Split text into sections (├óΓÇ░┬Ñ500 chars, financial keywords passed guard)
   const { bsText, isCfText, qualText, segmentText, segText } = extractSections(filingText);
@@ -1310,14 +1533,14 @@ export async function POST(request: Request) {
     const bsPromise = callOpenAI(
       apiKey,
       model,
-      BS_PROMPT,
+      `${BS_PROMPT}\n${profilePrompt}`,
       `Extract balance sheet data:\n\n${bsInput}`,
       tokensFor(bsInput)
     );
     const isCfPromise = callOpenAI(
       apiKey,
       model,
-      IS_CF_PROMPT,
+      `${IS_CF_PROMPT}\n${profilePrompt}`,
       `Extract income statement and cash flow data:\n\n${isCfInput}`,
       tokensFor(isCfInput)
     );
@@ -1331,7 +1554,7 @@ export async function POST(request: Request) {
     const segPromise = callOpenAI(
       apiKey,
       model,
-      SEGMENT_PROMPT,
+      `${SEGMENT_PROMPT}\n${profilePrompt}`,
       `Extract segment data:\n\n${segInput}`,
       tokensFor(segInput, 1500, 4000)
     );
@@ -1347,7 +1570,7 @@ export async function POST(request: Request) {
       });
     }
 
-    const [bsCall, isCfCall, qualCall, segCall, nonRecurringItems, identityDetection] =
+    const [bsCall, isCfCall, qualCall, segCall, nonRecurringResult, identityDetection] =
       await Promise.all([
         bsPromise,
         isCfPromise,
@@ -1356,6 +1579,18 @@ export async function POST(request: Request) {
         nonRecurringPromise,
         identityPromise,
       ]);
+    const nonRecurringItems = nonRecurringResult.items;
+    // Real usage across every OpenAI call this request made (this endpoint fans out
+    // to 6 calls per upload) — returned to the client so the token tracker reflects
+    // actual cost instead of only counting the separate chat feature's usage.
+    const totalUsage = sumUsage([
+      bsCall.usage,
+      isCfCall.usage,
+      qualCall.usage,
+      segCall.usage,
+      nonRecurringResult.usage,
+      identityDetection.usage,
+    ]);
 
     const aiErrors = [bsCall, isCfCall, qualCall, segCall]
       .map((r) => r.error)
@@ -1383,17 +1618,26 @@ export async function POST(request: Request) {
     const bsParsed = parseAiEnvelope(bsExtraction);
     const isCfParsed = parseAiEnvelope(isCfExtraction);
 
-    const period =
+    // `period` tags every BSItem (type requires a non-null string), so it keeps an
+    // explicit "unknown" sentinel rather than silently defaulting to today's date.
+    // `periodEndForMeta` is the optional, analyst-facing field — undefined (not a
+    // fake date) when nothing could be detected, so the UI can say "not detected"
+    // instead of showing a wrong-but-plausible-looking date.
+    const detectedPeriod =
       bsParsed.meta.periodEnd ??
       isCfParsed.meta.periodEnd ??
       bsExtraction.periodEnd ??
-      new Date().toISOString().slice(0, 10);
+      detectPeriodEndFromText(filingText) ??
+      undefined;
+    const period = detectedPeriod ?? "unknown";
+    const periodEndForMeta = detectedPeriod;
 
     const mergedScaleRaw =
       bsParsed.meta.scaleNote ??
       bsExtraction.scaleNote ??
       isCfParsed.meta.scaleNote;
     const scaleForHeuristics =
+      (extractionProfile.scaleOverride !== "auto" ? extractionProfile.scaleOverride : undefined) ??
       normalizeScaleNote(mergedScaleRaw) ??
       normalizeScaleNote(bsExtraction.scaleNote) ??
       detectScaleFromText(filingText);
@@ -1434,7 +1678,7 @@ export async function POST(request: Request) {
 
     // Run before BS text heuristics so equity/liabilities can sanity-check vs scale (e.g. when AI returns weak values).
     for (const metric of ["totalAssets", "cashAndEquivalents"] as const) {
-      repairCriticalFinancialValue(bsItems, metric, filingText, scaleForHeuristics, period);
+      repairCriticalFinancialValue(bsItems, metric, filingText, scaleForHeuristics, period, extractionProfile);
     }
 
     const equityCandidate = extractTotalEquityHeuristic(filingText, scaleForHeuristics);
@@ -1585,7 +1829,7 @@ export async function POST(request: Request) {
       "financeLeaseLiabilitiesCurrent",
       "financeLeaseLiabilitiesNoncurrent",
     ] as const) {
-      repairCriticalFinancialValue(bsItems, metric, filingText, scaleForHeuristics, period);
+      repairCriticalFinancialValue(bsItems, metric, filingText, scaleForHeuristics, period, extractionProfile);
     }
     for (const metric of [
       "revenue",
@@ -1604,7 +1848,7 @@ export async function POST(request: Request) {
       "incomeBeforeIncomeTaxes",
       "ebitda",
     ] as const) {
-      repairCriticalFinancialValue(cfItems, metric, filingText, scaleForHeuristics, period);
+      repairCriticalFinancialValue(cfItems, metric, filingText, scaleForHeuristics, period, extractionProfile);
     }
 
     normalizeLikelyScaleMismatches(bsItems, scaleForHeuristics, "bs");
@@ -1850,9 +2094,10 @@ export async function POST(request: Request) {
         fileName: body.fileName,
         pagesRead: body.pages,
         charsExtracted: body.chars ?? filingText.length,
-        periodEnd: period,
+        periodEnd: periodEndForMeta,
         confidence: "low",
         extractionMethod: "pdf-ai-partial",
+        extractionProfile,
       });
       if (dividendNoteRepairs.length > 0) {
         degradedAnalysis.meta.extractionRepairs = [
@@ -1874,6 +2119,7 @@ export async function POST(request: Request) {
         analysis: degradedAnalysis,
         degraded: true as const,
         warning: `AI extraction coverage low (${reasons.join("; ")}). Returned partial analysis instead of failing request.`,
+        usage: totalUsage,
       };
       if (emitStream) {
         emitStream({ event: "result", ...degradedPayload });
@@ -1891,9 +2137,10 @@ export async function POST(request: Request) {
       fileName: body.fileName,
       pagesRead: body.pages,
       charsExtracted: body.chars ?? filingText.length,
-      periodEnd: period,
+      periodEnd: periodEndForMeta,
       confidence: "medium",
       extractionMethod: "pdf-ai",
+      extractionProfile,
     });
     if (dividendNoteRepairs.length > 0) {
       analysis.meta.extractionRepairs = [
@@ -1914,9 +2161,14 @@ export async function POST(request: Request) {
       segInput
     );
 
-    const successPayload = { analysis, degraded: false as const, warning: undefined as string | undefined };
+    const successPayload = {
+      analysis,
+      degraded: false as const,
+      warning: undefined as string | undefined,
+      usage: totalUsage,
+    };
     if (emitStream) {
-      emitStream({ event: "result", analysis });
+      emitStream({ event: "result", analysis, usage: totalUsage });
       return successPayload;
     }
     return successPayload;
@@ -1959,9 +2211,10 @@ export async function POST(request: Request) {
         analysis: payload.analysis,
         degraded: true,
         warning: payload.warning,
+        usage: payload.usage,
       });
     }
-    return NextResponse.json({ analysis: payload.analysis });
+    return NextResponse.json({ analysis: payload.analysis, usage: payload.usage });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "OpenAI call failed" },

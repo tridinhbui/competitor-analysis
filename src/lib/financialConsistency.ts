@@ -21,9 +21,24 @@ function patchItem(items: BSItem[], tag: string, value: number): void {
   }
 }
 
-function tagAllBsItemsLow(items: BSItem[]): void {
+const IDENTITY_RELATED_TAGS = new Set([
+  "Assets",
+  "Liabilities",
+  "StockholdersEquity",
+  "LiabilitiesAndStockholdersEquity",
+]);
+
+/**
+ * A balance-sheet identity mismatch only casts doubt on the lines that make
+ * up A = L + E — not on unrelated, correctly-extracted lines like Cash or
+ * AR. Blanket-marking everything "low" hides which numbers are actually
+ * suspect.
+ */
+function tagIdentityRelatedBsItemsLow(items: BSItem[]): void {
   for (const it of items) {
-    it.confidence = "low";
+    if (IDENTITY_RELATED_TAGS.has(it.tag)) {
+      it.confidence = "low";
+    }
   }
 }
 
@@ -44,11 +59,15 @@ export function enforceAccountingIdentity(
   const A = bs.totalAssets;
   let L = bs.totalLiabilities;
   let E = bs.totalEquity;
+  const originalL = L;
+  const originalE = E;
+  let patched = false;
 
   // Placeholder equity (e.g. −1 from a footnote) on large filings — prefer A − L
   if (A > 500 && Math.abs(L) > 100 && Math.abs(E) < 5) {
     E = Math.round(A - L);
     patchItem(bsItems, "StockholdersEquity", E);
+    patched = true;
   }
 
   const initialGap = gapPct(A, L, E);
@@ -58,15 +77,26 @@ export function enforceAccountingIdentity(
     if (L !== 0) {
       E = Math.round(A - L);
       patchItem(bsItems, "StockholdersEquity", E);
+      patched = true;
     } else if (E !== 0) {
       L = Math.round(A - E);
       patchItem(bsItems, "Liabilities", L);
+      patched = true;
     }
   }
 
   if (hadLargeMismatch) {
-    tagAllBsItemsLow(bsItems);
+    // Only the identity-related lines are actually suspect — don't drag down
+    // unrelated, correctly-extracted lines (Cash, AR, etc.) to "low" too.
+    tagIdentityRelatedBsItemsLow(bsItems);
   }
+
+  // The gap as it was BEFORE this function silently plugged it — this is
+  // what the analyst actually needs to see (often NCI / redeemable equity /
+  // a genuine misclassification, not an extraction bug).
+  const unexplainedGap = patched
+    ? Math.round(Math.abs(A - (originalL + originalE)))
+    : null;
 
   return {
     balanceSheet: {
@@ -74,6 +104,9 @@ export function enforceAccountingIdentity(
       totalAssets: A,
       totalLiabilities: L,
       totalEquity: E,
+      originalTotalLiabilities: patched ? originalL : null,
+      originalTotalEquity: patched ? originalE : null,
+      unexplainedGap,
     },
     hadLargeMismatch,
   };
@@ -85,6 +118,30 @@ function mapDataConfidence(c: FullAnalysis["meta"]["confidence"]): Conf {
   if (c === "high") return "HIGH";
   if (c === "medium") return "MEDIUM";
   return "LOW";
+}
+
+function mapItemConfidence(c: BSItem["confidence"]): Conf | null {
+  if (c === "high") return "HIGH";
+  if (c === "medium") return "MEDIUM";
+  if (c === "low") return "LOW";
+  return null;
+}
+
+/**
+ * Per-field confidence: look up the actual extracted line item behind a
+ * given output field instead of stamping every field with the same overall
+ * `meta.confidence`. A single low-confidence line (e.g. a plugged equity
+ * value) should not make a correctly-extracted net_income read as "LOW" too.
+ * Falls back to overall confidence when no matching line item is found
+ * (derived/computed fields like margins, ratios).
+ */
+function fieldConfidence(items: BSItem[], base: Conf, ...tags: string[]): Conf {
+  for (const tag of tags) {
+    const item = items.find((i) => i.tag === tag);
+    const mapped = item ? mapItemConfidence(item.confidence) : null;
+    if (mapped) return mapped;
+  }
+  return base;
 }
 
 /**
@@ -103,6 +160,7 @@ export function buildStrictFinancialPayload(a: FullAnalysis): {
   const cf = a.cashFlow;
   const r = a.ratios;
   const base = mapDataConfidence(a.meta.confidence);
+  const allItems = [...bs.items, ...(a.cfItems ?? [])];
 
   return {
     income_statement: {
@@ -141,10 +199,17 @@ export function buildStrictFinancialPayload(a: FullAnalysis): {
       interest_coverage: r.interestCoverage,
     },
     confidence: {
-      revenue: base,
-      total_assets: base,
-      total_equity: base,
-      net_income: base,
+      revenue: fieldConfidence(
+        allItems,
+        base,
+        "Revenues",
+        "RevenueFromContractWithCustomerExcludingAssessedTax",
+        "SalesRevenueNet",
+        "SalesRevenueGoodsNet"
+      ),
+      total_assets: fieldConfidence(allItems, base, "Assets"),
+      total_equity: fieldConfidence(allItems, base, "StockholdersEquity"),
+      net_income: fieldConfidence(allItems, base, "NetIncomeLoss"),
     },
   };
 }

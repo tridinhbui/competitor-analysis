@@ -4,8 +4,8 @@
     {
       "name": "Next.js Dev",
       "runtimeExecutable": "/bin/zsh",
-      "runtimeArgs": ["-c", "export PATH=/usr/local/bin:$PATH && exec node node_modules/.bin/next dev --webpack"],
-      "port": 3000,
+      "runtimeArgs": ["-c", "export PATH=/usr/local/bin:$PATH && exec node node_modules/.bin/next dev --webpack --port 8000"],
+      "port": 8000,
       "autoPort": true
     }
   ]
