@@ -265,12 +265,13 @@ async function analyzeWithAI(
   pages: number,
   chars: number,
   onPartial?: (analysis: FullAnalysis) => void,
-  extractionProfile?: PdfExtractionProfile
+  extractionProfile?: PdfExtractionProfile,
+  language?: "en" | "vi"
 ): Promise<AnalyzeWithAIResult> {
   const resp = await fetchWithAuth("/api/analyze-pdf", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text: fullText, fileName, pages, chars, stream: true, extractionProfile }),
+    body: JSON.stringify({ text: fullText, fileName, pages, chars, stream: true, extractionProfile, language }),
   });
 
   if (!resp.ok) {
@@ -1185,6 +1186,8 @@ export async function analyzePdf(
     /** Called as soon as heuristic or streamed AI data is available. */
     onPartial?: (analysis: FullAnalysis) => void;
     extractionProfile?: PdfExtractionProfile;
+    /** Language for AI-written prose (footnote summaries, earnings narrative). */
+    language?: "en" | "vi";
   }
 ): Promise<FullAnalysis> {
   const useAI = options?.useAI !== false; // default true
@@ -1291,7 +1294,8 @@ export async function analyzePdf(
       pages,
       rawChars,
       options?.onPartial,
-      options?.extractionProfile
+      options?.extractionProfile,
+      options?.language
     );
     analysis = aiResult.analysis;
     usedAI = true;

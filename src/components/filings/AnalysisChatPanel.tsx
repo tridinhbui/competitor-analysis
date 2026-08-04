@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { compactAnalysisForLLM } from "@/lib/analysisContext";
+import { useProfile } from "@/lib/profileContext";
 import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import { trackTokenUsage } from "@/lib/tokenUsageTracker";
 import type { FullAnalysis } from "@/types/analysis";
@@ -203,6 +204,15 @@ export function AnalysisChatPanel({ analysis, inline, disableAutoSummary = false
   useEffect(() => {
     contextRef.current = analysis ? compactAnalysisForLLM(analysis) : "";
   }, [analysis]);
+
+  // Held in a ref, not read directly in the auto-summary effect: adding it to
+  // that effect's deps would re-trigger a full summary request whenever the
+  // user changes their language preference.
+  const { profile } = useProfile();
+  const languageRef = useRef<"en" | "vi">("en");
+  useEffect(() => {
+    languageRef.current = profile?.language === "vi" ? "vi" : "en";
+  }, [profile?.language]);
 
   const hasContext = Boolean(analysis);
 
@@ -416,7 +426,7 @@ export function AnalysisChatPanel({ analysis, inline, disableAutoSummary = false
         const res = await fetchWithAuth("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ context, autoSummary: true }),
+          body: JSON.stringify({ context, autoSummary: true, language: languageRef.current }),
           signal: abortController.signal,
         });
         const data = (await res.json()) as ChatResponse;
@@ -466,6 +476,7 @@ export function AnalysisChatPanel({ analysis, inline, disableAutoSummary = false
           pageContext: cfoCtx
             ? { title: cfoCtx.title, cfoGoal: cfoCtx.cfoGoal, keyQuestions: cfoCtx.keyQuestions, expectedOutputs: cfoCtx.expectedOutputs }
             : undefined,
+          language: languageRef.current,
         }),
       });
       const data = (await res.json()) as ChatResponse;

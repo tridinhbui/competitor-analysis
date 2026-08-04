@@ -312,13 +312,20 @@ function ProfilePageContent() {
               onChange={(v) => setForm((f) => ({ ...f, role: v }))}
               options={[{ value: "", label: "Select your role" }, ...ROLES]}
             />
-            <SelectField
-              label="Language"
-              icon={Globe}
-              value={form.language}
-              onChange={(v) => setForm((f) => ({ ...f, language: v }))}
-              options={LANGUAGES}
-            />
+            <div className="space-y-1.5">
+              <SelectField
+                label="Language"
+                icon={Globe}
+                value={form.language}
+                onChange={(v) => setForm((f) => ({ ...f, language: v }))}
+                options={LANGUAGES}
+              />
+              <p className="px-1 text-[11px] leading-relaxed text-slate-500">
+                Language for AI-written analysis: copilot answers, insights commentary,
+                and filing summaries. Figures, tickers, and finance terms (EBITDA, FCF)
+                stay unchanged. The app interface stays in English.
+              </p>
+            </div>
             <SelectField
               label="Analysis Depth"
               icon={BarChart2}

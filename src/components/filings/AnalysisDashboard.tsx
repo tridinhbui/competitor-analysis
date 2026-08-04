@@ -13,6 +13,7 @@ import { PIE_BLUE_PALETTE } from "@/lib/chartPalettes";
 
 export type TraceMetric = PdfTraceTarget;
 import { cn } from "@/lib/utils";
+import { useProfile } from "@/lib/profileContext";
 import { fetchWithAuth } from "@/lib/fetchWithAuth";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -2219,6 +2220,8 @@ function InsightsTab({
 }) {
   const { balanceSheet: bs, debtStructure: debt, cashFlow: cf, ratios, incomeStatement: inc } = result;
   const cfItems = result.cfItems ?? [];
+  const { profile } = useProfile();
+  const commentaryLanguage = profile?.language === "vi" ? "vi" : "en";
 
   // ── Fetch ALL data source rows for trend charts + peer comparison
   const [allRows, setAllRows] = useState<DataSourceRow[]>([]);
@@ -2550,6 +2553,7 @@ function InsightsTab({
             if (!rev || rev === 0) return false;
             return (Math.abs(item.amount) / Math.abs(rev)) >= 0.05;
           }),
+          language: commentaryLanguage,
         }),
       });
       if (resp.ok) {
@@ -2596,6 +2600,7 @@ function InsightsTab({
     ccc,
     valuation,
     healthScore,
+    commentaryLanguage,
   ]);
 
   useEffect(() => {

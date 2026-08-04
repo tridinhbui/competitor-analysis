@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { useProfile } from "@/lib/profileContext";
 import type { FullAnalysis, StepEvent } from "@/types/analysis";
 import { AgentWorkflow } from "./AgentWorkflow";
 import { AnalysisDashboard, type TraceMetric } from "./AnalysisDashboard";
@@ -175,6 +176,8 @@ export function TenQDropAnalyzer() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const restoreHistoryId = searchParams.get("historyId");
+  const { profile } = useProfile();
+  const analysisLanguage: "en" | "vi" = profile?.language === "vi" ? "vi" : "en";
   const [phase, setPhase] = useState<Phase>("idle");
   const [events, setEvents] = useState<StepEvent[]>([]);
   const [result, setResult] = useState<FullAnalysis | null>(null);
@@ -449,6 +452,7 @@ export function TenQDropAnalyzer() {
             setResult(resolveAnalysisMeta(partial));
           },
           extractionProfile,
+          language: analysisLanguage,
         }
       );
 
@@ -469,7 +473,7 @@ export function TenQDropAnalyzer() {
       setError(err instanceof Error ? err.message : String(err));
       setPhase("error");
     }
-  }, [aiEnabled, events, extractionProfile, persistNotice]);
+  }, [aiEnabled, events, extractionProfile, persistNotice, analysisLanguage]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();

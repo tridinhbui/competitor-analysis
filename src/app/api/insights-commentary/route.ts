@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAuthedUser } from "@/lib/serverAuth";
+import { languageInstruction, normalizeResponseLanguage } from "@/lib/responseLanguage";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -16,6 +17,7 @@ interface CommentaryRequest {
   metrics: Record<string, unknown>;
   footnotes?: unknown[];
   nonRecurringItems?: unknown[];
+  language?: string;
 }
 
 export interface CommentaryResponse {
@@ -145,7 +147,11 @@ Return this exact JSON structure with no extra fields and no missing fields:
   "keyStrengths": ["specific strength with the actual number that supports it"],
   "contradictions": ["Metric A (value) conflicts with Metric B (value) — the business reason is X"],
   "forwardImplications": ["implication with specific number or timeframe derived from the metrics"]
-}`;
+}${languageInstruction(normalizeResponseLanguage(body.language))}${
+    normalizeResponseLanguage(body.language) === "vi"
+      ? "\n- Keep every JSON key exactly as written above in English; write only the JSON string VALUES in Vietnamese."
+      : ""
+  }`;
 
   try {
     const models = ["gpt-4o", "gpt-4o-mini"];

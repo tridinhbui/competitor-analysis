@@ -3,6 +3,7 @@ import { assembleAnalysis } from "@/lib/analysisEngine";
 import { extractNonRecurringItems } from "@/lib/filingTextExtractor";
 import { shouldRunExtraction } from "@/lib/llmExtractionGuards";
 import { type OpenAiCallUsage, sumUsage } from "@/lib/openAiUsage";
+import { normalizeResponseLanguage } from "@/lib/responseLanguage";
 import {
   buildHeuristicPdfProvenance,
   extractPdfFinancialValue,
@@ -224,6 +225,18 @@ EARNINGS NARRATIVE (from MD&A / Results of Operations):
 ADJUSTED METRICS: Include ALL non-GAAP reconciliations found. Values in USD millions unless per-share.
 
 Return empty arrays if no relevant content found. Do NOT hallucinate.`;
+
+/**
+ * Vietnamese variant of the qualitative rules. The enum-valued fields are
+ * matched literally downstream (e.g. `footnotes.filter(f => f.significance
+ * === "high")`, tone/result badge lookups), so they must stay in English —
+ * only free-text prose may be translated.
+ */
+const QUALITATIVE_VI_RULES = `
+LANGUAGE:
+- Write these free-text fields in Vietnamese: footnotes[].title, footnotes[].summary, earningsNarrative.summary, earningsNarrative.priorGuidance, earningsNarrative.currentGuidance, earningsNarrative.keyThemes[], adjustedMetrics[].adjustments[].label.
+- Keep these fields EXACTLY as the English literals listed above — they are matched programmatically and MUST NOT be translated: footnotes[].significance ("high"/"medium"/"low"), footnotes[].type, earningsNarrative.result ("Beat expectations"/"Missed expectations"/"In line"/"N/A"), earningsNarrative.tone ("bullish"/"neutral"/"cautious"/"unknown"), adjustedMetrics[].unit, and all JSON keys.
+- Keep metric names (e.g. "Adjusted EBITDA"), tickers, numbers, and period labels (e.g. "Q3 2024") unchanged.`;
 
 const SEGMENT_PROMPT = `You are a financial data extraction engine. Extract SEGMENT-LEVEL financial data from this 10-Q/10-K text.
 
@@ -1489,6 +1502,7 @@ export async function POST(request: Request) {
     pages?: number;
     chars?: number;
     stream?: boolean;
+    language?: string;
     extractionProfile?: {
       businessType?: string;
       periodPreference?: string;
@@ -1510,6 +1524,10 @@ export async function POST(request: Request) {
   const wantStream = body.stream === true;
   const model = process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini";
   const extractionProfile = detectExtractionProfile(filingText, body.extractionProfile);
+  // Only the qualitative (prose) extraction honours this. The balance-sheet and
+  // income/cash-flow prompts stay in English regardless: their labels and tags
+  // feed downstream matching logic, so translating them would break extraction.
+  const responseLanguage = normalizeResponseLanguage(body.language);
   const profilePrompt = buildExtractionProfilePrompt(extractionProfile);
 
   // Split text into sections (├óΓÇ░┬Ñ500 chars, financial keywords passed guard)
@@ -1547,7 +1565,7 @@ export async function POST(request: Request) {
     const qualPromise = callOpenAI(
       apiKey,
       model,
-      QUALITATIVE_PROMPT,
+      responseLanguage === "vi" ? `${QUALITATIVE_PROMPT}\n${QUALITATIVE_VI_RULES}` : QUALITATIVE_PROMPT,
       `Extract qualitative insights:\n\n${qualInput}`,
       tokensFor(qualInput)
     );

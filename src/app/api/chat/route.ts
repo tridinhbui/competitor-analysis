@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAuthedUser } from "@/lib/serverAuth";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rateLimit";
+import { languageInstruction, normalizeResponseLanguage } from "@/lib/responseLanguage";
 
 export const runtime = "nodejs";
 
@@ -78,6 +79,7 @@ export async function POST(request: Request) {
     autoSummary?: boolean;
     pathname?: string;
     pageContext?: PageContext;
+    language?: string;
   };
   try {
     body = await request.json();
@@ -86,9 +88,11 @@ export async function POST(request: Request) {
   }
 
   const model = process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini";
+  const language = normalizeResponseLanguage(body.language);
+  const langRule = languageInstruction(language);
 
   if (body.autoSummary && body.context) {
-    return handleAutoSummary(apiKey, model, body.context);
+    return handleAutoSummary(apiKey, model, body.context, langRule);
   }
 
   const messages = body.messages ?? [];
@@ -126,7 +130,7 @@ ANALYSIS DEPTH:
 - Structure answers with headers (##) and bullet points for readability.
 - Always close with a recommended next action or decision.
 
-${body.context ? `Current analysis (JSON, values in USD millions):\n${body.context.slice(0, 28000)}` : "No structured analysis attached yet (user may ask general questions)."}`;
+${body.context ? `Current analysis (JSON, values in USD millions):\n${body.context.slice(0, 28000)}` : "No structured analysis attached yet (user may ask general questions)."}${langRule}`;
 
   const openaiMessages: ChatMessage[] = [
     { role: "system", content: systemContent },
@@ -178,7 +182,7 @@ ${body.context ? `Current analysis (JSON, values in USD millions):\n${body.conte
   }
 }
 
-async function handleAutoSummary(apiKey: string, model: string, context: string) {
+async function handleAutoSummary(apiKey: string, model: string, context: string, langRule: string) {
   const systemPrompt = `You are a senior equity research analyst. Given structured financial data extracted from a 10-Q/10-K filing, produce a comprehensive, detailed analysis report. Be thorough — each section should provide meaningful insight, not generic filler.
 
 Format your response EXACTLY as follows (use markdown):
@@ -212,7 +216,7 @@ List each key metric and its source (e.g., Total assets: XBRL:Assets). Enables v
 Rules:
 - ALWAYS cite source for every number using [Source].
 - Be detailed and analytical — aim for 600–800 words total.
-- No generic filler. Every sentence should add value.`;
+- No generic filler. Every sentence should add value.${langRule}${langRule ? "\n- Keep the same section order and markdown structure above, but translate the section headings themselves." : ""}`;
 
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
